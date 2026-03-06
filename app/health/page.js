@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import AppShell from '@/components/layout/AppShell';
 import { useAuth } from '@/components/layout/AuthProvider';
+import Modal from '@/components/ui/Modal';
 
 const COMMON_VACCINES = [
   { name:'Newcastle Disease', interval:28 }, { name:'Infectious Bronchitis', interval:21 },
@@ -46,30 +47,36 @@ export default function HealthPage() {
   };
 
   const { vaccinations=[], summary={}, flocks=[] } = data || {};
-  const tabs = { upcoming: vaccinations.filter(v=>v.status==='SCHEDULED'), overdue: vaccinations.filter(v=>v.status==='OVERDUE'), done: vaccinations.filter(v=>v.status==='COMPLETED') };
+  const tabs = {
+    upcoming: vaccinations.filter(v => v.status === 'SCHEDULED'),
+    overdue:  vaccinations.filter(v => v.status === 'OVERDUE'),
+    done:     vaccinations.filter(v => v.status === 'COMPLETED'),
+  };
   const shown = tabs[activeTab] || [];
-
   const STATUS_CLASS = { SCHEDULED:'status-blue', COMPLETED:'status-green', OVERDUE:'status-red', MISSED:'status-grey' };
 
   return (
     <AppShell>
       <div className="animate-in">
+
         {/* Header */}
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:24 }}>
           <div>
             <h1 style={{ fontFamily:"'Poppins',sans-serif", fontSize:22, fontWeight:700, color:'var(--text-primary)', margin:0 }}>Health Management</h1>
             <p style={{ color:'var(--text-muted)', fontSize:12, marginTop:3 }}>Vaccinations, medications and health records</p>
           </div>
-          <button onClick={() => setScheduleModal(true)} className="btn btn-primary">+ Schedule Vaccination</button>
+          <div style={{ flexShrink:0 }}>
+            <button onClick={() => setScheduleModal(true)} className="btn btn-primary">+ Schedule Vaccination</button>
+          </div>
         </div>
 
         {/* KPI row */}
         <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:12, marginBottom:20 }}>
           {[
-            { label:'Due This Week', value: loading?'—':summary.dueSoon||0, color:'var(--blue)', icon:'📅' },
-            { label:'Overdue', value: loading?'—':summary.overdue||0, color: (summary.overdue||0)>0?'var(--red)':'var(--green)', icon:'⚠' },
-            { label:'Completed This Month', value: loading?'—':summary.completedMonth||0, color:'var(--green)', icon:'✅' },
-            { label:'Total Tracked', value: loading?'—':vaccinations.length, color:'var(--purple)', icon:'💉' },
+            { label:'Due This Week',        value: loading?'—':summary.dueSoon||0,          color:'var(--blue)',   icon:'📅' },
+            { label:'Overdue',              value: loading?'—':summary.overdue||0,           color: (summary.overdue||0)>0?'var(--red)':'var(--green)', icon:'⚠' },
+            { label:'Completed This Month', value: loading?'—':summary.completedMonth||0,    color:'var(--green)',  icon:'✅' },
+            { label:'Total Tracked',        value: loading?'—':vaccinations.length,          color:'var(--purple)', icon:'💉' },
           ].map(k => (
             <div key={k.label} className="card" style={{ padding:'18px 20px' }}>
               <div style={{ display:'flex', justifyContent:'space-between', marginBottom:10 }}>
@@ -81,17 +88,43 @@ export default function HealthPage() {
           ))}
         </div>
 
-        {/* Tabs */}
-        <div style={{ display:'flex', gap:4, marginBottom:16, background:'var(--bg-elevated)', border:'1px solid var(--border)', borderRadius:10, padding:4, width:'fit-content' }}>
+        {/* Tabs — underline style (standardised) */}
+        <div style={{ display:'flex', gap:0, borderBottom:'2px solid var(--border)', marginBottom:20 }}>
           {[['upcoming','📅 Upcoming'],['overdue','⚠ Overdue'],['done','✅ Completed']].map(([key,label]) => (
-            <button key={key} onClick={() => setActiveTab(key)}
-              style={{ background: activeTab===key ? '#fff' : 'transparent', color: activeTab===key ? 'var(--purple)' : 'var(--text-muted)', border: activeTab===key ? '1px solid var(--border)' : '1px solid transparent', borderRadius:7, padding:'7px 16px', fontSize:12, fontWeight:700, cursor:'pointer', fontFamily:'inherit', boxShadow: activeTab===key ? 'var(--shadow-sm)' : 'none', transition:'all 0.15s' }}>
-              {label} <span style={{ marginLeft:4, background: activeTab===key ? 'var(--purple-light)' : 'transparent', color:'var(--purple)', borderRadius:10, padding:'1px 7px', fontSize:10 }}>{tabs[key]?.length||0}</span>
+            <button key={key} onClick={() => setActiveTab(key)} style={{
+              background:   'transparent',
+              border:       'none',
+              borderBottom: activeTab===key ? '3px solid var(--purple)' : '3px solid transparent',
+              marginBottom: -2,
+              padding:      '10px 18px',
+              fontSize:     13,
+              fontWeight:   activeTab===key ? 700 : 600,
+              color:        activeTab===key ? 'var(--purple)' : 'var(--text-muted)',
+              cursor:       'pointer',
+              fontFamily:   'inherit',
+              transition:   'all 0.15s',
+              display:      'flex',
+              alignItems:   'center',
+              gap:          6,
+            }}>
+              {label}
+              <span style={{
+                background:  activeTab===key ? 'var(--purple-light)' : 'var(--bg-elevated)',
+                color:       activeTab===key ? 'var(--purple)' : 'var(--text-muted)',
+                border:      `1px solid ${activeTab===key ? '#d4d8ff' : 'var(--border)'}`,
+                borderRadius: 10,
+                padding:     '1px 7px',
+                fontSize:    10,
+                fontWeight:  700,
+              }}>
+                {tabs[key]?.length || 0}
+              </span>
             </button>
           ))}
         </div>
 
         <div style={{ display:'grid', gridTemplateColumns:'3fr 1fr', gap:16 }}>
+
           {/* Vaccination list */}
           <div className="card">
             {shown.length === 0 ? (
@@ -118,7 +151,9 @@ export default function HealthPage() {
                     </div>
                     <span className={`status-badge ${STATUS_CLASS[v.status]||'status-grey'}`}>{v.status}</span>
                     {v.status !== 'COMPLETED' && (
-                      <button onClick={() => setCompleteModal(v)} className="btn btn-primary" style={{ fontSize:11, padding:'5px 12px', flexShrink:0 }}>Mark Done</button>
+                      <div style={{ flexShrink:0 }}>
+                        <button onClick={() => setCompleteModal(v)} className="btn btn-primary" style={{ fontSize:11, padding:'5px 12px' }}>Mark Done</button>
+                      </div>
                     )}
                   </div>
                 ))}
@@ -154,54 +189,75 @@ export default function HealthPage() {
         </div>
       </div>
 
-      {/* Schedule modal */}
+      {/* ── Schedule Vaccination Modal (portal) ── */}
       {scheduleModal && (
-        <div className="modal-overlay" onClick={() => setScheduleModal(false)}>
-          <div className="modal" style={{ width:460, maxWidth:'95vw' }} onClick={e => e.stopPropagation()}>
-            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:20 }}>
-              <h2 style={{ fontFamily:"'Poppins',sans-serif", fontSize:18, fontWeight:700, color:'var(--text-primary)' }}>Schedule Vaccination</h2>
-              <button onClick={() => setScheduleModal(false)} style={{ background:'none', border:'none', fontSize:20, cursor:'pointer', color:'var(--text-muted)' }}>✕</button>
+        <Modal
+          title="💉 Schedule Vaccination"
+          width={460}
+          onClose={() => setScheduleModal(false)}
+          footer={
+            <>
+              <button onClick={() => setScheduleModal(false)} className="btn btn-ghost">Cancel</button>
+              <button onClick={handleSchedule} disabled={saving || !form.vaccineName || !form.scheduledDate} className="btn btn-primary">
+                {saving ? 'Saving…' : 'Schedule Vaccination'}
+              </button>
+            </>
+          }
+        >
+          <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
+            <div>
+              <label className="label">Vaccine Name</label>
+              <input value={form.vaccineName} onChange={e=>setForm(p=>({...p,vaccineName:e.target.value}))} className="input" placeholder="e.g. Newcastle Disease" />
             </div>
-            <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
-              <div><label className="label">Vaccine Name</label><input value={form.vaccineName} onChange={e=>setForm(p=>({...p,vaccineName:e.target.value}))} className="input" placeholder="e.g. Newcastle Disease" /></div>
-              <div><label className="label">Flock</label>
-                <select value={form.flockId} onChange={e=>setForm(p=>({...p,flockId:e.target.value}))} className="input">
-                  <option value="">Select flock…</option>
-                  {flocks.map(f => <option key={f.id} value={f.id}>{f.batchCode} — {f.birdType}</option>)}
-                </select>
-              </div>
-              <div><label className="label">Scheduled Date</label><input type="date" value={form.scheduledDate} onChange={e=>setForm(p=>({...p,scheduledDate:e.target.value}))} className="input" /></div>
-              <div><label className="label">Notes</label><input value={form.notes} onChange={e=>setForm(p=>({...p,notes:e.target.value}))} className="input" placeholder="Optional notes…" /></div>
+            <div>
+              <label className="label">Flock</label>
+              <select value={form.flockId} onChange={e=>setForm(p=>({...p,flockId:e.target.value}))} className="input">
+                <option value="">Select flock…</option>
+                {flocks.map(f => <option key={f.id} value={f.id}>{f.batchCode} — {f.birdType}</option>)}
+              </select>
             </div>
-            <div style={{ display:'flex', gap:8, marginTop:20 }}>
-              <button onClick={() => setScheduleModal(false)} className="btn btn-ghost" style={{ flex:1 }}>Cancel</button>
-              <button onClick={handleSchedule} disabled={saving||!form.vaccineName||!form.scheduledDate} className="btn btn-primary" style={{ flex:2 }}>{saving?'Saving…':'Schedule Vaccination'}</button>
+            <div>
+              <label className="label">Scheduled Date</label>
+              <input type="date" value={form.scheduledDate} onChange={e=>setForm(p=>({...p,scheduledDate:e.target.value}))} className="input" />
+            </div>
+            <div>
+              <label className="label">Notes</label>
+              <input value={form.notes} onChange={e=>setForm(p=>({...p,notes:e.target.value}))} className="input" placeholder="Optional notes…" />
             </div>
           </div>
-        </div>
+        </Modal>
       )}
 
-      {/* Complete modal */}
+      {/* ── Mark as Completed Modal (portal) ── */}
       {completeModal && (
-        <div className="modal-overlay" onClick={() => setCompleteModal(null)}>
-          <div className="modal" style={{ width:420, maxWidth:'95vw' }} onClick={e => e.stopPropagation()}>
-            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:20 }}>
-              <h2 style={{ fontFamily:"'Poppins',sans-serif", fontSize:18, fontWeight:700, color:'var(--text-primary)' }}>Mark as Completed</h2>
-              <button onClick={() => setCompleteModal(null)} style={{ background:'none', border:'none', fontSize:20, cursor:'pointer', color:'var(--text-muted)' }}>✕</button>
+        <Modal
+          title="✅ Mark as Completed"
+          width={420}
+          onClose={() => setCompleteModal(null)}
+          footer={
+            <>
+              <button onClick={() => setCompleteModal(null)} className="btn btn-ghost">Cancel</button>
+              <button onClick={handleComplete} disabled={saving} className="btn btn-primary">
+                {saving ? 'Saving…' : '✓ Confirm Done'}
+              </button>
+            </>
+          }
+        >
+          <div className="alert alert-blue" style={{ marginBottom:16 }}>
+            <span>💉</span>
+            <span><strong>{completeModal.vaccineName}</strong> — {completeModal.flock?.batchCode}</span>
+          </div>
+          <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
+            <div>
+              <label className="label">Batch / Lot Number</label>
+              <input value={completeForm.batchNumber} onChange={e=>setCompleteForm(p=>({...p,batchNumber:e.target.value}))} className="input" placeholder="e.g. ND-2026-001" />
             </div>
-            <div className="alert alert-blue" style={{ marginBottom:16 }}>
-              <span>💉</span><span><strong>{completeModal.vaccineName}</strong> — {completeModal.flock?.batchCode}</span>
-            </div>
-            <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
-              <div><label className="label">Batch / Lot Number</label><input value={completeForm.batchNumber} onChange={e=>setCompleteForm(p=>({...p,batchNumber:e.target.value}))} className="input" placeholder="e.g. ND-2026-001" /></div>
-              <div><label className="label">Notes</label><input value={completeForm.notes} onChange={e=>setCompleteForm(p=>({...p,notes:e.target.value}))} className="input" placeholder="Any observations…" /></div>
-            </div>
-            <div style={{ display:'flex', gap:8, marginTop:20 }}>
-              <button onClick={() => setCompleteModal(null)} className="btn btn-ghost" style={{ flex:1 }}>Cancel</button>
-              <button onClick={handleComplete} disabled={saving} className="btn btn-primary" style={{ flex:2 }}>{saving?'Saving…':'✓ Confirm Done'}</button>
+            <div>
+              <label className="label">Notes</label>
+              <input value={completeForm.notes} onChange={e=>setCompleteForm(p=>({...p,notes:e.target.value}))} className="input" placeholder="Any observations…" />
             </div>
           </div>
-        </div>
+        </Modal>
       )}
     </AppShell>
   );

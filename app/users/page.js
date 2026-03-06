@@ -2,20 +2,21 @@
 import { useState, useEffect, useCallback } from 'react';
 import AppShell from '@/components/layout/AppShell';
 import { useAuth } from '@/components/layout/AuthProvider';
+import Modal from '@/components/ui/Modal';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const ROLES = [
-  { value: 'CHAIRPERSON',       label: 'Chairperson',       group: 'Leadership',   color: '#6c63ff' },
-  { value: 'FARM_ADMIN',        label: 'Farm Admin',        group: 'Leadership',   color: '#6c63ff' },
-  { value: 'FARM_MANAGER',      label: 'Farm Manager',      group: 'Management',   color: '#3b82f6' },
-  { value: 'STORE_MANAGER',     label: 'Store Manager',     group: 'Management',   color: '#3b82f6' },
-  { value: 'FEED_MILL_MANAGER', label: 'Feed Mill Manager', group: 'Management',   color: '#3b82f6' },
-  { value: 'PEN_MANAGER',       label: 'Pen Manager',       group: 'Supervisors',  color: '#f59e0b' },
-  { value: 'STORE_CLERK',       label: 'Store Clerk',       group: 'Staff',        color: '#22c55e' },
-  { value: 'QC_TECHNICIAN',     label: 'QC Technician',     group: 'Staff',        color: '#22c55e' },
-  { value: 'PRODUCTION_STAFF',  label: 'Production Staff',  group: 'Staff',        color: '#22c55e' },
-  { value: 'PEN_WORKER',        label: 'Pen Worker',        group: 'Field',        color: '#9ca3af' },
+  { value: 'CHAIRPERSON',       label: 'Chairperson',       group: 'Leadership',  color: '#6c63ff' },
+  { value: 'FARM_ADMIN',        label: 'Farm Admin',        group: 'Leadership',  color: '#6c63ff' },
+  { value: 'FARM_MANAGER',      label: 'Farm Manager',      group: 'Management',  color: '#3b82f6' },
+  { value: 'STORE_MANAGER',     label: 'Store Manager',     group: 'Management',  color: '#3b82f6' },
+  { value: 'FEED_MILL_MANAGER', label: 'Feed Mill Manager', group: 'Management',  color: '#3b82f6' },
+  { value: 'PEN_MANAGER',       label: 'Pen Manager',       group: 'Supervisors', color: '#f59e0b' },
+  { value: 'STORE_CLERK',       label: 'Store Clerk',       group: 'Staff',       color: '#22c55e' },
+  { value: 'QC_TECHNICIAN',     label: 'QC Technician',     group: 'Staff',       color: '#22c55e' },
+  { value: 'PRODUCTION_STAFF',  label: 'Production Staff',  group: 'Staff',       color: '#22c55e' },
+  { value: 'PEN_WORKER',        label: 'Pen Worker',        group: 'Field',       color: '#9ca3af' },
 ];
 
 const CREATABLE_ROLES = ROLES.filter(r =>
@@ -40,9 +41,11 @@ const PERMISSIONS = {
 function roleColor(role) { return ROLE_MAP[role]?.color || '#9ca3af'; }
 function roleLabel(role) { return ROLE_MAP[role]?.label || role; }
 
+// ── Small shared components ───────────────────────────────────────────────────
+
 function Avatar({ user, size = 36 }) {
   const initials = `${user.firstName?.[0] || ''}${user.lastName?.[0] || ''}`.toUpperCase();
-  const color = roleColor(user.role);
+  const color    = roleColor(user.role);
   return (
     <div style={{
       width: size, height: size, borderRadius: '50%',
@@ -84,25 +87,27 @@ function StatCard({ label, value, color, icon }) {
   );
 }
 
-// ── Create / Edit Modal ────────────────────────────────────────────────────────
+// ── Create / Edit User Modal (portal) ────────────────────────────────────────
 
 function UserModal({ mode, editUser, farms, penSections, onClose, onSave }) {
   const blank = {
     firstName: '', lastName: '', email: '', phone: '',
     role: 'PEN_WORKER', farmId: '', password: '', penSectionIds: [],
   };
+
   const [form, setForm] = useState(mode === 'edit' ? {
-    firstName: editUser.firstName,
-    lastName:  editUser.lastName,
-    email:     editUser.email,
-    phone:     editUser.phone || '',
-    role:      editUser.role,
-    farmId:    editUser.farmId || '',
-    password:  '',
+    firstName:     editUser.firstName,
+    lastName:      editUser.lastName,
+    email:         editUser.email,
+    phone:         editUser.phone || '',
+    role:          editUser.role,
+    farmId:        editUser.farmId || '',
+    password:      '',
     penSectionIds: editUser.penAssignments?.map(a => a.penSection.id) || [],
   } : blank);
+
   const [saving, setSaving] = useState(false);
-  const [error, setError]   = useState('');
+  const [error,  setError]  = useState('');
 
   const up = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
@@ -116,6 +121,13 @@ function UserModal({ mode, editUser, farms, penSections, onClose, onSave }) {
   };
 
   const isPenWorker = form.role === 'PEN_WORKER' || form.role === 'PEN_MANAGER';
+
+  const sectionsByPen = penSections.reduce((acc, s) => {
+    const penName = `${s.pen.name} (${s.pen.operationType})`;
+    if (!acc[penName]) acc[penName] = [];
+    acc[penName].push(s);
+    return acc;
+  }, {});
 
   async function handleSubmit() {
     setError('');
@@ -133,10 +145,10 @@ function UserModal({ mode, editUser, farms, penSections, onClose, onSave }) {
             ...(form.isActive !== undefined && { isActive: form.isActive }) };
 
       const res = await fetch('/api/users', {
-        method: mode === 'create' ? 'POST' : 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        method:      mode === 'create' ? 'POST' : 'PATCH',
+        headers:     { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify(payload),
+        body:        JSON.stringify(payload),
       });
       const data = await res.json();
       if (!res.ok) return setError(data.error || 'Failed to save');
@@ -148,169 +160,140 @@ function UserModal({ mode, editUser, farms, penSections, onClose, onSave }) {
     }
   }
 
-  // Group pen sections by pen
-  const sectionsByPen = penSections.reduce((acc, s) => {
-    const penName = `${s.pen.name} (${s.pen.operationType})`;
-    if (!acc[penName]) acc[penName] = [];
-    acc[penName].push(s);
-    return acc;
-  }, {});
-
   return (
-    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal" style={{ width: '100%', maxWidth: 560 }}>
-        {/* Header */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-          <div>
-            <h2 style={{ fontFamily: "'Poppins',sans-serif", fontSize: 17, fontWeight: 700, margin: 0 }}>
-              {mode === 'create' ? '➕ Add Staff Member' : '✏️ Edit Staff Member'}
-            </h2>
-            <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
-              {mode === 'create' ? 'Create a new account for your team' : `Editing ${editUser.firstName} ${editUser.lastName}`}
-            </p>
-          </div>
-          <button onClick={onClose} className="btn btn-ghost" style={{ padding: '6px 10px', fontSize: 16 }}>✕</button>
-        </div>
-
-        {error && (
-          <div className="alert alert-red" style={{ marginBottom: 16 }}>⚠ {error}</div>
-        )}
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          {/* Name row */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <div>
-              <label className="label">First Name *</label>
-              <input className="input" value={form.firstName} onChange={e => up('firstName', e.target.value)} placeholder="Amina" disabled={mode === 'edit'} />
-            </div>
-            <div>
-              <label className="label">Last Name *</label>
-              <input className="input" value={form.lastName} onChange={e => up('lastName', e.target.value)} placeholder="Bello" disabled={mode === 'edit'} />
-            </div>
-          </div>
-
-          {/* Email + Phone */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <div>
-              <label className="label">Email Address *</label>
-              <input className="input" type="email" value={form.email} onChange={e => up('email', e.target.value)} placeholder="amina@greenacres.ng" disabled={mode === 'edit'} />
-            </div>
-            <div>
-              <label className="label">Phone</label>
-              <input className="input" value={form.phone} onChange={e => up('phone', e.target.value)} placeholder="+234 801 234 5678" />
-            </div>
-          </div>
-
-          {/* Role */}
-          <div>
-            <label className="label">Role *</label>
-            <select className="input" value={form.role} onChange={e => up('role', e.target.value)}>
-              {CREATABLE_ROLES.map(r => (
-                <option key={r.value} value={r.value}>{r.label}</option>
-              ))}
-            </select>
-            {form.role && (
-              <div style={{ marginTop: 6, fontSize: 11, color: 'var(--text-muted)', paddingLeft: 4 }}>
-                ℹ {PERMISSIONS[form.role]?.label}
-              </div>
-            )}
-          </div>
-
-          {/* Farm assignment */}
-          {farms.length > 0 && (
-            <div>
-              <label className="label">Farm Assignment</label>
-              <select className="input" value={form.farmId} onChange={e => up('farmId', e.target.value)}>
-                <option value="">— No specific farm (org-wide) —</option>
-                {farms.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
-              </select>
-            </div>
-          )}
-
-          {/* Pen section assignments — only for field roles */}
-          {isPenWorker && penSections.length > 0 && (
-            <div>
-              <label className="label">Pen Section Assignments</label>
-              <div style={{
-                border: '1.5px solid var(--border)', borderRadius: 8,
-                maxHeight: 180, overflowY: 'auto', padding: 10,
-              }}>
-                {Object.entries(sectionsByPen).map(([penName, sections]) => (
-                  <div key={penName} style={{ marginBottom: 10 }}>
-                    <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 4 }}>
-                      {penName}
-                    </div>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                      {sections.map(s => {
-                        const selected = form.penSectionIds.includes(s.id);
-                        return (
-                          <button
-                            key={s.id}
-                            type="button"
-                            onClick={() => toggleSection(s.id)}
-                            style={{
-                              padding: '4px 10px', borderRadius: 6, fontSize: 12, fontWeight: 600,
-                              cursor: 'pointer', border: '1.5px solid',
-                              background: selected ? 'var(--purple-light)' : '#fff',
-                              color: selected ? 'var(--purple)' : 'var(--text-secondary)',
-                              borderColor: selected ? 'var(--purple)' : 'var(--border)',
-                              transition: 'all 0.15s',
-                            }}
-                          >
-                            {selected ? '✓ ' : ''}{s.name}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-                {form.penSectionIds.length} section{form.penSectionIds.length !== 1 ? 's' : ''} selected
-              </div>
-            </div>
-          )}
-
-          {/* Password — create only */}
-          {mode === 'create' && (
-            <div>
-              <label className="label">Password *</label>
-              <input className="input" type="password" value={form.password} onChange={e => up('password', e.target.value)} placeholder="Min. 8 characters" />
-            </div>
-          )}
-        </div>
-
-        {/* Footer */}
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 24, paddingTop: 20, borderTop: '1px solid var(--border)' }}>
+    <Modal
+      title={mode === 'create' ? '➕ Add Staff Member' : '✏️ Edit Staff Member'}
+      subtitle={mode === 'create' ? 'Create a new account for your team' : `Editing ${editUser?.firstName} ${editUser?.lastName}`}
+      width={560}
+      onClose={onClose}
+      footer={
+        <>
           <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
           <button className="btn btn-primary" onClick={handleSubmit} disabled={saving}>
             {saving ? 'Saving…' : mode === 'create' ? 'Create Account' : 'Save Changes'}
           </button>
+        </>
+      }
+    >
+      {error && <div className="alert alert-red" style={{ marginBottom: 16 }}>⚠ {error}</div>}
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {/* Name */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div>
+            <label className="label">First Name *</label>
+            <input className="input" value={form.firstName} onChange={e => up('firstName', e.target.value)} placeholder="Amina" disabled={mode === 'edit'} />
+          </div>
+          <div>
+            <label className="label">Last Name *</label>
+            <input className="input" value={form.lastName} onChange={e => up('lastName', e.target.value)} placeholder="Bello" disabled={mode === 'edit'} />
+          </div>
         </div>
+
+        {/* Email + Phone */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div>
+            <label className="label">Email Address *</label>
+            <input className="input" type="email" value={form.email} onChange={e => up('email', e.target.value)} placeholder="amina@greenacres.ng" disabled={mode === 'edit'} />
+          </div>
+          <div>
+            <label className="label">Phone</label>
+            <input className="input" value={form.phone} onChange={e => up('phone', e.target.value)} placeholder="+234 801 234 5678" />
+          </div>
+        </div>
+
+        {/* Role */}
+        <div>
+          <label className="label">Role *</label>
+          <select className="input" value={form.role} onChange={e => up('role', e.target.value)}>
+            {CREATABLE_ROLES.map(r => (
+              <option key={r.value} value={r.value}>{r.label}</option>
+            ))}
+          </select>
+          {form.role && (
+            <div style={{ marginTop: 6, fontSize: 11, color: 'var(--text-muted)', paddingLeft: 4 }}>
+              ℹ {PERMISSIONS[form.role]?.label}
+            </div>
+          )}
+        </div>
+
+        {/* Farm assignment */}
+        {farms.length > 0 && (
+          <div>
+            <label className="label">Farm Assignment</label>
+            <select className="input" value={form.farmId} onChange={e => up('farmId', e.target.value)}>
+              <option value="">— No specific farm (org-wide) —</option>
+              {farms.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+            </select>
+          </div>
+        )}
+
+        {/* Pen section assignments — only for field roles */}
+        {isPenWorker && penSections.length > 0 && (
+          <div>
+            <label className="label">Pen Section Assignments</label>
+            <div style={{
+              border: '1.5px solid var(--border)', borderRadius: 8,
+              maxHeight: 180, overflowY: 'auto', padding: 10,
+            }}>
+              {Object.entries(sectionsByPen).map(([penName, sections]) => (
+                <div key={penName} style={{ marginBottom: 10 }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 4 }}>
+                    {penName}
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {sections.map(s => {
+                      const selected = form.penSectionIds.includes(s.id);
+                      return (
+                        <button
+                          key={s.id}
+                          type="button"
+                          onClick={() => toggleSection(s.id)}
+                          style={{
+                            padding: '4px 10px', borderRadius: 6, fontSize: 12, fontWeight: 600,
+                            cursor: 'pointer', border: '1.5px solid',
+                            background:   selected ? 'var(--purple-light)' : '#fff',
+                            color:        selected ? 'var(--purple)' : 'var(--text-secondary)',
+                            borderColor:  selected ? 'var(--purple)' : 'var(--border)',
+                            transition:   'all 0.15s',
+                          }}
+                        >
+                          {selected ? '✓ ' : ''}{s.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+              {form.penSectionIds.length} section{form.penSectionIds.length !== 1 ? 's' : ''} selected
+            </div>
+          </div>
+        )}
+
+        {/* Password — create only */}
+        {mode === 'create' && (
+          <div>
+            <label className="label">Password *</label>
+            <input className="input" type="password" value={form.password} onChange={e => up('password', e.target.value)} placeholder="Min. 8 characters" />
+          </div>
+        )}
       </div>
-    </div>
+    </Modal>
   );
 }
 
-// ── Deactivate confirmation ───────────────────────────────────────────────────
+// ── Deactivate / Reactivate confirm modal (portal) ────────────────────────────
 
-function ConfirmModal({ user: target, onClose, onConfirm, saving }) {
+function ConfirmModal({ user: target, saving, onClose, onConfirm }) {
   const action = target.isActive ? 'Deactivate' : 'Reactivate';
   return (
-    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal" style={{ maxWidth: 400, width: '100%' }}>
-        <div style={{ textAlign: 'center', padding: '8px 0' }}>
-          <div style={{ fontSize: 40, marginBottom: 12 }}>{target.isActive ? '🔒' : '🔓'}</div>
-          <h3 style={{ fontFamily: "'Poppins',sans-serif", fontSize: 17, fontWeight: 700, marginBottom: 8 }}>
-            {action} {target.firstName}?
-          </h3>
-          <p style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.6 }}>
-            {target.isActive
-              ? `${target.firstName} ${target.lastName} will lose access immediately. Their records will be preserved.`
-              : `${target.firstName} ${target.lastName} will regain full access to their account.`}
-          </p>
-        </div>
-        <div style={{ display: 'flex', gap: 10, marginTop: 24 }}>
+    <Modal
+      width={400}
+      onClose={onClose}
+      footer={
+        <>
           <button className="btn btn-ghost" style={{ flex: 1 }} onClick={onClose}>Cancel</button>
           <button
             className={`btn ${target.isActive ? 'btn-danger' : 'btn-primary'}`}
@@ -320,13 +303,25 @@ function ConfirmModal({ user: target, onClose, onConfirm, saving }) {
           >
             {saving ? '…' : action}
           </button>
-        </div>
+        </>
+      }
+    >
+      <div style={{ textAlign: 'center', padding: '8px 0' }}>
+        <div style={{ fontSize: 40, marginBottom: 12 }}>{target.isActive ? '🔒' : '🔓'}</div>
+        <h3 style={{ fontFamily: "'Poppins',sans-serif", fontSize: 17, fontWeight: 700, marginBottom: 8 }}>
+          {action} {target.firstName}?
+        </h3>
+        <p style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.6 }}>
+          {target.isActive
+            ? `${target.firstName} ${target.lastName} will lose access immediately. Their records will be preserved.`
+            : `${target.firstName} ${target.lastName} will regain full access to their account.`}
+        </p>
       </div>
-    </div>
+    </Modal>
   );
 }
 
-// ── User detail slide-out panel ────────────────────────────────────────────────
+// ── User detail slide-out panel (unchanged — uses its own fixed-position rendering) ──
 
 function UserPanel({ user: u, onEdit, onToggle, onClose }) {
   const daysSinceLogin = u.lastLoginAt
@@ -334,16 +329,8 @@ function UserPanel({ user: u, onEdit, onToggle, onClose }) {
     : null;
 
   return (
-    <div style={{
-      position: 'fixed', inset: 0, zIndex: 150,
-      display: 'flex', justifyContent: 'flex-end',
-    }}>
-      {/* Backdrop */}
-      <div
-        onClick={onClose}
-        style={{ position: 'absolute', inset: 0, background: 'rgba(26,26,46,0.3)', backdropFilter: 'blur(1px)' }}
-      />
-      {/* Panel */}
+    <div style={{ position: 'fixed', inset: 0, zIndex: 150, display: 'flex', justifyContent: 'flex-end' }}>
+      <div onClick={onClose} style={{ position: 'absolute', inset: 0, background: 'rgba(26,26,46,0.3)', backdropFilter: 'blur(1px)' }} />
       <div style={{
         position: 'relative', width: 380, background: 'var(--bg-surface)',
         height: '100%', overflowY: 'auto', boxShadow: '-4px 0 32px rgba(0,0,0,0.12)',
@@ -351,18 +338,12 @@ function UserPanel({ user: u, onEdit, onToggle, onClose }) {
       }}>
         <style>{`@keyframes slideIn { from { transform: translateX(100%) } to { transform: translateX(0) } }`}</style>
 
-        {/* Top bar */}
-        <div style={{
-          padding: '20px 24px', borderBottom: '1px solid var(--border)',
-          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-          background: 'var(--bg-elevated)',
-        }}>
+        <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--bg-elevated)' }}>
           <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Staff Profile</span>
           <button onClick={onClose} className="btn btn-ghost" style={{ padding: '4px 8px' }}>✕</button>
         </div>
 
         <div style={{ padding: 24 }}>
-          {/* Avatar + name */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 24 }}>
             <Avatar user={u} size={56} />
             <div>
@@ -378,7 +359,6 @@ function UserPanel({ user: u, onEdit, onToggle, onClose }) {
             </div>
           </div>
 
-          {/* Contact */}
           <div className="card" style={{ marginBottom: 16, padding: 16 }}>
             <div className="section-header">Contact</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -401,7 +381,6 @@ function UserPanel({ user: u, onEdit, onToggle, onClose }) {
             </div>
           </div>
 
-          {/* Activity */}
           <div className="card" style={{ marginBottom: 16, padding: 16 }}>
             <div className="section-header">Activity</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: 13 }}>
@@ -409,8 +388,8 @@ function UserPanel({ user: u, onEdit, onToggle, onClose }) {
                 <span style={{ color: 'var(--text-muted)' }}>Last login</span>
                 <span style={{ fontWeight: 600 }}>
                   {daysSinceLogin === null ? 'Never' :
-                   daysSinceLogin === 0 ? 'Today' :
-                   daysSinceLogin === 1 ? 'Yesterday' :
+                   daysSinceLogin === 0    ? 'Today' :
+                   daysSinceLogin === 1    ? 'Yesterday' :
                    `${daysSinceLogin}d ago`}
                 </span>
               </div>
@@ -425,17 +404,12 @@ function UserPanel({ user: u, onEdit, onToggle, onClose }) {
             </div>
           </div>
 
-          {/* Pen assignments */}
           {u.penAssignments?.length > 0 && (
             <div className="card" style={{ marginBottom: 16, padding: 16 }}>
               <div className="section-header">Pen Assignments ({u.penAssignments.length})</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {u.penAssignments.map(a => (
-                  <div key={a.id} style={{
-                    display: 'flex', alignItems: 'center', gap: 10,
-                    padding: '8px 10px', background: 'var(--bg-elevated)',
-                    borderRadius: 8, fontSize: 13,
-                  }}>
+                  <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', background: 'var(--bg-elevated)', borderRadius: 8, fontSize: 13 }}>
                     <span>{a.penSection.pen.operationType === 'LAYER' ? '🥚' : '🍗'}</span>
                     <div>
                       <div style={{ fontWeight: 600 }}>{a.penSection.pen.name}</div>
@@ -447,7 +421,6 @@ function UserPanel({ user: u, onEdit, onToggle, onClose }) {
             </div>
           )}
 
-          {/* Staff profile */}
           {u.staffProfile && (
             <div className="card" style={{ marginBottom: 16, padding: 16 }}>
               <div className="section-header">Employment</div>
@@ -476,7 +449,6 @@ function UserPanel({ user: u, onEdit, onToggle, onClose }) {
             </div>
           )}
 
-          {/* Permissions summary */}
           <div className="card" style={{ marginBottom: 24, padding: 16, background: 'var(--purple-light)', border: '1px solid #d4d8ff' }}>
             <div className="section-header" style={{ color: 'var(--purple)' }}>Role Permissions</div>
             <p style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
@@ -484,7 +456,6 @@ function UserPanel({ user: u, onEdit, onToggle, onClose }) {
             </p>
           </div>
 
-          {/* Actions */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             <button className="btn btn-outline" style={{ width: '100%', justifyContent: 'center' }} onClick={onEdit}>
               ✏️ Edit Profile & Assignments
@@ -503,19 +474,19 @@ function UserPanel({ user: u, onEdit, onToggle, onClose }) {
   );
 }
 
-// ── Main Page ─────────────────────────────────────────────────────────────────
+// ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function UsersPage() {
   const { user: currentUser } = useAuth();
-  const [data,          setData]          = useState(null);
-  const [loading,       setLoading]       = useState(true);
-  const [search,        setSearch]        = useState('');
-  const [filterRole,    setFilterRole]    = useState('');
-  const [filterStatus,  setFilterStatus]  = useState('active');
-  const [selectedUser,  setSelectedUser]  = useState(null);
-  const [modal,         setModal]         = useState(null); // 'create' | 'edit' | 'confirm'
-  const [saving,        setSaving]        = useState(false);
-  const [toast,         setToast]         = useState(null);
+  const [data,         setData]         = useState(null);
+  const [loading,      setLoading]      = useState(true);
+  const [search,       setSearch]       = useState('');
+  const [filterRole,   setFilterRole]   = useState('');
+  const [filterStatus, setFilterStatus] = useState('active');
+  const [selectedUser, setSelectedUser] = useState(null);
+  const [modal,        setModal]        = useState(null); // 'create' | 'edit' | 'confirm'
+  const [saving,       setSaving]       = useState(false);
+  const [toast,        setToast]        = useState(null);
 
   const canManage = ['FARM_ADMIN', 'FARM_MANAGER', 'CHAIRPERSON', 'SUPER_ADMIN'].includes(currentUser?.role);
 
@@ -544,10 +515,10 @@ export default function UsersPage() {
     setSaving(true);
     try {
       const res = await fetch('/api/users', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        method:      'PATCH',
+        headers:     { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ userId: selectedUser.id, isActive: !selectedUser.isActive }),
+        body:        JSON.stringify({ userId: selectedUser.id, isActive: !selectedUser.isActive }),
       });
       if (res.ok) {
         showToast(`${selectedUser.firstName} ${selectedUser.isActive ? 'deactivated' : 'reactivated'} successfully`);
@@ -561,23 +532,17 @@ export default function UsersPage() {
     } finally { setSaving(false); }
   }
 
-  const users   = data?.users        || [];
-  const summary = data?.summary      || {};
-  const farms   = data?.farms        || [];
-  const penSections = data?.penSections || [];
+  const users       = data?.users        || [];
+  const summary     = data?.summary      || {};
+  const farms       = data?.farms        || [];
+  const penSections = data?.penSections  || [];
 
-  // Client-side filter for instant search feel
   const displayed = users.filter(u => {
     if (!search) return true;
     const q = search.toLowerCase();
-    return (
-      u.firstName.toLowerCase().includes(q) ||
-      u.lastName.toLowerCase().includes(q)  ||
-      u.email.toLowerCase().includes(q)
-    );
+    return u.firstName.toLowerCase().includes(q) || u.lastName.toLowerCase().includes(q) || u.email.toLowerCase().includes(q);
   });
 
-  // Group by role for the table
   const grouped = ROLES.reduce((acc, r) => {
     const group = displayed.filter(u => u.role === r.value);
     if (group.length > 0) acc.push({ roleInfo: r, users: group });
@@ -594,10 +559,9 @@ export default function UsersPage() {
             position: 'fixed', top: 20, right: 24, zIndex: 999,
             padding: '12px 20px', borderRadius: 10, fontSize: 13, fontWeight: 600,
             background: toast.type === 'error' ? 'var(--red-bg)' : 'var(--green-bg)',
-            color: toast.type === 'error' ? 'var(--red)' : '#16a34a',
-            border: `1px solid ${toast.type === 'error' ? 'var(--red-border)' : 'var(--green-border)'}`,
-            boxShadow: 'var(--shadow-md)',
-            animation: 'fadeInUp 0.2s ease',
+            color:      toast.type === 'error' ? 'var(--red)'    : '#16a34a',
+            border:     `1px solid ${toast.type === 'error' ? 'var(--red-border)' : 'var(--green-border)'}`,
+            boxShadow:  'var(--shadow-md)', animation: 'fadeInUp 0.2s ease',
           }}>
             {toast.type === 'error' ? '⚠ ' : '✓ '}{toast.msg}
           </div>
@@ -614,18 +578,20 @@ export default function UsersPage() {
             </p>
           </div>
           {canManage && (
-            <button className="btn btn-primary" onClick={() => setModal('create')}>
-              + Add Staff Member
-            </button>
+            <div style={{ flexShrink: 0 }}>
+              <button className="btn btn-primary" onClick={() => setModal('create')}>
+                + Add Staff Member
+              </button>
+            </div>
           )}
         </div>
 
-        {/* Stats row */}
+        {/* Stats */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12, marginBottom: 24 }}>
-          <StatCard label="Total Staff"    value={summary.total   || 0} icon="👥" color="#6c63ff" />
-          <StatCard label="Active"         value={summary.active  || 0} icon="✅" color="#22c55e" />
-          <StatCard label="Inactive"       value={summary.inactive|| 0} icon="🔒" color="#9ca3af" />
-          <StatCard label="Roles in Use"   value={Object.keys(summary.byRole || {}).length} icon="🎭" color="#f59e0b" />
+          <StatCard label="Total Staff"  value={summary.total    || 0} icon="👥" color="#6c63ff" />
+          <StatCard label="Active"       value={summary.active   || 0} icon="✅" color="#22c55e" />
+          <StatCard label="Inactive"     value={summary.inactive || 0} icon="🔒" color="#9ca3af" />
+          <StatCard label="Roles in Use" value={Object.keys(summary.byRole || {}).length} icon="🎭" color="#f59e0b" />
         </div>
 
         {/* Filters */}
@@ -644,17 +610,12 @@ export default function UsersPage() {
             </select>
             <div style={{ display: 'flex', gap: 6 }}>
               {['active','inactive','all'].map(s => (
-                <button
-                  key={s}
-                  onClick={() => setFilterStatus(s)}
-                  className="btn"
-                  style={{
-                    fontSize: 11, padding: '5px 12px', textTransform: 'capitalize',
-                    background: filterStatus === s ? 'var(--purple)' : '#fff',
-                    color: filterStatus === s ? '#fff' : 'var(--text-muted)',
-                    border: `1px solid ${filterStatus === s ? 'var(--purple)' : 'var(--border)'}`,
-                  }}
-                >
+                <button key={s} onClick={() => setFilterStatus(s)} className="btn" style={{
+                  fontSize: 11, padding: '5px 12px', textTransform: 'capitalize',
+                  background: filterStatus === s ? 'var(--purple)' : '#fff',
+                  color:      filterStatus === s ? '#fff' : 'var(--text-muted)',
+                  border:    `1px solid ${filterStatus === s ? 'var(--purple)' : 'var(--border)'}`,
+                }}>
                   {s}
                 </button>
               ))}
@@ -665,11 +626,9 @@ export default function UsersPage() {
           </div>
         </div>
 
-        {/* User table — grouped by role */}
+        {/* Table */}
         {loading ? (
-          <div className="card" style={{ textAlign: 'center', padding: 60, color: 'var(--text-muted)' }}>
-            Loading staff…
-          </div>
+          <div className="card" style={{ textAlign: 'center', padding: 60, color: 'var(--text-muted)' }}>Loading staff…</div>
         ) : displayed.length === 0 ? (
           <div className="card" style={{ textAlign: 'center', padding: 60 }}>
             <div style={{ fontSize: 40, marginBottom: 12 }}>👤</div>
@@ -679,28 +638,12 @@ export default function UsersPage() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             {grouped.map(({ roleInfo, users: roleUsers }) => (
               <div key={roleInfo.value} className="card" style={{ padding: 0, overflow: 'hidden' }}>
-                {/* Role group header */}
-                <div style={{
-                  padding: '10px 16px', background: `${roleInfo.color}08`,
-                  borderBottom: `2px solid ${roleInfo.color}20`,
-                  display: 'flex', alignItems: 'center', gap: 10,
-                }}>
-                  <div style={{
-                    width: 8, height: 8, borderRadius: '50%',
-                    background: roleInfo.color, flexShrink: 0,
-                  }} />
-                  <span style={{ fontSize: 11, fontWeight: 800, color: roleInfo.color, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                    {roleInfo.label}
-                  </span>
-                  <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 4 }}>
-                    — {roleUsers.length} member{roleUsers.length !== 1 ? 's' : ''}
-                  </span>
-                  <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text-muted)' }}>
-                    {PERMISSIONS[roleInfo.value]?.label}
-                  </span>
+                <div style={{ padding: '10px 16px', background: `${roleInfo.color}08`, borderBottom: `2px solid ${roleInfo.color}20`, display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={{ width: 8, height: 8, borderRadius: '50%', background: roleInfo.color, flexShrink: 0 }} />
+                  <span style={{ fontSize: 11, fontWeight: 800, color: roleInfo.color, textTransform: 'uppercase', letterSpacing: '0.06em' }}>{roleInfo.label}</span>
+                  <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 4 }}>— {roleUsers.length} member{roleUsers.length !== 1 ? 's' : ''}</span>
+                  <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text-muted)' }}>{PERMISSIONS[roleInfo.value]?.label}</span>
                 </div>
-
-                {/* Users in this role */}
                 <table className="table">
                   <tbody>
                     {roleUsers.map(u => {
@@ -708,12 +651,7 @@ export default function UsersPage() {
                         ? Math.floor((Date.now() - new Date(u.lastLoginAt)) / 86400000)
                         : null;
                       return (
-                        <tr
-                          key={u.id}
-                          style={{ cursor: 'pointer' }}
-                          onClick={() => setSelectedUser(u)}
-                        >
-                          {/* Avatar + name */}
+                        <tr key={u.id} style={{ cursor: 'pointer' }} onClick={() => setSelectedUser(u)}>
                           <td style={{ width: 280 }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                               <Avatar user={u} size={34} />
@@ -728,53 +666,29 @@ export default function UsersPage() {
                               </div>
                             </div>
                           </td>
-
-                          {/* Farm */}
-                          <td>
-                            <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                              {u.farm?.name || <span style={{ color: 'var(--text-faint)' }}>—</span>}
-                            </span>
-                          </td>
-
-                          {/* Pen assignments */}
+                          <td><span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{u.farm?.name || <span style={{ color: 'var(--text-faint)' }}>—</span>}</span></td>
                           <td>
                             {u.penAssignments?.length > 0 ? (
                               <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                                 {u.penAssignments.slice(0, 2).map(a => (
-                                  <span key={a.id} style={{
-                                    fontSize: 10, background: 'var(--bg-elevated)',
-                                    border: '1px solid var(--border)', borderRadius: 4,
-                                    padding: '2px 6px', color: 'var(--text-secondary)', fontWeight: 600,
-                                  }}>
+                                  <span key={a.id} style={{ fontSize: 10, background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 6px', color: 'var(--text-secondary)', fontWeight: 600 }}>
                                     {a.penSection.pen.name} · {a.penSection.name}
                                   </span>
                                 ))}
-                                {u.penAssignments.length > 2 && (
-                                  <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>+{u.penAssignments.length - 2} more</span>
-                                )}
+                                {u.penAssignments.length > 2 && <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>+{u.penAssignments.length - 2} more</span>}
                               </div>
                             ) : (
                               <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>No assignment</span>
                             )}
                           </td>
-
-                          {/* Last login */}
                           <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>
                             {daysSince === null ? 'Never logged in' :
-                             daysSince === 0 ? '🟢 Today' :
-                             daysSince === 1 ? '🟡 Yesterday' :
-                             daysSince <= 7  ? `🟡 ${daysSince}d ago` :
+                             daysSince === 0    ? '🟢 Today'        :
+                             daysSince === 1    ? '🟡 Yesterday'    :
+                             daysSince <= 7     ? `🟡 ${daysSince}d ago` :
                              `🔴 ${daysSince}d ago`}
                           </td>
-
-                          {/* Status */}
-                          <td>
-                            <span className={`status-badge ${u.isActive ? 'status-green' : 'status-grey'}`}>
-                              {u.isActive ? 'Active' : 'Inactive'}
-                            </span>
-                          </td>
-
-                          {/* Arrow */}
+                          <td><span className={`status-badge ${u.isActive ? 'status-green' : 'status-grey'}`}>{u.isActive ? 'Active' : 'Inactive'}</span></td>
                           <td style={{ width: 30, color: 'var(--text-faint)', fontSize: 16, textAlign: 'right' }}>›</td>
                         </tr>
                       );
@@ -787,38 +701,27 @@ export default function UsersPage() {
         )}
       </div>
 
-      {/* Modals */}
+      {/* ── Portal modals ── */}
       {modal === 'create' && (
-        <UserModal
-          mode="create"
-          farms={farms}
-          penSections={penSections}
+        <UserModal mode="create" farms={farms} penSections={penSections}
           onClose={() => setModal(null)}
           onSave={() => { setModal(null); load(); showToast('Staff member created successfully'); }}
         />
       )}
-
       {modal === 'edit' && selectedUser && (
-        <UserModal
-          mode="edit"
-          editUser={selectedUser}
-          farms={farms}
-          penSections={penSections}
+        <UserModal mode="edit" editUser={selectedUser} farms={farms} penSections={penSections}
           onClose={() => setModal(null)}
           onSave={() => { setModal(null); setSelectedUser(null); load(); showToast('Profile updated successfully'); }}
         />
       )}
-
       {modal === 'confirm' && selectedUser && (
-        <ConfirmModal
-          user={selectedUser}
-          saving={saving}
+        <ConfirmModal user={selectedUser} saving={saving}
           onClose={() => setModal(null)}
           onConfirm={handleToggleActive}
         />
       )}
 
-      {/* Side panel */}
+      {/* Side panel — no modal prop so only shows when no modal is open */}
       {selectedUser && !modal && (
         <UserPanel
           user={selectedUser}
