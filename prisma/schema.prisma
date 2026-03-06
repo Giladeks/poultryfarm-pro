@@ -1,0 +1,1952 @@
+// ============================================================================
+// PoultryFarm Pro — Complete Schema v2.0
+// Multi-tenant SaaS | 16 Modules | Layer + Broiler separation
+// ============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// MODULE 0 — PLATFORM / SAAS INFRASTRUCTURE
+// ============================================================================
+
+model Tenant {
+  id               String       @id @default(uuid())
+  farmName         String
+  subdomain        String       @unique
+  country          String       @db.Char(2)
+  timezone         String       @default("Africa/Lagos")
+  defaultCurrency  Currency     @default(NGN)
+  secondaryCurrency Currency?
+  exchangeRate     Decimal?     @db.Decimal(10,4)   // secondary per primary
+  logoUrl          String?
+  brandingConfig   Json?
+  address          String?
+  phone            String?
+  email            String?
+  status           TenantStatus @default(TRIAL)
+  // Add-on modules activated for this tenant
+  hasHatchery      Boolean      @default(false)
+  hasFeedMill      Boolean      @default(false)
+  hasProcessingPlant Boolean    @default(false)
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  subscription        Subscription?
+  users               User[]
+  farms               Farm[]
+  plans               Plan[]       @relation("TenantPlans")
+  auditLogs           AuditLog[]
+  notifications       Notification[]
+  alertRules          AlertRule[]
+  currencies          TenantCurrency[]
+
+  @@map("tenants")
+}
+
+enum TenantStatus {
+  ACTIVE
+  SUSPENDED
+  TRIAL
+  CANCELLED
+}
+
+enum Currency {
+  NGN
+  USD
+  GBP
+  EUR
+  GHS
+  KES
+  ZAR
+}
+
+// ─── SaaS Plans ──────────────────────────────────────────────────────────────
+
+model Plan {
+  id            String   @id @default(uuid())
+  name          String
+  maxBirds      Int
+  maxUsers      Int
+  maxFarms      Int      @default(1)
+  monthlyPrice  Decimal  @db.Decimal(10,2)
+  annualPrice   Decimal  @db.Decimal(10,2)
+  features      Json     // array of FeatureFlag strings
+  isPublic      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+
+  subscriptions Subscription[]
+  tenants       Tenant[]  @relation("TenantPlans")
+
+  @@map("plans")
+}
+
+model Subscription {
+  id                   String             @id @default(uuid())
+  tenantId             String             @unique
+  planId               String
+  stripeSubscriptionId String?
+  stripeCustomerId     String?
+  billingCycle         BillingCycle       @default(MONTHLY)
+  currentPeriodStart   DateTime
+  currentPeriodEnd     DateTime
+  trialEndsAt          DateTime?
+  cancelledAt          DateTime?
+  status               SubscriptionStatus @default(TRIALING)
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+  plan     Plan   @relation(fields: [planId], references: [id])
+
+  @@map("subscriptions")
+}
+
+enum BillingCycle {
+  MONTHLY
+  ANNUAL
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAST_DUE
+  CANCELLED
+  TRIALING
+}
+
+model TenantCurrency {
+  id           String   @id @default(uuid())
+  tenantId     String
+  currency     Currency
+  exchangeRate Decimal  @db.Decimal(10,4)
+  updatedAt    DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@unique([tenantId, currency])
+  @@map("tenant_currencies")
+}
+
+// ============================================================================
+// MODULE 1 — USER & ROLE MANAGEMENT
+// ============================================================================
+
+model User {
+  id              String    @id @default(uuid())
+  tenantId        String
+  farmId          String?   // null = access to all farms (Farm Admin, Farm Manager)
+  email           String
+  passwordHash    String
+  firstName       String
+  lastName        String
+  phone           String?
+  avatarUrl       String?
+  role            UserRole  @default(PEN_WORKER)
+  isActive        Boolean   @default(true)
+  lastLoginAt     DateTime?
+  passwordResetToken String?
+  passwordResetExpiry DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  tenant                Tenant              @relation(fields: [tenantId], references: [id])
+  farm                  Farm?               @relation(fields: [farmId], references: [id])
+  penAssignments        PenWorkerAssignment[]
+  tasksAssigned         Task[]              @relation("TaskAssignedTo")
+  tasksCreated          Task[]              @relation("TaskCreatedBy")
+  tasksApproved         Task[]              @relation("TaskApprovedBy")
+  mortalityRecords      MortalityRecord[]
+  feedConsumptionRecords FeedConsumption[]
+  eggProductionRecords  EggProduction[]
+  weightRecords         WeightRecord[]
+  broilerHarvestRecords BroilerHarvest[]
+  vaccinationsAdministered Vaccination[]
+  medicationLogs        MedicationLog[]
+  healthObservations    HealthObservation[]
+  vetVisits             VetVisit[]
+  dailyReports          DailyReport[]       @relation("ReportSubmittedBy")
+  dailyReportsApproved  DailyReport[]       @relation("ReportApprovedBy")
+  storeReceipts         StoreReceipt[]
+  storeIssuances        StoreIssuance[]
+  purchaseRequisitions  PurchaseRequisition[]
+  purchaseOrders        PurchaseOrder[]     @relation("POCreatedBy")
+  purchaseOrdersApproved PurchaseOrder[]    @relation("POApprovedBy")
+  salesOrders           SalesOrder[]
+  payments              Payment[]
+  payrollRecords        PayrollRecord[]
+  attendanceRecords     AttendanceRecord[]
+  leaveRequests         LeaveRequest[]      @relation("LeaveRequestedBy")
+  leaveApprovals        LeaveRequest[]      @relation("LeaveApprovedBy")
+  maintenanceRequests   MaintenanceRequest[]
+  workOrders            WorkOrder[]         @relation("WOAssignedTo")
+  workOrdersCreated     WorkOrder[]         @relation("WOCreatedBy")
+  feedMillBatches       FeedMillBatch[]
+  qcTests               QCTest[]
+  verifications         Verification[]
+  auditLogs             AuditLog[]
+  notifications         Notification[]      @relation("NotificationRecipient")
+  sentNotifications     Notification[]      @relation("NotificationSender")
+  biosecurityLogs       BiosecurityLog[]
+  staffProfile          StaffProfile?
+
+  @@unique([tenantId, email])
+  @@map("users")
+}
+
+enum UserRole {
+  // Platform level
+  SUPER_ADMIN          // SaaS platform admin
+  CHAIRPERSON          // Top-level org oversight
+  // Farm admin level
+  FARM_ADMIN           // System config, user management
+  // Operations
+  FARM_MANAGER         // Oversees all farm operations
+  STORE_MANAGER        // Verification & store oversight
+  FEED_MILL_MANAGER    // Feed mill operations
+  PEN_MANAGER          // Supervises assigned pens
+  // Staff level
+  STORE_CLERK          // Logs incoming/outgoing goods
+  PRODUCTION_STAFF     // Feed mill production
+  QC_TECHNICIAN        // Feed quality testing
+  PEN_WORKER           // Daily data entry
+}
+
+// Pen worker assignments (workers can be assigned to multiple sections)
+model PenWorkerAssignment {
+  id           String   @id @default(uuid())
+  userId       String
+  penSectionId String
+  assignedAt   DateTime @default(now())
+  isActive     Boolean  @default(true)
+
+  user       User       @relation(fields: [userId], references: [id])
+  penSection PenSection @relation(fields: [penSectionId], references: [id])
+
+  @@unique([userId, penSectionId])
+  @@map("pen_worker_assignments")
+}
+
+// ============================================================================
+// MODULE 2 — FARM STRUCTURE
+// A tenant can have multiple farms (multi-farm SaaS support)
+// ============================================================================
+
+model Farm {
+  id          String   @id @default(uuid())
+  tenantId    String
+  name        String
+  location    String?
+  address     String?
+  phone       String?
+  email       String?
+  managerId   String?  // Farm Manager user id
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id])
+  users   User[]
+  pens    Pen[]
+  stores  Store[]
+  feedMillBatches FeedMillBatch[]
+  productionTargets ProductionTarget[]
+  dailyReports DailyReport[]
+
+  @@map("farms")
+}
+
+model Pen {
+  id          String   @id @default(uuid())
+  farmId      String
+  name        String
+  operationType PenOperationType  // LAYER or BROILER — strict separation
+  capacity    Int
+  location    String?
+  buildYear   Int?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  farm     Farm         @relation(fields: [farmId], references: [id])
+  sections PenSection[]
+
+  @@map("pens")
+}
+
+enum PenOperationType {
+  LAYER
+  BROILER
+  BREEDER   // future
+  TURKEY    // future
+}
+
+model PenSection {
+  id          String  @id @default(uuid())
+  penId       String
+  name        String  // Section A, B, C, D
+  capacity    Int
+  isActive    Boolean @default(true)
+
+  pen                  Pen                   @relation(fields: [penId], references: [id])
+  workerAssignments    PenWorkerAssignment[]
+  flocks               Flock[]
+  mortalityRecords     MortalityRecord[]
+  feedConsumption      FeedConsumption[]
+  eggProduction        EggProduction[]
+  broilerHarvests      BroilerHarvest[]
+  weightRecords        WeightRecord[]
+  tasks                Task[]
+  healthObservations   HealthObservation[]
+  storeIssuances       StoreIssuance[]
+  dailyReports         DailyReport[]
+
+  @@map("pen_sections")
+}
+
+// ============================================================================
+// MODULE 2A — FLOCK MANAGEMENT (LAYER & BROILER SEPARATED)
+// ============================================================================
+
+model Flock {
+  id                  String      @id @default(uuid())
+  tenantId            String
+  penSectionId        String
+  batchCode           String
+  operationType       PenOperationType  // Must match pen's operationType
+  breed               String
+  dateOfPlacement     DateTime    @db.Date
+  initialCount        Int
+  currentCount        Int
+  source              FlockSource @default(PURCHASED)
+  purchaseCost        Decimal?    @db.Decimal(14,2)
+  purchaseCurrency    Currency    @default(NGN)
+  status              FlockStatus @default(ACTIVE)
+  notes               String?
+
+  // Layer-specific fields
+  expectedLayingStartDate DateTime? @db.Date
+  peakLayingRatePct       Decimal?  @db.Decimal(5,2)
+  depletionDate           DateTime? @db.Date  // when flock will be sold as spent hens
+
+  // Broiler-specific fields
+  targetWeightG           Decimal?  @db.Decimal(8,2)
+  expectedHarvestDate     DateTime? @db.Date
+  targetFCR               Decimal?  @db.Decimal(4,2)
+
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+
+  penSection           PenSection         @relation(fields: [penSectionId], references: [id])
+  mortalityRecords     MortalityRecord[]
+  feedConsumption      FeedConsumption[]
+  eggProduction        EggProduction[]    // layers only
+  broilerHarvests      BroilerHarvest[]   // broilers only
+  weightRecords        WeightRecord[]     // broilers primarily
+  vaccinations         Vaccination[]
+  medicationLogs       MedicationLog[]
+  healthObservations   HealthObservation[]
+  dailyReports         DailyReport[]
+  salesOrderItems      SalesOrderItem[]
+
+  @@unique([tenantId, batchCode])
+  @@map("flocks")
+}
+
+enum FlockStatus {
+  ACTIVE
+  HARVESTED
+  DEPLETED   // layers — end of lay cycle
+  CULLED
+  SOLD
+  TRANSFERRED
+}
+
+enum FlockSource {
+  OWN_HATCHERY
+  PURCHASED
+  TRANSFERRED
+}
+
+// ─── LAYER PRODUCTION ────────────────────────────────────────────────────────
+
+model EggProduction {
+  id              String   @id @default(uuid())
+  flockId         String
+  penSectionId    String
+  collectionDate  DateTime @db.Date
+  // Counts
+  totalEggs       Int
+  gradeACount     Int      @default(0)
+  gradeBCount     Int      @default(0)
+  crackedCount    Int      @default(0)
+  dirtyCount      Int      @default(0)
+  // Calculated
+  layingRatePct   Decimal  @db.Decimal(5,2)
+  // Packaging
+  cratesCount     Int?     // 1 crate = 30 eggs
+  // Submission flow
+  recordedById    String
+  approvedById    String?
+  approvedAt      DateTime?
+  submissionStatus SubmissionStatus @default(PENDING)
+  notes           String?
+  createdAt       DateTime @default(now())
+
+  flock      Flock      @relation(fields: [flockId], references: [id])
+  penSection PenSection @relation(fields: [penSectionId], references: [id])
+  recordedBy User       @relation(fields: [recordedById], references: [id])
+
+  @@map("egg_production")
+}
+
+// ─── BROILER PRODUCTION ───────────────────────────────────────────────────────
+
+model WeightRecord {
+  id            String   @id @default(uuid())
+  flockId       String
+  penSectionId  String
+  recordDate    DateTime @db.Date
+  ageInDays     Int
+  sampleSize    Int
+  avgWeightG    Decimal  @db.Decimal(8,2)
+  minWeightG    Decimal  @db.Decimal(8,2)
+  maxWeightG    Decimal  @db.Decimal(8,2)
+  uniformityPct Decimal? @db.Decimal(5,2)  // % birds within 10% of avg
+  recordedById  String
+  notes         String?
+  createdAt     DateTime @default(now())
+
+  flock      Flock      @relation(fields: [flockId], references: [id])
+  penSection PenSection @relation(fields: [penSectionId], references: [id])
+  recordedBy User       @relation(fields: [recordedById], references: [id])
+
+  @@map("weight_records")
+}
+
+model BroilerHarvest {
+  id              String   @id @default(uuid())
+  flockId         String
+  penSectionId    String
+  harvestDate     DateTime @db.Date
+  // Bird counts
+  birdsHarvested  Int
+  birdsRejected   Int      @default(0)
+  // Weights
+  totalLiveWeightKg  Decimal @db.Decimal(10,2)
+  avgLiveWeightG     Decimal @db.Decimal(8,2)
+  totalDressWeightKg Decimal? @db.Decimal(10,2)
+  dressingPct        Decimal? @db.Decimal(5,2)
+  // Grading
+  grade1Count     Int      @default(0)
+  grade2Count     Int      @default(0)
+  grade3Count     Int      @default(0)
+  // FCR at harvest
+  finalFCR        Decimal? @db.Decimal(5,3)
+  totalFeedKg     Decimal? @db.Decimal(10,2)
+  // Financials
+  pricePerKg      Decimal? @db.Decimal(10,2)
+  totalRevenue    Decimal? @db.Decimal(14,2)
+  currency        Currency @default(NGN)
+  // Submission
+  recordedById    String
+  approvedById    String?
+  approvedAt      DateTime?
+  submissionStatus SubmissionStatus @default(PENDING)
+  notes           String?
+  createdAt       DateTime @default(now())
+
+  flock      Flock      @relation(fields: [flockId], references: [id])
+  penSection PenSection @relation(fields: [penSectionId], references: [id])
+  recordedBy User       @relation(fields: [recordedById], references: [id])
+
+  @@map("broiler_harvests")
+}
+
+// ─── MORTALITY ────────────────────────────────────────────────────────────────
+
+model MortalityRecord {
+  id              String        @id @default(uuid())
+  flockId         String
+  penSectionId    String
+  recordedById    String
+  recordDate      DateTime      @db.Date
+  count           Int
+  causeCode       MortalityCause @default(UNKNOWN)
+  notes           String?
+  photoUrl        String?
+  approvedById    String?
+  approvedAt      DateTime?
+  submissionStatus SubmissionStatus @default(PENDING)
+  createdAt       DateTime      @default(now())
+
+  flock      Flock      @relation(fields: [flockId], references: [id])
+  penSection PenSection @relation(fields: [penSectionId], references: [id])
+  recordedBy User       @relation(fields: [recordedById], references: [id])
+
+  @@map("mortality_records")
+}
+
+enum MortalityCause {
+  DISEASE
+  INJURY
+  CULLED
+  UNKNOWN
+  HEAT_STRESS
+  FEED_ISSUE
+  PREDATOR
+  WATER_ISSUE
+  RESPIRATORY
+}
+
+enum SubmissionStatus {
+  PENDING    // submitted by worker, awaiting approval
+  APPROVED   // pen manager approved
+  REJECTED   // pen manager rejected, needs resubmission
+  VERIFIED   // store manager verified
+}
+
+// ─── DAILY REPORTS (approval workflow) ───────────────────────────────────────
+
+model DailyReport {
+  id              String           @id @default(uuid())
+  farmId          String
+  penSectionId    String
+  flockId         String?
+  reportDate      DateTime         @db.Date
+  operationType   PenOperationType
+  // Summary fields (auto-calculated from individual records)
+  totalMortality  Int              @default(0)
+  totalFeedKg     Decimal          @db.Decimal(10,2) @default(0)
+  totalEggs       Int?             // layers
+  layingRatePct   Decimal?         @db.Decimal(5,2)  // layers
+  avgWeightG      Decimal?         @db.Decimal(8,2)  // broilers
+  observations    String?
+  // Workflow
+  submittedById   String
+  submittedAt     DateTime         @default(now())
+  approvedById    String?
+  approvedAt      DateTime?
+  rejectedReason  String?
+  status          SubmissionStatus @default(PENDING)
+
+  farm        Farm       @relation(fields: [farmId], references: [id])
+  penSection  PenSection @relation(fields: [penSectionId], references: [id])
+  flock       Flock?     @relation(fields: [flockId], references: [id])
+  submittedBy User       @relation("ReportSubmittedBy", fields: [submittedById], references: [id])
+  approvedBy  User?      @relation("ReportApprovedBy", fields: [approvedById], references: [id])
+
+  @@unique([penSectionId, reportDate])
+  @@map("daily_reports")
+}
+
+// ============================================================================
+// MODULE 3 — FEED MANAGEMENT (External Supply + Optional Mill)
+// ============================================================================
+
+model FeedFormula {
+  id          String   @id @default(uuid())
+  tenantId    String
+  name        String   // e.g. "Layer Starter Phase 1"
+  birdType    PenOperationType
+  ageWeekMin  Int
+  ageWeekMax  Int
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  ingredients FeedFormulaIngredient[]
+  feedInventory FeedInventory[]
+
+  @@map("feed_formulas")
+}
+
+model FeedFormulaIngredient {
+  id          String   @id @default(uuid())
+  formulaId   String
+  ingredient  String   // e.g. "Maize", "Soybean Meal"
+  percentagePct Decimal @db.Decimal(5,2)
+
+  formula FeedFormula @relation(fields: [formulaId], references: [id])
+
+  @@map("feed_formula_ingredients")
+}
+
+model FeedInventory {
+  id               String    @id @default(uuid())
+  tenantId         String
+  storeId          String
+  feedType         String
+  formulaId        String?
+  currentStockKg   Decimal   @db.Decimal(12,2)
+  reorderLevelKg   Decimal   @db.Decimal(10,2)
+  maxStockKg       Decimal?  @db.Decimal(12,2)
+  costPerKg        Decimal   @db.Decimal(10,4)
+  currency         Currency  @default(NGN)
+  supplierId       String?
+  batchNumber      String?
+  expiryDate       DateTime? @db.Date
+  updatedAt        DateTime  @updatedAt
+  createdAt        DateTime  @default(now())
+
+  store         Store            @relation(fields: [storeId], references: [id])
+  formula       FeedFormula?     @relation(fields: [formulaId], references: [id])
+  supplier      Supplier?        @relation(fields: [supplierId], references: [id])
+  consumption   FeedConsumption[]
+  storeReceipts StoreReceipt[]   @relation("FeedReceipts")
+  issuances     StoreIssuance[]  @relation("FeedIssuances")
+
+  @@map("feed_inventory")
+}
+
+model FeedConsumption {
+  id              String   @id @default(uuid())
+  flockId         String
+  penSectionId    String
+  feedInventoryId String
+  recordedDate    DateTime @db.Date
+  quantityKg      Decimal  @db.Decimal(10,2)
+  gramsPerBird    Decimal? @db.Decimal(6,2)  // auto-calculated
+  costAtTime      Decimal  @db.Decimal(10,4)
+  currency        Currency @default(NGN)
+  recordedById    String
+  notes           String?
+  createdAt       DateTime @default(now())
+
+  flock         Flock         @relation(fields: [flockId], references: [id])
+  penSection    PenSection    @relation(fields: [penSectionId], references: [id])
+  feedInventory FeedInventory @relation(fields: [feedInventoryId], references: [id])
+  recordedBy    User          @relation(fields: [recordedById], references: [id])
+
+  @@map("feed_consumption")
+}
+
+// ─── FEED MILL (add-on module) ────────────────────────────────────────────────
+
+model FeedMillBatch {
+  id              String          @id @default(uuid())
+  tenantId        String
+  farmId          String
+  batchCode       String
+  formulaId       String?
+  targetQuantityKg Decimal        @db.Decimal(12,2)
+  actualQuantityKg Decimal?       @db.Decimal(12,2)
+  productionDate  DateTime        @db.Date
+  status          FeedMillStatus  @default(PLANNED)
+  producedById    String?
+  qcStatus        QCStatus        @default(PENDING)
+  qcCertifiedById String?
+  qcCertifiedAt   DateTime?
+  releasedToStoreAt DateTime?
+  costPerKg       Decimal?        @db.Decimal(10,4)
+  notes           String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  farm          Farm      @relation(fields: [farmId], references: [id])
+  producedBy    User?     @relation(fields: [producedById], references: [id])
+  qcTests       QCTest[]
+
+  @@unique([tenantId, batchCode])
+  @@map("feed_mill_batches")
+}
+
+enum FeedMillStatus {
+  PLANNED
+  IN_PRODUCTION
+  PRODUCED
+  QC_PASSED
+  QC_FAILED
+  RELEASED
+  REJECTED
+}
+
+model QCTest {
+  id              String    @id @default(uuid())
+  feedMillBatchId String
+  testType        String    // e.g. "Moisture", "Protein", "Aflatoxin"
+  testedById      String
+  testDate        DateTime  @db.Date
+  result          String
+  passedSpec      Boolean
+  specMin         Decimal?  @db.Decimal(8,4)
+  specMax         Decimal?  @db.Decimal(8,4)
+  notes           String?
+  createdAt       DateTime  @default(now())
+
+  feedMillBatch FeedMillBatch @relation(fields: [feedMillBatchId], references: [id])
+  testedBy      User          @relation(fields: [testedById], references: [id])
+
+  @@map("qc_tests")
+}
+
+enum QCStatus {
+  PENDING
+  IN_PROGRESS
+  PASSED
+  FAILED
+  WAIVED
+}
+
+// ============================================================================
+// MODULE 4 — INVENTORY MANAGEMENT
+// ============================================================================
+
+model Store {
+  id          String    @id @default(uuid())
+  farmId      String
+  name        String    // e.g. "Main Feed Store", "Medication Store"
+  storeType   StoreType
+  managerId   String?
+  location    String?
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+
+  farm          Farm            @relation(fields: [farmId], references: [id])
+  feedInventory FeedInventory[]
+  inventory     InventoryItem[]
+  receipts      StoreReceipt[]
+  issuances     StoreIssuance[]
+  verifications Verification[]
+
+  @@map("stores")
+}
+
+enum StoreType {
+  FEED
+  MEDICATION
+  EQUIPMENT
+  PACKAGING
+  GENERAL
+}
+
+model InventoryItem {
+  id              String        @id @default(uuid())
+  storeId         String
+  tenantId        String
+  name            String
+  category        ItemCategory
+  unit            String        // kg, litres, pieces, crates
+  currentStock    Decimal       @db.Decimal(12,2)
+  reorderLevel    Decimal       @db.Decimal(10,2)
+  maxStock        Decimal?      @db.Decimal(12,2)
+  costPerUnit     Decimal       @db.Decimal(10,4)
+  currency        Currency      @default(NGN)
+  supplierId      String?
+  batchNumber     String?
+  expiryDate      DateTime?     @db.Date
+  storageCondition String?
+  isActive        Boolean       @default(true)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  store         Store           @relation(fields: [storeId], references: [id])
+  supplier      Supplier?       @relation(fields: [supplierId], references: [id])
+  receipts      StoreReceipt[]  @relation("ItemReceipts")
+  issuances     StoreIssuance[] @relation("ItemIssuances")
+
+  @@map("inventory_items")
+}
+
+enum ItemCategory {
+  FEED
+  VACCINE
+  MEDICATION
+  DISINFECTANT
+  EQUIPMENT
+  PACKAGING
+  SPARE_PARTS
+  FUEL
+  OTHER
+}
+
+model StoreReceipt {
+  id              String   @id @default(uuid())
+  storeId         String
+  receivedById    String
+  receiptDate     DateTime @db.Date
+  referenceNumber String?  // PO number or delivery note
+  supplierId      String?
+  feedInventoryId String?
+  inventoryItemId String?
+  quantityReceived Decimal @db.Decimal(12,2)
+  unitCost        Decimal  @db.Decimal(10,4)
+  currency        Currency @default(NGN)
+  totalCost       Decimal  @db.Decimal(14,2)
+  batchNumber     String?
+  expiryDate      DateTime? @db.Date
+  // QC at receipt
+  qualityStatus   QCStatus @default(PENDING)
+  qualityNotes    String?
+  // Verification
+  verifiedById    String?
+  verifiedAt      DateTime?
+  notes           String?
+  createdAt       DateTime @default(now())
+
+  store         Store          @relation(fields: [storeId], references: [id])
+  receivedBy    User           @relation(fields: [receivedById], references: [id])
+  supplier      Supplier?      @relation(fields: [supplierId], references: [id])
+  feedInventory FeedInventory? @relation("FeedReceipts", fields: [feedInventoryId], references: [id])
+  inventoryItem InventoryItem? @relation("ItemReceipts", fields: [inventoryItemId], references: [id])
+
+  @@map("store_receipts")
+}
+
+model StoreIssuance {
+  id              String   @id @default(uuid())
+  storeId         String
+  penSectionId    String?
+  issuedById      String
+  issuanceDate    DateTime @db.Date
+  feedInventoryId String?
+  inventoryItemId String?
+  quantityIssued  Decimal  @db.Decimal(12,2)
+  purpose         String?
+  requestedById   String?
+  notes           String?
+  createdAt       DateTime @default(now())
+
+  store         Store          @relation(fields: [storeId], references: [id])
+  penSection    PenSection?    @relation(fields: [penSectionId], references: [id])
+  issuedBy      User           @relation(fields: [issuedById], references: [id])
+  feedInventory FeedInventory? @relation("FeedIssuances", fields: [feedInventoryId], references: [id])
+  inventoryItem InventoryItem? @relation("ItemIssuances", fields: [inventoryItemId], references: [id])
+
+  @@map("store_issuances")
+}
+
+// ============================================================================
+// MODULE 5 — PROCUREMENT & PURCHASE ORDERS
+// ============================================================================
+
+model Supplier {
+  id           String   @id @default(uuid())
+  tenantId     String
+  name         String
+  supplierType SupplierType @default(FEED)
+  contactName  String?
+  phone        String?
+  email        String?
+  address      String?
+  taxId        String?
+  bankName     String?
+  bankAccount  String?
+  paymentTerms String?  // e.g. "Net 30"
+  rating       Int?     // 1-5
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  feedInventory        FeedInventory[]
+  inventoryItems       InventoryItem[]
+  storeReceipts        StoreReceipt[]
+  purchaseOrders       PurchaseOrder[]
+  purchaseRequisitions PurchaseRequisition[]
+
+  @@map("suppliers")
+}
+
+enum SupplierType {
+  FEED
+  MEDICATION
+  EQUIPMENT
+  CHICKS
+  PACKAGING
+  SERVICES
+  OTHER
+}
+
+model PurchaseRequisition {
+  id              String   @id @default(uuid())
+  tenantId        String
+  requestedById   String
+  itemDescription String
+  quantity        Decimal  @db.Decimal(12,2)
+  unit            String
+  estimatedCost   Decimal? @db.Decimal(14,2)
+  currency        Currency @default(NGN)
+  urgency         Urgency  @default(NORMAL)
+  supplierId      String?
+  justification   String?
+  status          PRStatus @default(PENDING)
+  approvedById    String?
+  approvedAt      DateTime?
+  rejectedReason  String?
+  purchaseOrderId String?
+  createdAt       DateTime @default(now())
+
+  requestedBy   User      @relation(fields: [requestedById], references: [id])
+  supplier      Supplier? @relation(fields: [supplierId], references: [id])
+  purchaseOrder PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id])
+
+  @@map("purchase_requisitions")
+}
+
+enum PRStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CONVERTED_TO_PO
+}
+
+enum Urgency {
+  LOW
+  NORMAL
+  HIGH
+  CRITICAL
+}
+
+model PurchaseOrder {
+  id            String    @id @default(uuid())
+  tenantId      String
+  poNumber      String
+  supplierId    String
+  createdById   String
+  approvedById  String?
+  approvedAt    DateTime?
+  orderDate     DateTime  @db.Date
+  expectedDelivery DateTime? @db.Date
+  actualDelivery DateTime? @db.Date
+  status        POStatus  @default(DRAFT)
+  subtotal      Decimal   @db.Decimal(14,2)
+  taxAmount     Decimal   @db.Decimal(14,2) @default(0)
+  totalAmount   Decimal   @db.Decimal(14,2)
+  currency      Currency  @default(NGN)
+  paymentStatus PaymentStatus @default(UNPAID)
+  notes         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  supplier             Supplier              @relation(fields: [supplierId], references: [id])
+  createdBy            User                  @relation("POCreatedBy", fields: [createdById], references: [id])
+  approvedBy           User?                 @relation("POApprovedBy", fields: [approvedById], references: [id])
+  lineItems            POLineItem[]
+  purchaseRequisitions PurchaseRequisition[]
+  payments             Payment[]
+
+  @@unique([tenantId, poNumber])
+  @@map("purchase_orders")
+}
+
+model POLineItem {
+  id              String  @id @default(uuid())
+  purchaseOrderId String
+  description     String
+  quantity        Decimal @db.Decimal(12,2)
+  unit            String
+  unitPrice       Decimal @db.Decimal(10,4)
+  totalPrice      Decimal @db.Decimal(14,2)
+  receivedQty     Decimal @db.Decimal(12,2) @default(0)
+
+  purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id])
+
+  @@map("po_line_items")
+}
+
+enum POStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  SENT_TO_SUPPLIER
+  PARTIALLY_RECEIVED
+  FULLY_RECEIVED
+  CANCELLED
+}
+
+// ============================================================================
+// MODULE 6 — HEALTH & VETERINARY MANAGEMENT
+// ============================================================================
+
+model Vaccination {
+  id               String            @id @default(uuid())
+  flockId          String
+  vaccineName      String
+  vaccineType      String?           // Live, Killed, etc.
+  routeOfAdmin     String?           // Drinking water, Spray, Injection
+  scheduledDate    DateTime          @db.Date
+  administeredDate DateTime?         @db.Date
+  administeredById String?
+  doseMlPerBird    Decimal?          @db.Decimal(6,3)
+  batchNumber      String?
+  manufacturer     String?
+  expiryDate       DateTime?         @db.Date
+  nextDueDate      DateTime?         @db.Date
+  withdrawalDays   Int?              // food safety withdrawal period
+  status           VaccinationStatus @default(SCHEDULED)
+  notes            String?
+  createdAt        DateTime          @default(now())
+
+  flock          Flock  @relation(fields: [flockId], references: [id])
+  administeredBy User?  @relation(fields: [administeredById], references: [id])
+
+  @@map("vaccinations")
+}
+
+enum VaccinationStatus {
+  SCHEDULED
+  COMPLETED
+  MISSED
+  OVERDUE
+}
+
+model MedicationLog {
+  id               String   @id @default(uuid())
+  flockId          String
+  medicationName   String
+  activeIngredient String?
+  dosage           String
+  routeOfAdmin     String?
+  startDate        DateTime @db.Date
+  endDate          DateTime @db.Date
+  withdrawalDays   Int?
+  withdrawalEndDate DateTime? @db.Date
+  reason           String
+  administeredById String
+  inventoryItemId  String?  // links to medication inventory
+  createdAt        DateTime @default(now())
+
+  flock          Flock @relation(fields: [flockId], references: [id])
+  administeredBy User  @relation(fields: [administeredById], references: [id])
+
+  @@map("medication_logs")
+}
+
+model HealthObservation {
+  id              String          @id @default(uuid())
+  flockId         String
+  penSectionId    String
+  observedById    String
+  observationDate DateTime        @db.Date
+  symptomCodes    String[]        // array of symptom codes
+  severity        HealthSeverity  @default(MILD)
+  affectedCount   Int?
+  diagnosis       String?
+  action          String?
+  followUpDate    DateTime?       @db.Date
+  resolvedAt      DateTime?
+  notes           String?
+  photoUrls       String[]
+  createdAt       DateTime        @default(now())
+
+  flock      Flock      @relation(fields: [flockId], references: [id])
+  penSection PenSection @relation(fields: [penSectionId], references: [id])
+  observedBy User       @relation(fields: [observedById], references: [id])
+
+  @@map("health_observations")
+}
+
+enum HealthSeverity {
+  MILD
+  MODERATE
+  SEVERE
+  CRITICAL
+}
+
+model VetVisit {
+  id              String   @id @default(uuid())
+  tenantId        String
+  farmId          String?  // optional farm scope
+  vetName         String
+  vetCompany      String?
+  visitDate       DateTime @db.Date
+  purpose         String
+  findings        String?
+  recommendations String?
+  prescriptions   String?
+  followUpDate    DateTime? @db.Date
+  cost            Decimal?  @db.Decimal(10,2)
+  currency        Currency  @default(NGN)
+  recordedById    String
+  createdAt       DateTime  @default(now())
+
+  recordedBy User @relation(fields: [recordedById], references: [id])
+
+  @@map("vet_visits")
+}
+
+model BiosecurityLog {
+  id            String   @id @default(uuid())
+  tenantId      String
+  farmId        String?
+  loggedById    String
+  logDate       DateTime @db.Date
+  visitorName   String?
+  visitorType   String?  // Staff, Vet, Supplier, Inspector
+  purpose       String?
+  vehicleReg    String?
+  sanitized     Boolean  @default(false)
+  notes         String?
+  createdAt     DateTime @default(now())
+
+  loggedBy User @relation(fields: [loggedById], references: [id])
+
+  @@map("biosecurity_logs")
+}
+
+// ============================================================================
+// MODULE 7 — TASKS & WORKFLOW
+// ============================================================================
+
+model Task {
+  id              String     @id @default(uuid())
+  tenantId        String
+  penSectionId    String
+  assignedToId    String
+  createdById     String
+  approvedById    String?
+  taskType        TaskType
+  title           String
+  description     String?
+  dueDate         DateTime
+  completedAt     DateTime?
+  completionNotes String?
+  approvedAt      DateTime?
+  status          TaskStatus @default(PENDING)
+  priority        TaskPriority @default(NORMAL)
+  isRecurring     Boolean    @default(false)
+  recurrenceRule  String?    // daily, weekly, etc.
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  penSection  PenSection @relation(fields: [penSectionId], references: [id])
+  assignedTo  User       @relation("TaskAssignedTo", fields: [assignedToId], references: [id])
+  createdBy   User       @relation("TaskCreatedBy", fields: [createdById], references: [id])
+  approvedBy  User?      @relation("TaskApprovedBy", fields: [approvedById], references: [id])
+
+  @@map("tasks")
+}
+
+enum TaskType {
+  FEEDING
+  VACCINATION
+  EGG_COLLECTION
+  WEIGHT_RECORDING
+  CLEANING
+  MEDICATION
+  INSPECTION
+  MORTALITY_CHECK
+  BIOSECURITY
+  MAINTENANCE
+  STORE_COUNT
+  REPORT_SUBMISSION
+  OTHER
+}
+
+enum TaskStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  OVERDUE
+  CANCELLED
+  AWAITING_APPROVAL
+}
+
+enum TaskPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+// Production targets for benchmarking
+model ProductionTarget {
+  id              String           @id @default(uuid())
+  farmId          String
+  operationType   PenOperationType
+  targetPeriod    String           // e.g. "2026-Q1"
+  // Layer targets
+  targetLayingRatePct Decimal?     @db.Decimal(5,2)
+  targetEggsPerDay    Int?
+  targetMortalityPct  Decimal?     @db.Decimal(5,2)
+  // Broiler targets
+  targetWeightG       Decimal?     @db.Decimal(8,2)
+  targetFCR           Decimal?     @db.Decimal(4,2)
+  targetDaysToHarvest Int?
+  targetGPD           Decimal?     @db.Decimal(6,2)  // grams per day gain
+  createdAt       DateTime         @default(now())
+
+  farm Farm @relation(fields: [farmId], references: [id])
+
+  @@map("production_targets")
+}
+
+// ============================================================================
+// MODULE 8 — SALES & CUSTOMER MANAGEMENT
+// ============================================================================
+
+model Customer {
+  id            String       @id @default(uuid())
+  tenantId      String
+  customerType  CustomerType
+  name          String
+  contactName   String?
+  phone         String?
+  email         String?
+  address       String?
+  taxId         String?
+  // B2B fields
+  companyName   String?
+  creditLimit   Decimal?     @db.Decimal(14,2)
+  paymentTerms  String?      // "Cash", "Net 7", "Net 30"
+  currency      Currency     @default(NGN)
+  isActive      Boolean      @default(true)
+  notes         String?
+  createdAt     DateTime     @default(now())
+
+  salesOrders SalesOrder[]
+
+  @@map("customers")
+}
+
+enum CustomerType {
+  B2C   // direct consumer
+  B2B   // business buyer
+  OFFTAKER  // contracted bulk buyer
+}
+
+model SalesOrder {
+  id            String        @id @default(uuid())
+  tenantId      String
+  orderNumber   String
+  customerId    String
+  soldById      String
+  orderDate     DateTime      @db.Date
+  deliveryDate  DateTime?     @db.Date
+  orderType     SalesOrderType
+  status        SalesOrderStatus @default(DRAFT)
+  subtotal      Decimal       @db.Decimal(14,2)
+  discountAmount Decimal      @db.Decimal(14,2) @default(0)
+  taxAmount     Decimal       @db.Decimal(14,2) @default(0)
+  totalAmount   Decimal       @db.Decimal(14,2)
+  currency      Currency      @default(NGN)
+  paymentStatus PaymentStatus @default(UNPAID)
+  deliveryAddress String?
+  notes         String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  customer   Customer        @relation(fields: [customerId], references: [id])
+  soldBy     User            @relation(fields: [soldById], references: [id])
+  lineItems  SalesOrderItem[]
+  payments   Payment[]
+
+  @@unique([tenantId, orderNumber])
+  @@map("sales_orders")
+}
+
+model SalesOrderItem {
+  id            String       @id @default(uuid())
+  salesOrderId  String
+  productType   ProductType
+  flockId       String?      // which flock this came from
+  description   String
+  quantity      Decimal      @db.Decimal(12,2)
+  unit          String       // crates, kg, pieces
+  unitPrice     Decimal      @db.Decimal(10,4)
+  totalPrice    Decimal      @db.Decimal(14,2)
+  // Egg grading (if eggs)
+  eggGrade      String?      // A, B
+  // Broiler grading (if birds)
+  weightGrade   String?      // Grade 1, 2, 3
+
+  salesOrder SalesOrder @relation(fields: [salesOrderId], references: [id])
+  flock      Flock?     @relation(fields: [flockId], references: [id])
+
+  @@map("sales_order_items")
+}
+
+enum ProductType {
+  EGGS
+  BROILER_LIVE
+  BROILER_DRESSED
+  SPENT_HEN
+  MANURE
+  OTHER
+}
+
+enum SalesOrderType {
+  CASH_SALE
+  CREDIT_SALE
+  CONTRACT
+}
+
+enum SalesOrderStatus {
+  DRAFT
+  CONFIRMED
+  PACKED
+  DELIVERED
+  INVOICED
+  COMPLETED
+  CANCELLED
+}
+
+// ============================================================================
+// MODULE 9 — ACCOUNTS & FINANCIAL MANAGEMENT
+// ============================================================================
+
+model Account {
+  id          String      @id @default(uuid())
+  tenantId    String
+  code        String      // chart of accounts code e.g. "5001"
+  name        String      // e.g. "Feed Costs"
+  accountType AccountType
+  currency    Currency    @default(NGN)
+  balance     Decimal     @db.Decimal(14,2) @default(0)
+  isActive    Boolean     @default(true)
+  createdAt   DateTime    @default(now())
+
+  journalEntries JournalEntryLine[]
+
+  @@unique([tenantId, code])
+  @@map("accounts")
+}
+
+enum AccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  INCOME
+  EXPENSE
+}
+
+model JournalEntry {
+  id          String   @id @default(uuid())
+  tenantId    String
+  reference   String
+  description String
+  entryDate   DateTime @db.Date
+  currency    Currency @default(NGN)
+  totalDebit  Decimal  @db.Decimal(14,2)
+  totalCredit Decimal  @db.Decimal(14,2)
+  createdById String
+  createdAt   DateTime @default(now())
+
+  lines JournalEntryLine[]
+
+  @@map("journal_entries")
+}
+
+model JournalEntryLine {
+  id             String  @id @default(uuid())
+  journalEntryId String
+  accountId      String
+  description    String?
+  debitAmount    Decimal @db.Decimal(14,2) @default(0)
+  creditAmount   Decimal @db.Decimal(14,2) @default(0)
+
+  journalEntry JournalEntry @relation(fields: [journalEntryId], references: [id])
+  account      Account      @relation(fields: [accountId], references: [id])
+
+  @@map("journal_entry_lines")
+}
+
+model Payment {
+  id              String        @id @default(uuid())
+  tenantId        String
+  paymentDate     DateTime      @db.Date
+  direction       PaymentDirection  // INFLOW or OUTFLOW
+  amount          Decimal       @db.Decimal(14,2)
+  currency        Currency      @default(NGN)
+  paymentMethod   PaymentMethod
+  reference       String?
+  // Links to source
+  salesOrderId    String?
+  purchaseOrderId String?
+  payrollBatchId  String?
+  description     String
+  recordedById    String
+  createdAt       DateTime      @default(now())
+
+  salesOrder    SalesOrder?    @relation(fields: [salesOrderId], references: [id])
+  purchaseOrder PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id])
+  recordedBy    User           @relation(fields: [recordedById], references: [id])
+
+  @@map("payments")
+}
+
+enum PaymentDirection {
+  INFLOW
+  OUTFLOW
+}
+
+enum PaymentMethod {
+  CASH
+  BANK_TRANSFER
+  CHEQUE
+  CARD
+  MOBILE_MONEY
+  OTHER
+}
+
+enum PaymentStatus {
+  UNPAID
+  PARTIAL
+  PAID
+  OVERDUE
+  REFUNDED
+}
+
+model Budget {
+  id          String   @id @default(uuid())
+  tenantId    String
+  farmId      String?
+  name        String
+  period      String   // e.g. "2026-Q1", "2026-ANNUAL"
+  currency    Currency @default(NGN)
+  status      BudgetStatus @default(DRAFT)
+  approvedById String?
+  approvedAt  DateTime?
+  createdAt   DateTime @default(now())
+
+  lineItems BudgetLineItem[]
+
+  @@map("budgets")
+}
+
+model BudgetLineItem {
+  id          String      @id @default(uuid())
+  budgetId    String
+  accountCode String
+  description String
+  budgetedAmount Decimal  @db.Decimal(14,2)
+  actualAmount   Decimal  @db.Decimal(14,2) @default(0)
+  variance       Decimal  @db.Decimal(14,2) @default(0)
+
+  budget Budget @relation(fields: [budgetId], references: [id])
+
+  @@map("budget_line_items")
+}
+
+enum BudgetStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  ACTIVE
+  CLOSED
+}
+
+// ============================================================================
+// MODULE 10 — HR & STAFF MANAGEMENT
+// ============================================================================
+
+model StaffProfile {
+  id              String   @id @default(uuid())
+  userId          String   @unique
+  employeeId      String
+  dateOfBirth     DateTime? @db.Date
+  gender          String?
+  nationalId      String?
+  address         String?
+  nextOfKinName   String?
+  nextOfKinPhone  String?
+  dateOfJoining   DateTime @db.Date
+  contractType    ContractType @default(PERMANENT)
+  department      String?
+  bankName        String?
+  bankAccount     String?
+  taxId           String?
+  baseSalary      Decimal  @db.Decimal(12,2)
+  currency        Currency @default(NGN)
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+
+  user            User            @relation(fields: [userId], references: [id])
+  payrollRecords  PayrollRecord[]
+  attendanceRecords AttendanceRecord[]
+
+  @@map("staff_profiles")
+}
+
+enum ContractType {
+  PERMANENT
+  CONTRACT
+  CASUAL
+  INTERN
+}
+
+model AttendanceRecord {
+  id            String   @id @default(uuid())
+  userId        String
+  staffProfileId String?
+  attendanceDate DateTime @db.Date
+  checkIn       DateTime?
+  checkOut      DateTime?
+  hoursWorked   Decimal? @db.Decimal(4,2)
+  status        AttendanceStatus @default(PRESENT)
+  notes         String?
+  createdAt     DateTime @default(now())
+
+  user         User          @relation(fields: [userId], references: [id])
+  staffProfile StaffProfile? @relation(fields: [staffProfileId], references: [id])
+
+  @@unique([userId, attendanceDate])
+  @@map("attendance_records")
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  HALF_DAY
+  ON_LEAVE
+  PUBLIC_HOLIDAY
+}
+
+model LeaveRequest {
+  id            String      @id @default(uuid())
+  userId        String
+  leaveType     LeaveType
+  startDate     DateTime    @db.Date
+  endDate       DateTime    @db.Date
+  daysRequested Int
+  reason        String?
+  status        LeaveStatus @default(PENDING)
+  approvedById  String?
+  approvedAt    DateTime?
+  rejectedReason String?
+  createdAt     DateTime    @default(now())
+
+  requestedBy User  @relation("LeaveRequestedBy", fields: [userId], references: [id])
+  approvedBy  User? @relation("LeaveApprovedBy", fields: [approvedById], references: [id])
+
+  @@map("leave_requests")
+}
+
+enum LeaveType {
+  ANNUAL
+  SICK
+  MATERNITY
+  PATERNITY
+  UNPAID
+  OTHER
+}
+
+enum LeaveStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+model PayrollRecord {
+  id              String   @id @default(uuid())
+  tenantId        String
+  userId          String
+  staffProfileId  String?
+  payrollBatchId  String
+  payPeriod       String   // e.g. "2026-03"
+  baseSalary      Decimal  @db.Decimal(12,2)
+  allowances      Decimal  @db.Decimal(12,2) @default(0)
+  overtime        Decimal  @db.Decimal(12,2) @default(0)
+  grossPay        Decimal  @db.Decimal(12,2)
+  taxDeduction    Decimal  @db.Decimal(12,2) @default(0)
+  pensionDeduction Decimal @db.Decimal(12,2) @default(0)
+  otherDeductions Decimal  @db.Decimal(12,2) @default(0)
+  netPay          Decimal  @db.Decimal(12,2)
+  currency        Currency @default(NGN)
+  status          PayrollStatus @default(PENDING)
+  paidAt          DateTime?
+  createdAt       DateTime @default(now())
+
+  user         User          @relation(fields: [userId], references: [id])
+  staffProfile StaffProfile? @relation(fields: [staffProfileId], references: [id])
+
+  @@map("payroll_records")
+}
+
+enum PayrollStatus {
+  PENDING
+  APPROVED
+  PAID
+  CANCELLED
+}
+
+// ============================================================================
+// MODULE 11 — MAINTENANCE & ASSETS
+// ============================================================================
+
+model Asset {
+  id               String      @id @default(uuid())
+  tenantId         String
+  farmId           String?
+  assetCode        String
+  name             String
+  category         AssetCategory
+  description      String?
+  location         String?
+  serialNumber     String?
+  manufacturer     String?
+  model            String?
+  purchaseDate     DateTime?   @db.Date
+  purchaseCost     Decimal?    @db.Decimal(14,2)
+  currency         Currency    @default(NGN)
+  currentValue     Decimal?    @db.Decimal(14,2)
+  depreciationRate Decimal?    @db.Decimal(5,2)  // % per year
+  warrantyExpiry   DateTime?   @db.Date
+  status           AssetStatus @default(ACTIVE)
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+
+  maintenanceSchedules MaintenanceSchedule[]
+  maintenanceRequests  MaintenanceRequest[]
+  workOrders           WorkOrder[]
+
+  @@unique([tenantId, assetCode])
+  @@map("assets")
+}
+
+enum AssetCategory {
+  INCUBATOR
+  FEEDER
+  DRINKER
+  GENERATOR
+  VEHICLE
+  VENTILATION
+  LIGHTING
+  WEIGHING_SCALE
+  PROCESSING_EQUIPMENT
+  COMPUTER
+  OTHER
+}
+
+enum AssetStatus {
+  ACTIVE
+  UNDER_MAINTENANCE
+  DECOMMISSIONED
+  DISPOSED
+}
+
+model MaintenanceSchedule {
+  id              String   @id @default(uuid())
+  assetId         String
+  taskDescription String
+  intervalDays    Int
+  lastDoneDate    DateTime? @db.Date
+  nextDueDate     DateTime  @db.Date
+  estimatedCost   Decimal?  @db.Decimal(10,2)
+  currency        Currency  @default(NGN)
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+
+  asset     Asset       @relation(fields: [assetId], references: [id])
+  workOrders WorkOrder[]
+
+  @@map("maintenance_schedules")
+}
+
+model MaintenanceRequest {
+  id              String   @id @default(uuid())
+  assetId         String
+  requestedById   String
+  requestDate     DateTime @db.Date
+  issueDescription String
+  priority        TaskPriority @default(NORMAL)
+  status          MaintenanceStatus @default(PENDING)
+  resolvedAt      DateTime?
+  notes           String?
+  createdAt       DateTime @default(now())
+
+  asset       Asset @relation(fields: [assetId], references: [id])
+  requestedBy User  @relation(fields: [requestedById], references: [id])
+  workOrders  WorkOrder[]
+
+  @@map("maintenance_requests")
+}
+
+model WorkOrder {
+  id                   String   @id @default(uuid())
+  tenantId             String
+  assetId              String?
+  maintenanceScheduleId String?
+  maintenanceRequestId String?
+  assignedToId         String
+  createdById          String
+  title                String
+  description          String?
+  workType             String   // Preventive, Corrective, Emergency
+  scheduledDate        DateTime @db.Date
+  completedAt          DateTime?
+  laborCost            Decimal? @db.Decimal(10,2)
+  partsCost            Decimal? @db.Decimal(10,2)
+  totalCost            Decimal? @db.Decimal(10,2)
+  currency             Currency @default(NGN)
+  status               MaintenanceStatus @default(PENDING)
+  notes                String?
+  createdAt            DateTime @default(now())
+
+  asset               Asset?               @relation(fields: [assetId], references: [id])
+  maintenanceSchedule MaintenanceSchedule? @relation(fields: [maintenanceScheduleId], references: [id])
+  maintenanceRequest  MaintenanceRequest?  @relation(fields: [maintenanceRequestId], references: [id])
+  assignedTo          User                 @relation("WOAssignedTo", fields: [assignedToId], references: [id])
+  createdBy           User                 @relation("WOCreatedBy", fields: [createdById], references: [id])
+
+  @@map("work_orders")
+}
+
+enum MaintenanceStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  ON_HOLD
+}
+
+// ============================================================================
+// MODULE 12 — VERIFICATION & RECONCILIATION
+// ============================================================================
+
+model Verification {
+  id                String             @id @default(uuid())
+  tenantId          String
+  storeId           String
+  verifiedById      String
+  verificationType  VerificationType
+  referenceId       String             // id of the record being verified
+  referenceType     String             // "DailyReport", "StoreReceipt", etc.
+  verificationDate  DateTime           @db.Date
+  status            VerificationStatus @default(PENDING)
+  discrepancyAmount Decimal?           @db.Decimal(14,2)
+  discrepancyNotes  String?
+  resolution        String?
+  resolvedById      String?
+  resolvedAt        DateTime?
+  escalatedAt       DateTime?
+  escalatedToId     String?
+  createdAt         DateTime           @default(now())
+
+  store      Store @relation(fields: [storeId], references: [id])
+  verifiedBy User  @relation(fields: [verifiedById], references: [id])
+
+  @@map("verifications")
+}
+
+enum VerificationType {
+  DAILY_PRODUCTION
+  FEED_RECEIPT
+  INVENTORY_COUNT
+  FINANCIAL_RECORD
+  MORTALITY_REPORT
+}
+
+enum VerificationStatus {
+  PENDING
+  VERIFIED
+  DISCREPANCY_FOUND
+  ESCALATED
+  RESOLVED
+}
+
+// ============================================================================
+// MODULE 13 — HATCHERY (add-on module)
+// ============================================================================
+
+model HatchBatch {
+  id              String      @id @default(uuid())
+  tenantId        String
+  batchCode       String
+  parentFlockId   String?     // breeder flock that produced the eggs
+  eggCount        Int
+  settingDate     DateTime    @db.Date
+  firstCandlingDate DateTime? @db.Date
+  secondCandlingDate DateTime? @db.Date
+  expectedHatch   DateTime    @db.Date
+  actualHatch     DateTime?   @db.Date
+  // Candling results
+  fertilizedCount    Int?
+  unfertilizedCount  Int?
+  earlyDeadCount     Int?
+  // Hatch results
+  chicksHatched      Int?
+  chicksRejected     Int?
+  hatchRatePct       Decimal?  @db.Decimal(5,2)
+  fertilityRatePct   Decimal?  @db.Decimal(5,2)
+  // Placement
+  chicksPlaced       Int?
+  placementFlockId   String?   // flock where chicks were placed
+  status             HatchStatus @default(INCUBATING)
+  notes              String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  incubatorReadings IncubatorReading[]
+
+  @@unique([tenantId, batchCode])
+  @@map("hatch_batches")
+}
+
+model IncubatorReading {
+  id            String   @id @default(uuid())
+  hatchBatchId  String
+  readingTime   DateTime
+  temperatureC  Decimal  @db.Decimal(5,2)
+  humidityPct   Decimal  @db.Decimal(5,2)
+  co2Ppm        Decimal? @db.Decimal(7,2)
+  recordedById  String
+  inSpec        Boolean  @default(true)
+  notes         String?
+  createdAt     DateTime @default(now())
+
+  hatchBatch HatchBatch @relation(fields: [hatchBatchId], references: [id])
+
+  @@map("incubator_readings")
+}
+
+enum HatchStatus {
+  INCUBATING
+  FIRST_CANDLING
+  SECOND_CANDLING
+  HATCHING
+  COMPLETED
+  FAILED
+}
+
+// ============================================================================
+// MODULE 14 — REPORTING (stored report snapshots)
+// ============================================================================
+
+model Report {
+  id           String     @id @default(uuid())
+  tenantId     String
+  reportType   ReportType
+  title        String
+  period       String     // e.g. "2026-03", "2026-W12"
+  parameters   Json?      // filters used to generate
+  data         Json?      // cached report data
+  status       ReportStatus @default(PENDING)
+  generatedById String
+  generatedAt  DateTime?
+  fileUrl      String?    // if exported to PDF/CSV
+  createdAt    DateTime   @default(now())
+
+  @@map("reports")
+}
+
+enum ReportType {
+  DAILY_PRODUCTION
+  WEEKLY_FARM
+  MONTHLY_FINANCIAL
+  FEED_EFFICIENCY
+  MORTALITY_ANALYSIS
+  LAYER_PERFORMANCE
+  BROILER_PERFORMANCE
+  COMPLIANCE
+  CUSTOM
+}
+
+enum ReportStatus {
+  PENDING
+  GENERATING
+  READY
+  FAILED
+}
+
+// ============================================================================
+// MODULE 15 — NOTIFICATIONS & ALERTS ENGINE
+// ============================================================================
+
+model AlertRule {
+  id            String    @id @default(uuid())
+  tenantId      String
+  name          String
+  module        String    // "pen_ops", "feed", "health", etc.
+  metric        String    // "mortality_rate", "laying_rate", etc.
+  operator      String    // "gt", "lt", "eq"
+  threshold     Decimal   @db.Decimal(10,4)
+  severity      AlertSeverity @default(WARNING)
+  notifyRoles   String[]  // array of UserRole strings
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@map("alert_rules")
+}
+
+enum AlertSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+model Notification {
+  id          String           @id @default(uuid())
+  tenantId    String
+  recipientId String
+  senderId    String?
+  type        NotificationType
+  title       String
+  message     String
+  data        Json?            // extra context e.g. { flockId, penId }
+  channel     NotificationChannel @default(IN_APP)
+  isRead      Boolean          @default(false)
+  readAt      DateTime?
+  sentAt      DateTime?
+  createdAt   DateTime         @default(now())
+
+  tenant    Tenant  @relation(fields: [tenantId], references: [id])
+  recipient User    @relation("NotificationRecipient", fields: [recipientId], references: [id])
+  sender    User?   @relation("NotificationSender", fields: [senderId], references: [id])
+
+  @@map("notifications")
+}
+
+enum NotificationType {
+  ALERT
+  TASK_ASSIGNED
+  TASK_OVERDUE
+  REPORT_SUBMITTED
+  REPORT_APPROVED
+  REPORT_REJECTED
+  LOW_STOCK
+  VACCINATION_DUE
+  MORTALITY_SPIKE
+  SYSTEM
+}
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+  SMS
+  PUSH
+}
+
+// ============================================================================
+// MODULE 16 — AUDIT & COMPLIANCE
+// ============================================================================
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  tenantId    String
+  userId      String
+  action      AuditAction
+  entityType  String   // model name e.g. "Flock", "User"
+  entityId    String
+  changes     Json?    // { before: {}, after: {} }
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@index([tenantId, createdAt])
+  @@index([tenantId, entityType, entityId])
+  @@map("audit_logs")
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  LOGIN
+  LOGOUT
+  APPROVE
+  REJECT
+  EXPORT
+  ROLE_CHANGE
+  PASSWORD_CHANGE
+}
+
