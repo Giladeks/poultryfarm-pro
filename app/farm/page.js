@@ -70,17 +70,17 @@ export default function FarmPage() {
         </div>
 
         {/* Filters */}
-        <div style={{ display:'flex', gap:8, marginBottom:16, flexWrap:'wrap' }}>
+        <div style={{ display:'flex', gap:8, marginBottom:16, flexWrap:'wrap', alignItems:'center' }}>
           {['ACTIVE','HARVESTED','ALL'].map(s => (
             <button key={s} onClick={() => setFilter(p => ({ ...p, status:s }))} className="btn"
-              style={{ background: filter.status===s ? 'var(--purple-light)' : '#fff', color: filter.status===s ? 'var(--purple)' : 'var(--text-muted)', border:`1px solid ${filter.status===s ? '#d4d8ff' : 'var(--border)'}`, fontWeight: filter.status===s ? 700 : 600 }}>
+              style={{ display:'inline-flex', width:'auto', padding:'6px 14px', fontSize:12, background: filter.status===s ? 'var(--purple-light)' : '#fff', color: filter.status===s ? 'var(--purple)' : 'var(--text-muted)', border:`1px solid ${filter.status===s ? '#d4d8ff' : 'var(--border)'}`, fontWeight: filter.status===s ? 700 : 600, borderRadius:8, cursor:'pointer', whiteSpace:'nowrap' }}>
               {s.charAt(0) + s.slice(1).toLowerCase()}
             </button>
           ))}
-          <div style={{ width:1, background:'var(--border)' }} />
+          <div style={{ width:1, height:20, background:'var(--border)', flexShrink:0 }} />
           {['','LAYER','BROILER'].map(bt => (
             <button key={bt} onClick={() => setFilter(p => ({ ...p, birdType:bt }))} className="btn"
-              style={{ background: filter.birdType===bt ? 'var(--blue-bg)' : '#fff', color: filter.birdType===bt ? 'var(--blue)' : 'var(--text-muted)', border:`1px solid ${filter.birdType===bt ? 'var(--blue-border)' : 'var(--border)'}`, fontWeight: filter.birdType===bt ? 700 : 600 }}>
+              style={{ display:'inline-flex', width:'auto', padding:'6px 14px', fontSize:12, background: filter.birdType===bt ? 'var(--blue-bg)' : '#fff', color: filter.birdType===bt ? 'var(--blue)' : 'var(--text-muted)', border:`1px solid ${filter.birdType===bt ? 'var(--blue-border)' : 'var(--border)'}`, fontWeight: filter.birdType===bt ? 700 : 600, borderRadius:8, cursor:'pointer', whiteSpace:'nowrap' }}>
               {bt || 'All Types'}
             </button>
           ))}

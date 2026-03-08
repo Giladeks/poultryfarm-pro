@@ -13,13 +13,13 @@ const createTaskSchema = z.object({
   ]),
   title: z.string().min(3).max(200),
   description: z.string().optional(),
-  penSectionId: z.string().uuid(),
+  penSectionId: z.string().min(1),
   dueDate: z.string(),
   priority: z.enum(['LOW','NORMAL','HIGH','URGENT']).default('NORMAL'),
 });
 
 const completeTaskSchema = z.object({
-  taskId: z.string().uuid(),
+  taskId: z.string().min(1),
   completionNotes: z.string().max(1000).optional(),
 });
 
@@ -169,3 +169,5 @@ export async function POST(request) {
     return NextResponse.json({ error: 'Task operation failed' }, { status: 500 });
   }
 }
+
+

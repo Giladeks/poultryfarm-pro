@@ -20,6 +20,7 @@ const NAV = [
   { href: '/worker',        icon: '📋', label: 'My Tasks',       roles: ['PEN_WORKER','PEN_MANAGER','PRODUCTION_STAFF','STORE_CLERK','QC_TECHNICIAN'] },
   { href: '/owner',         icon: '📈', label: 'Analytics',      roles: ['CHAIRPERSON','FARM_ADMIN','FARM_MANAGER','SUPER_ADMIN'] },
   { href: '/billing',       icon: '💳', label: 'Billing',        roles: ['CHAIRPERSON','FARM_ADMIN','SUPER_ADMIN'] },
+  { href: '/settings',      icon: '⚙️', label: 'Settings',       roles: ['FARM_ADMIN','FARM_MANAGER','CHAIRPERSON','SUPER_ADMIN'] },
 ];
 
 // ── Notification type → icon / colour ─────────────────────────────────────────
@@ -645,3 +646,6 @@ export default function AppShell({ children }) {
     </div>
   );
 }
+
+
+

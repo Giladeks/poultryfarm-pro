@@ -4,7 +4,7 @@ import { prisma } from '@/lib/db/prisma';
 import { verifyToken } from '@/lib/middleware/auth';
 import { z } from 'zod';
 
-const VERIFIER_ROLES  = ['STORE_MANAGER', 'STORE_CLERK', 'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
+const VERIFIER_ROLES  = ['PEN_MANAGER', 'STORE_MANAGER', 'STORE_CLERK', 'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
 const MANAGER_ROLES   = ['STORE_MANAGER', 'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
 
 const createVerificationSchema = z.object({
@@ -61,10 +61,21 @@ export async function GET(request) {
       take: Math.min(limit, 200),
     });
 
-    const alreadyVerifiedIds = await prisma.verification.findMany({
+    // Only exclude records that are fully resolved — DISCREPANCY_FOUND means
+    // the worker may resubmit, so those should reappear in the pending queue
+    const existingVerifications = await prisma.verification.findMany({
       where: { tenantId: user.tenantId },
-      select: { referenceId: true },
-    }).then(rows => new Set(rows.map(r => r.referenceId)));
+      select: { id: true, referenceId: true, status: true },
+    });
+    const alreadyVerifiedIds = new Set(
+      existingVerifications
+        .filter(v => ['VERIFIED', 'RESOLVED'].includes(v.status))
+        .map(v => v.referenceId)
+    );
+    // Map referenceId -> verification id for pending items (so frontend can PATCH directly)
+    const verificationIdByRef = Object.fromEntries(
+      existingVerifications.map(v => [v.referenceId, v.id])
+    );
 
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
@@ -95,7 +106,9 @@ export async function GET(request) {
         submittedBy:   `${r.recordedBy.firstName} ${r.recordedBy.lastName}`,
         context:       `${r.penSection.pen?.name} — ${r.penSection.name} | Flock: ${r.flock.batchCode}`,
         layingRate:    r.layingRatePct,
-        storeId:       null,
+        storeId:        null,
+        resubmitted:    !!r.rejectionReason,
+        verificationId: verificationIdByRef[r.id] || null,
       }))
     );
 
@@ -124,8 +137,10 @@ export async function GET(request) {
         summary:       `${r.count} bird${r.count !== 1 ? 's' : ''} — ${r.causeCode.replace(/_/g, ' ')}`,
         submittedBy:   `${r.recordedBy.firstName} ${r.recordedBy.lastName}`,
         context:       `${r.penSection.pen?.name} — ${r.penSection.name} | Flock: ${r.flock.batchCode} (${r.flock.operationType})`,
-        severity:      r.count >= 10 ? 'HIGH' : r.count >= 5 ? 'MEDIUM' : 'LOW',
-        storeId:       null,
+        severity:       r.count >= 10 ? 'HIGH' : r.count >= 5 ? 'MEDIUM' : 'LOW',
+        storeId:        null,
+        resubmitted:    !!r.rejectionReason,
+        verificationId: verificationIdByRef[r.id] || null,
       }))
     );
 
@@ -281,12 +296,39 @@ export async function POST(request) {
         return NextResponse.json({ error: 'Store not found' }, { status: 404 });
     }
 
-    // Prevent duplicate verification
-    const existing = await prisma.verification.findFirst({
+    // Check for all existing verification records for this reference
+    const allExisting = await prisma.verification.findMany({
       where: { tenantId: user.tenantId, referenceId: data.referenceId },
+      orderBy: { createdAt: 'desc' },
     });
-    if (existing)
-      return NextResponse.json({ error: 'This record has already been verified', verification: existing }, { status: 409 });
+
+    // If a PENDING record exists (resubmitted after rejection) — update it, delete stale duplicates
+    const pendingRecord = allExisting.find(v => v.status === 'PENDING');
+    if (pendingRecord) {
+      // Delete any other stale records for this referenceId to prevent future confusion
+      const staleIds = allExisting.filter(v => v.id !== pendingRecord.id).map(v => v.id);
+      if (staleIds.length > 0) {
+        await prisma.verification.deleteMany({ where: { id: { in: staleIds } } }).catch(() => {});
+      }
+      const verification = await prisma.verification.update({
+        where: { id: pendingRecord.id },
+        data: {
+          verifiedById:      user.sub,
+          verificationType:  data.verificationType,
+          verificationDate:  new Date(data.verificationDate),
+          status:            data.status,
+          discrepancyAmount: data.discrepancyAmount ?? null,
+          discrepancyNotes:  data.discrepancyNotes  ?? null,
+        },
+      });
+      await updateSourceRecord(data.referenceType, data.referenceId, data.status, user.sub);
+      return NextResponse.json({ verification }, { status: 200 });
+    }
+
+    // Block if any record is already fully verified or resolved
+    const finalRecord = allExisting.find(v => ['VERIFIED', 'RESOLVED', 'ESCALATED'].includes(v.status));
+    if (finalRecord)
+      return NextResponse.json({ error: 'This record has already been verified', verification: finalRecord }, { status: 409 });
 
     // Create verification record
     const verification = await prisma.verification.create({
@@ -336,8 +378,10 @@ export async function POST(request) {
 
     return NextResponse.json({ verification }, { status: 201 });
   } catch (error) {
-    if (error.name === 'ZodError')
-      return NextResponse.json({ error: 'Validation failed', details: error.errors }, { status: 422 });
+    if (error.name === 'ZodError') {
+      const fieldErrors = error.errors.map(e => `${e.path.join('.')}: ${e.message}`).join('; ');
+      return NextResponse.json({ error: `Validation failed: ${fieldErrors}`, details: error.errors }, { status: 422 });
+    }
     console.error('Verification create error:', error);
     return NextResponse.json({ error: 'Failed to create verification' }, { status: 500 });
   }

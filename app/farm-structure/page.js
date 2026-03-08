@@ -70,7 +70,7 @@ function BroilerMetrics({ mx, compact=false }) {
   );
 }
 
-function SectionCard({ section, penType, canManage, onEdit }) {
+function SectionCard({ section, penType, canManage, onEdit, onAssign }) {
   const occ   = section.occupancyPct || 0;
   const color = OP_COLOR[penType];
   const flock = section.activeFlock;
@@ -135,6 +135,16 @@ function SectionCard({ section, penType, canManage, onEdit }) {
           </div>
         </div>
       )}
+      {canManage && onAssign && (
+        <div style={{ marginTop:10 }}>
+          <button
+            onClick={e => { e.stopPropagation(); onAssign(section); }}
+            className="btn btn-ghost"
+            style={{ width:'100%', fontSize:11, padding:'6px', justifyContent:'center' }}>
+            👷 Assign Workers
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -154,7 +164,7 @@ function PenSummaryMetrics({ pen }) {
   );
 }
 
-function PenCard({ pen, canManage, onEditPen, onEditSection, onAddSection }) {
+function PenCard({ pen, canManage, onEditPen, onEditSection, onAddSection, onAssignWorkers }) {
   const [expanded, setExpanded] = useState(true);
   const color = OP_COLOR[pen.operationType];
   return (
@@ -163,30 +173,51 @@ function PenCard({ pen, canManage, onEditPen, onEditSection, onAddSection }) {
         onClick={() => setExpanded(p => !p)}
         style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'12px 16px', cursor:'pointer', background:`${color}06`, borderBottom: expanded ? '1px solid var(--border)' : 'none' }}
       >
-        <div style={{ display:'flex', alignItems:'center', gap:12 }}>
-          <div style={{ width:36, height:36, borderRadius:9, background:`${color}15`, border:`1px solid ${color}30`, display:'flex', alignItems:'center', justifyContent:'center', fontSize:18 }}>
+        {/* Left: icon + name + subtitle */}
+        <div style={{ display:'flex', alignItems:'center', gap:12, minWidth:0 }}>
+          <div style={{ width:36, height:36, borderRadius:9, background:`${color}15`, border:`1px solid ${color}30`, display:'flex', alignItems:'center', justifyContent:'center', fontSize:18, flexShrink:0 }}>
             {OP_ICON[pen.operationType]}
           </div>
-          <div>
-            <div style={{ fontWeight:700, fontSize:14 }}>{pen.name}</div>
+          <div style={{ minWidth:0 }}>
+            <div style={{ fontWeight:700, fontSize:14, whiteSpace:'nowrap' }}>{pen.name}</div>
             <div style={{ fontSize:11, color:'var(--text-muted)', marginTop:1 }}>
-              {pen.sectionCount} sections · {pen.operationType}
+              {pen.sectionCount} section{pen.sectionCount !== 1 ? 's' : ''} · {pen.operationType}
             </div>
           </div>
-          <PenSummaryMetrics pen={pen} />
-          {canManage && (
-            <button className="btn btn-ghost" style={{ padding:'4px 8px', fontSize:11 }}
-              onClick={e => { e.stopPropagation(); onEditPen(pen); }}>✏️</button>
-          )}
         </div>
-        <span style={{ color:'var(--text-faint)', fontSize:14, transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)', transition:'transform 0.2s' }}>›</span>
+        {/* Right: summary metrics + edit button + chevron */}
+        {(() => {
+          const totBirds = pen.sections.reduce((s, sec) => s + (sec.currentBirds || 0), 0);
+          const totCap   = pen.sections.reduce((s, sec) => s + (sec.capacity || 0), 0);
+          const occ      = totCap > 0 ? parseFloat(((totBirds / totCap) * 100).toFixed(1)) : 0;
+          return (
+            <div style={{ display:'flex', alignItems:'center', gap:16, flexShrink:0 }}>
+              {[
+                { val: totBirds.toLocaleString(), lbl: 'Live Birds',  color: OP_COLOR[pen.operationType] },
+                { val: `${occ}%`,                  lbl: 'Occupied',   color: occColor(occ) },
+                { val: totCap.toLocaleString(),    lbl: 'Capacity',   color: 'var(--text-primary)' },
+              ].map(s => (
+                <div key={s.lbl} style={{ textAlign:'center' }}>
+                  <div style={{ fontFamily:"'Poppins',sans-serif", fontSize:14, fontWeight:700, color:s.color, lineHeight:1, whiteSpace:'nowrap' }}>{s.val}</div>
+                  <div style={{ fontSize:10, color:'var(--text-muted)', marginTop:2, whiteSpace:'nowrap' }}>{s.lbl}</div>
+                </div>
+              ))}
+              {canManage && (
+                <button className="btn btn-ghost" style={{ padding:'4px 8px', fontSize:11 }}
+                  onClick={e => { e.stopPropagation(); onEditPen(pen); }}>✏️</button>
+              )}
+              <span style={{ color:'var(--text-faint)', fontSize:14, transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)', transition:'transform 0.2s' }}>›</span>
+            </div>
+          );
+        })()}
       </div>
       {expanded && (
         <div style={{ padding:14 }}>
           <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(210px, 1fr))', gap:10 }}>
             {pen.sections.map(sec => (
               <SectionCard key={sec.id} section={sec} penType={pen.operationType} canManage={canManage}
-                onEdit={() => onEditSection(sec, pen)} />
+                onEdit={() => onEditSection(sec, pen)}
+                onAssign={onAssignWorkers ? () => onAssignWorkers(sec) : undefined} />
             ))}
             {canManage && (
               <div onClick={() => onAddSection(pen)}
@@ -465,6 +496,124 @@ function SectionModal({ mode, section, pen, onClose, onSave }) {
   );
 }
 
+
+// ── Assign Workers Modal ──────────────────────────────────────────────────────
+function AssignWorkersModal({ section, onClose, onSave, apiFetch }) {
+  const [allUsers,  setAllUsers]  = useState([]);
+  const [selected,  setSelected]  = useState(new Set());
+  const [saving,    setSaving]    = useState(false);
+  const [loading,   setLoading]   = useState(true);
+  const [error,     setError]     = useState('');
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await apiFetch('/api/users?status=active');
+        if (!res.ok) return;
+        const d = await res.json();
+        const workers = (d.users || []).filter(u =>
+          ['PEN_WORKER','PEN_MANAGER'].includes(u.role)
+        );
+        setAllUsers(workers);
+        // Pre-tick currently assigned
+        const current = new Set([
+          ...(section.workers  || []).map(w => w.id),
+          ...(section.managers || []).map(m => m.id),
+        ]);
+        setSelected(current);
+      } finally { setLoading(false); }
+    })();
+  }, []);
+
+  const toggle = (id) => setSelected(prev => {
+    const next = new Set(prev);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
+
+  async function save() {
+    setSaving(true); setError('');
+    try {
+      // For each affected user rebuild their full section list
+      const affected = allUsers.filter(u =>
+        selected.has(u.id) || (section.workers || []).some(w => w.id === u.id) || (section.managers || []).some(m => m.id === u.id)
+      );
+      await Promise.all(affected.map(async (u) => {
+        const current = (u.penAssignments || []).map(a => a.penSection?.id).filter(Boolean);
+        let next;
+        if (selected.has(u.id)) {
+          next = [...new Set([...current, section.id])];
+        } else {
+          next = current.filter(id => id !== section.id);
+        }
+        await apiFetch('/api/users', {
+          method: 'PATCH',
+          body: JSON.stringify({ userId: u.id, penSectionIds: next }),
+        });
+      }));
+      onSave();
+    } catch(e) {
+      setError('Failed to save assignments');
+    } finally { setSaving(false); }
+  }
+
+  const grouped = { PEN_MANAGER: [], PEN_WORKER: [] };
+  allUsers.forEach(u => { if (grouped[u.role]) grouped[u.role].push(u); });
+
+  return (
+    <PortalModal
+      title="👷 Assign Workers"
+      subtitle={`${section.name} — select workers to assign`}
+      width={460}
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" onClick={save} disabled={saving}>
+            {saving ? 'Saving…' : 'Save Assignments'}
+          </button>
+        </>
+      }
+    >
+      {error && <div className="alert alert-red" style={{ marginBottom:12 }}>⚠ {error}</div>}
+      {loading ? (
+        <div style={{ height:120, background:'var(--bg-elevated)', borderRadius:8, animation:'pulse 1.5s infinite' }} />
+      ) : allUsers.length === 0 ? (
+        <div style={{ textAlign:'center', padding:'20px', color:'var(--text-muted)', fontSize:13 }}>
+          No pen workers or managers found. Add staff in User Admin first.
+        </div>
+      ) : (
+        <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
+          {[['PEN_MANAGER','Pen Managers','var(--purple)'],['PEN_WORKER','Pen Workers','var(--blue)']].map(([role, label, color]) =>
+            grouped[role].length > 0 && (
+              <div key={role}>
+                <div style={{ fontSize:10, fontWeight:700, color, textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:8 }}>{label}</div>
+                <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+                  {grouped[role].map(u => (
+                    <label key={u.id} style={{ display:'flex', alignItems:'center', gap:12, padding:'10px 12px', background: selected.has(u.id) ? 'var(--purple-light)' : 'var(--bg-elevated)', border:`1px solid ${selected.has(u.id) ? '#d4d8ff' : 'var(--border)'}`, borderRadius:8, cursor:'pointer', transition:'all 0.15s' }}>
+                      <input type="checkbox" checked={selected.has(u.id)} onChange={() => toggle(u.id)} style={{ width:15, height:15, accentColor:'var(--purple)', flexShrink:0 }} />
+                      <div style={{ width:30, height:30, borderRadius:'50%', background:`${color}15`, border:`1.5px solid ${color}30`, display:'flex', alignItems:'center', justifyContent:'center', fontSize:12, fontWeight:800, color, flexShrink:0 }}>
+                        {u.firstName[0]}{u.lastName[0]}
+                      </div>
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <div style={{ fontSize:13, fontWeight:700 }}>{u.firstName} {u.lastName}</div>
+                        <div style={{ fontSize:11, color:'var(--text-muted)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{u.email}</div>
+                      </div>
+                      <div style={{ fontSize:10, color:'var(--text-muted)', textAlign:'right', flexShrink:0 }}>
+                        {(u.penAssignments?.length || 0)} section{(u.penAssignments?.length || 0) !== 1 ? 's' : ''}
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )
+          )}
+        </div>
+      )}
+    </PortalModal>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function FarmStructurePage() {
   const { user, apiFetch } = useAuth();
@@ -598,6 +747,7 @@ export default function FarmStructurePage() {
                 onEditPen={p    => setModal({ type:'pen',     mode:'edit',   target:p,   context:{ farmName:farm.name } })}
                 onEditSection={(sec, p) => setModal({ type:'section', mode:'edit',   target:sec, context:{ pen:p } })}
                 onAddSection={p => setModal({ type:'section', mode:'create',          context:{ pen:p } })}
+                onAssignWorkers={sec => setModal({ type:'assign', target:sec })}
               />
             ))}
           </div>
@@ -608,6 +758,7 @@ export default function FarmStructurePage() {
       {modal?.type === 'farm'    && <FarmModal    mode={modal.mode} farm={modal.target}    managers={managers} onClose={() => setModal(null)} onSave={() => handleSave(modal.mode==='create' ? 'Farm created' : 'Farm updated')} />}
       {modal?.type === 'pen'     && <PenModal     mode={modal.mode} pen={modal.target}     farmId={modal.context?.farmId} farmName={modal.context?.farmName} onClose={() => setModal(null)} onSave={() => handleSave(modal.mode==='create' ? 'Pen created' : 'Pen updated')} />}
       {modal?.type === 'section' && <SectionModal mode={modal.mode} section={modal.target} pen={modal.context?.pen} onClose={() => setModal(null)} onSave={() => handleSave(modal.mode==='create' ? 'Section added' : 'Section updated')} />}
+      {modal?.type === 'assign'  && <AssignWorkersModal section={modal.target} apiFetch={apiFetch} onClose={() => setModal(null)} onSave={() => handleSave('Worker assignments updated')} />}
     </AppShell>
   );
 }

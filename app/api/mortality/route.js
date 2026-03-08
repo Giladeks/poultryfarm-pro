@@ -3,10 +3,11 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
 import { verifyToken } from '@/lib/middleware/auth';
 import { z } from 'zod';
+import { sendMortalityAlert } from '@/lib/services/sms';
 
 const createMortalitySchema = z.object({
-  flockId: z.string().uuid(),
-  penSectionId: z.string().uuid(),
+  flockId: z.string().min(1),
+  penSectionId: z.string().min(1),
   recordDate: z.string(),
   count: z.number().int().min(0).max(10000),
   causeCode: z.enum([
@@ -22,10 +23,22 @@ export async function GET(request) {
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { searchParams } = new URL(request.url);
-  const flockId = searchParams.get('flockId');
-  const days = parseInt(searchParams.get('days') || '30');
+  const flockId      = searchParams.get('flockId');
+  const days         = parseInt(searchParams.get('days') || '30');
+  const rejectedOnly = searchParams.get('rejected') === 'true';
   const since = new Date();
   since.setDate(since.getDate() - days);
+
+  // Workers only see their own sections' records
+  const WORKER_ROLES = ['PEN_WORKER'];
+  let allowedSectionIds = null;
+  if (WORKER_ROLES.includes(user.role)) {
+    const assignments = await prisma.penWorkerAssignment.findMany({
+      where: { userId: user.sub },
+      select: { penSectionId: true },
+    });
+    allowedSectionIds = assignments.map(a => a.penSectionId);
+  }
 
   try {
     const records = await prisma.mortalityRecord.findMany({
@@ -33,6 +46,8 @@ export async function GET(request) {
         flock: { penSection: { pen: { farm: { tenantId: user.tenantId } } } },
         recordDate: { gte: since },
         ...(flockId && { flockId }),
+        ...(allowedSectionIds && { penSectionId: { in: allowedSectionIds } }),
+        ...(rejectedOnly && { rejectionReason: { not: null } }),
       },
       include: {
         flock: { select: { batchCode: true, operationType: true } },
@@ -119,7 +134,7 @@ export async function POST(request) {
   }
 }
 
-async function checkMortalitySpike(tenantId, flockId, todayCount) {
+async function checkMortalitySpike(tenantId, flockId, count) {
   const sevenDaysAgo = new Date();
   sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
   const weekData = await prisma.mortalityRecord.groupBy({
@@ -127,10 +142,57 @@ async function checkMortalitySpike(tenantId, flockId, todayCount) {
     where: { flockId, recordDate: { gte: sevenDaysAgo } },
     _sum: { count: true },
   });
-  if (weekData.length < 3) return;
-  const avgDaily = weekData.reduce((s, d) => s + (d._sum.count || 0), 0) / weekData.length;
-  if (todayCount > avgDaily * 2 && todayCount > 10) {
-    console.log(`[ALERT] Mortality spike: ${todayCount} vs avg ${avgDaily.toFixed(1)}`);
-    // Module 16 (Notifications) will send real alerts
+
+  const avgDaily = weekData.length >= 3
+    ? weekData.reduce((s, d) => s + (d._sum.count || 0), 0) / weekData.length
+    : null;
+
+  const isSpike = (avgDaily !== null && count > avgDaily * 2 && count > 10) || count >= 20;
+  if (!isSpike) return;
+
+  // Check if tenant has SMS alerts enabled
+  try {
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { settings: true },
+    });
+    const smsSettings = tenant?.settings?.sms;
+    if (!smsSettings?.enabled || !smsSettings?.mortalityAlert?.enabled) return;
+    if (count < (smsSettings.mortalityAlert.threshold ?? 10)) return;
+
+    // Get flock + section + pen info for the message
+    const flock = await prisma.flock.findUnique({
+      where: { id: flockId },
+      include: {
+        penSection: { include: { pen: { select: { name: true } } } },
+      },
+    });
+    if (!flock) return;
+
+    // Find Farm Manager + Pen Manager phone numbers
+    const managers = await prisma.user.findMany({
+      where: {
+        tenantId,
+        role:     { in: ['FARM_MANAGER', 'FARM_ADMIN', 'PEN_MANAGER', 'CHAIRPERSON'] },
+        isActive: true,
+        phone:    { not: null },
+      },
+      select: { phone: true, firstName: true },
+    });
+
+    // Also include any extra alert phones configured in settings
+    const extraPhones = (smsSettings.alertPhones || []).map(p => ({ phone: p.phone }));
+    const recipients  = [...managers, ...extraPhones].filter(r => r.phone);
+
+    await sendMortalityAlert({
+      count,
+      flockBatchCode: flock.batchCode,
+      penName:        flock.penSection?.pen?.name || 'Unknown Pen',
+      sectionName:    flock.penSection?.name || 'Unknown Section',
+      causeCode:      null, // not available at spike-check level
+      recipients,
+    });
+  } catch (err) {
+    console.error('[SMS] Mortality alert error:', err.message);
   }
 }

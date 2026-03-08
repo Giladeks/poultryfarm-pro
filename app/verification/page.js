@@ -5,9 +5,9 @@ import AppShell from '@/components/layout/AppShell';
 import { useAuth } from '@/components/layout/AuthProvider';
 
 // ─── Role helpers ─────────────────────────────────────────────────────────────
-const VERIFIER_ROLES = ['STORE_MANAGER', 'STORE_CLERK', 'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
+const VERIFIER_ROLES = ['PEN_MANAGER', 'STORE_MANAGER', 'STORE_CLERK', 'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
 const MANAGER_ROLES  = ['FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
-const REJECT_ROLES   = ['STORE_MANAGER', 'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
+const REJECT_ROLES   = ['PEN_MANAGER', 'STORE_MANAGER', 'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const TABS = ['pending', 'verified', 'discrepancies'];
@@ -222,71 +222,108 @@ function ActionModal({ item, action, onClose, onConfirm }) {
 
 // ─── Pending Item Card ────────────────────────────────────────────────────────
 function PendingCard({ item, canVerify, canReject, onAction }) {
-  const tm = TYPE_META[item.type] || TYPE_META.DAILY_PRODUCTION;
+  const tm  = TYPE_META[item.type] || TYPE_META.DAILY_PRODUCTION;
   const sev = item.severity ? SEVERITY_META[item.severity] : null;
+  const isHighRisk = item.severity === 'HIGH';
 
   return (
     <div style={{
-      background: '#fff', borderRadius: 12, border: '1px solid var(--border-card)',
-      padding: '16px 18px', boxShadow: '0 1px 4px rgba(0,0,0,0.04)',
+      background: '#fff',
+      borderRadius: 12,
+      border: `1px solid ${isHighRisk ? tm.color + '55' : 'var(--border-card)'}`,
+      boxShadow: isHighRisk
+        ? `0 0 0 3px ${tm.color}18, 0 2px 8px rgba(0,0,0,0.06)`
+        : '0 1px 4px rgba(0,0,0,0.04)',
+      overflow: 'hidden',
       animation: 'fadeIn 0.2s ease',
     }}>
-      {/* Top row */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10, marginBottom: 10 }}>
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-          <div style={{ width: 36, height: 36, borderRadius: 9, background: `${tm.color}14`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, flexShrink: 0 }}>
-            {tm.icon}
-          </div>
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 800, color: '#1e293b', lineHeight: 1.3 }}>{item.summary}</div>
-            <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{item.context}</div>
-          </div>
+      {/* ── Coloured header bar ── */}
+      <div style={{
+        background: `linear-gradient(135deg, ${tm.color}, ${tm.color}cc)`,
+        padding: '10px 16px',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 16 }}>{tm.icon}</span>
+          <span style={{ fontSize: 11, fontWeight: 800, color: '#fff', textTransform: 'uppercase', letterSpacing: '.06em' }}>
+            {tm.label}
+          </span>
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, flexShrink: 0 }}>
-          <TypeBadge type={item.type} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          {item.resubmitted && (
+            <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 99, background: 'rgba(255,255,255,0.25)', color: '#fff' }}>
+              🔄 RESUBMITTED
+            </span>
+          )}
           {sev && (
-            <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 99, background: sev.bg, color: sev.color }}>
+            <span style={{ fontSize: 10, fontWeight: 800, padding: '2px 8px', borderRadius: 99, background: 'rgba(0,0,0,0.18)', color: '#fff' }}>
               {item.severity} RISK
             </span>
           )}
         </div>
       </div>
 
-      {/* Meta row */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 11, color: '#94a3b8', marginBottom: 12, flexWrap: 'wrap' }}>
-        <span>👤 {item.submittedBy}</span>
-        <span>📅 {fmtDate(item.date)}</span>
-        <span>🕐 {timeAgo(item.date)}</span>
-        {item.costAtTime && <span>💰 {fmtCur(item.costAtTime)}</span>}
-        {item.layingRate && <span>🥚 {Number(item.layingRate).toFixed(1)}% lay rate</span>}
-      </div>
+      {/* ── Body ── */}
+      <div style={{ padding: '14px 16px' }}>
+        {/* Summary + context */}
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 14, fontWeight: 800, color: '#1e293b', lineHeight: 1.4 }}>{item.summary}</div>
+          <div style={{ fontSize: 12, color: '#64748b', marginTop: 3 }}>{item.context}</div>
+        </div>
 
-      {/* Action buttons */}
-      {canVerify && (
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button onClick={() => onAction(item, 'verify')} style={{
-            flex: 1, padding: '8px 14px', borderRadius: 8, border: 'none',
-            background: '#f0fdf4', color: '#16a34a', fontSize: 12, fontWeight: 700, cursor: 'pointer',
-          }}>✅ Verify</button>
-          <button onClick={() => onAction(item, 'discrepancy')} style={{
-            flex: 1, padding: '8px 14px', borderRadius: 8, border: 'none',
-            background: '#fffbeb', color: '#d97706', fontSize: 12, fontWeight: 700, cursor: 'pointer',
-          }}>⚠️ Discrepancy</button>
-          {canReject && (
-            <button onClick={() => onAction(item, 'reject')} style={{
-              padding: '8px 14px', borderRadius: 8, border: 'none',
-              background: '#fef2f2', color: '#dc2626', fontSize: 12, fontWeight: 700, cursor: 'pointer',
-            }}>↩️ Reject</button>
+        {/* Meta chips */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 14 }}>
+          <span style={{ fontSize: 11, padding: '3px 8px', borderRadius: 6, background: '#f1f5f9', color: '#475569', fontWeight: 500 }}>
+            👤 {item.submittedBy}
+          </span>
+          <span style={{ fontSize: 11, padding: '3px 8px', borderRadius: 6, background: '#f1f5f9', color: '#475569', fontWeight: 500 }}>
+            📅 {fmtDate(item.date)}
+          </span>
+          <span style={{ fontSize: 11, padding: '3px 8px', borderRadius: 6, background: '#f1f5f9', color: '#475569', fontWeight: 500 }}>
+            🕐 {timeAgo(item.date)}
+          </span>
+          {item.costAtTime && (
+            <span style={{ fontSize: 11, padding: '3px 8px', borderRadius: 6, background: '#f0fdf4', color: '#16a34a', fontWeight: 600 }}>
+              💰 {fmtCur(item.costAtTime)}
+            </span>
+          )}
+          {item.layingRate && (
+            <span style={{ fontSize: 11, padding: '3px 8px', borderRadius: 6, background: '#fefce8', color: '#a16207', fontWeight: 600 }}>
+              🥚 {Number(item.layingRate).toFixed(1)}% lay rate
+            </span>
           )}
         </div>
-      )}
+
+        {/* Action buttons */}
+        {canVerify && (
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={() => onAction(item, 'verify')} style={{
+              flex: 1, padding: '8px 0', borderRadius: 8,
+              border: '1.5px solid #16a34a',
+              background: '#f0fdf4', color: '#16a34a', fontSize: 12, fontWeight: 700, cursor: 'pointer',
+            }}>✅ Verify</button>
+            <button onClick={() => onAction(item, 'discrepancy')} style={{
+              flex: 1, padding: '8px 0', borderRadius: 8,
+              border: '1.5px solid #d97706',
+              background: '#fffbeb', color: '#d97706', fontSize: 12, fontWeight: 700, cursor: 'pointer',
+            }}>⚠️ Discrepancy</button>
+            {canReject && (
+              <button onClick={() => onAction(item, 'reject')} style={{
+                flex: 1, padding: '8px 0', borderRadius: 8,
+                border: '1.5px solid #dc2626',
+                background: '#fef2f2', color: '#dc2626', fontSize: 12, fontWeight: 700, cursor: 'pointer',
+              }}>↩️ Reject</button>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 export default function VerificationPage() {
-  const { user } = useAuth();
+  const { user, apiFetch } = useAuth();
 
   const [activeTab,     setActiveTab]     = useState('pending');
   const [pendingQueue,  setPendingQueue]  = useState([]);
@@ -297,8 +334,7 @@ export default function VerificationPage() {
   const [typeFilter,    setTypeFilter]    = useState('ALL');
   const [actionModal,   setActionModal]   = useState(null); // { item, action }
   const [toast,         setToast]         = useState(null);
-  const [stores,        setStores]        = useState([]);
-  const [defaultStore,  setDefaultStore]  = useState(null);
+
 
   const canVerify  = VERIFIER_ROLES.includes(user?.role);
   const canReject  = REJECT_ROLES.includes(user?.role);
@@ -309,24 +345,12 @@ export default function VerificationPage() {
     setTimeout(() => setToast(null), 3500);
   };
 
-  // ── Fetch stores (needed for verification POST) ───────────────────────────
-  const fetchStores = useCallback(async () => {
-    try {
-      const res = await fetch('/api/feed/inventory');
-      const d   = await res.json();
-      const storeMap = {};
-      (d.inventory || []).forEach(i => { if (i.store) storeMap[i.store.id] = i.store; });
-      const storeList = Object.values(storeMap);
-      setStores(storeList);
-      if (storeList.length) setDefaultStore(storeList[0].id);
-    } catch {}
-  }, []);
 
   // ── Fetch pending queue ───────────────────────────────────────────────────
   const fetchPending = useCallback(async () => {
     try {
       const qs  = typeFilter !== 'ALL' ? `?pendingOnly=true&type=${typeFilter}` : '?pendingOnly=true';
-      const res = await fetch(`/api/verification${qs}`);
+      const res = await apiFetch(`/api/verification${qs}`);
       const d   = await res.json();
       if (!res.ok) throw new Error(d.error);
       setPendingQueue(d.pendingQueue || []);
@@ -338,7 +362,7 @@ export default function VerificationPage() {
   const fetchVerifications = useCallback(async (status) => {
     try {
       const qs  = status ? `?status=${status}` : '';
-      const res = await fetch(`/api/verification${qs}`);
+      const res = await apiFetch(`/api/verification${qs}`);
       const d   = await res.json();
       if (!res.ok) throw new Error(d.error);
       setVerifications(d.verifications || []);
@@ -350,10 +374,10 @@ export default function VerificationPage() {
   useEffect(() => {
     (async () => {
       setLoading(true);
-      await Promise.all([fetchPending(), fetchStores()]);
+      await fetchPending();
       setLoading(false);
     })();
-  }, [fetchPending, fetchStores]);
+  }, [fetchPending]);
 
   // Tab switch
   useEffect(() => {
@@ -375,15 +399,12 @@ export default function VerificationPage() {
 
   // ── Action handler ────────────────────────────────────────────────────────
   const handleAction = async (item, action, { notes, amount } = {}) => {
-    const storeId = item.storeId || defaultStore || null;
 
     if (action === 'verify' || action === 'discrepancy') {
       // POST new verification
-      const res = await fetch('/api/verification', {
+      const res = await apiFetch('/api/verification', {
         method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          storeId,
           verificationType:  item.type,
           referenceId:       item.referenceId,
           referenceType:     item.referenceType,
@@ -399,23 +420,20 @@ export default function VerificationPage() {
       showToast(action === 'verify' ? 'Record verified successfully' : 'Discrepancy flagged — managers notified');
 
     } else if (action === 'reject') {
-      // Need existing verification id — find or create
-      const existing = verifications.find(v => v.referenceId === item.referenceId);
-      if (existing) {
-        const res = await fetch(`/api/verification/${existing.id}`, {
+      // Always use the verification id embedded in the pending item (avoids stale state)
+      if (item.verificationId) {
+        // Existing verification record — PATCH directly
+        const res = await apiFetch(`/api/verification/${item.verificationId}`, {
           method:  'PATCH',
-          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ reject: true, rejectReason: notes }),
         });
         const d = await res.json();
         if (!res.ok) throw new Error(d.error);
       } else {
-        // Create verification as discrepancy then reject
-        const res = await fetch('/api/verification', {
+        // No verification record yet — create one then immediately reject it
+        const res = await apiFetch('/api/verification', {
           method:  'POST',
-          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            storeId,
             verificationType:  item.type,
             referenceId:       item.referenceId,
             referenceType:     item.referenceType,
@@ -427,9 +445,8 @@ export default function VerificationPage() {
         const created = await res.json();
         if (!res.ok) throw new Error(created.error);
 
-        const res2 = await fetch(`/api/verification/${created.verification.id}`, {
+        const res2 = await apiFetch(`/api/verification/${created.verification.id}`, {
           method:  'PATCH',
-          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ reject: true, rejectReason: notes }),
         });
         const d2 = await res2.json();
@@ -445,9 +462,8 @@ export default function VerificationPage() {
 
   // ── Escalate / Resolve existing verification ──────────────────────────────
   const handleVerificationAction = async (v, action, { notes } = {}) => {
-    const res = await fetch(`/api/verification/${v.id}`, {
+    const res = await apiFetch(`/api/verification/${v.id}`, {
       method:  'PATCH',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         status:   action === 'escalate' ? 'ESCALATED' : 'RESOLVED',
         discrepancyNotes: notes,
@@ -567,7 +583,7 @@ export default function VerificationPage() {
             {/* Cards grid */}
             <div style={{ padding: 16 }}>
               {loading ? (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(340px,1fr))', gap: 12 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 12 }}>
                   {Array.from({ length: 4 }).map((_, i) => (
                     <div key={i} style={{ background: '#f8fafc', borderRadius: 12, height: 140, animation: 'pulse 1.5s ease-in-out infinite' }} />
                   ))}
@@ -575,7 +591,7 @@ export default function VerificationPage() {
               ) : filteredPending.length === 0 ? (
                 <EmptyState icon="✅" title="All caught up!" sub={typeFilter === 'ALL' ? 'No records awaiting verification' : `No pending ${TYPE_META[typeFilter]?.label || typeFilter} records`} />
               ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(340px,1fr))', gap: 12 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 12 }}>
                   {filteredPending.map(item => (
                     <PendingCard
                       key={item.id}

@@ -29,7 +29,7 @@ export async function GET(request) {
 
     if (!isManager) {
       const assignments = await prisma.penWorkerAssignment.findMany({
-        where: { userId: user.sub, isActive: true },
+        where: { userId: user.sub },
         select: { penSectionId: true },
       });
       allowedSectionIds = assignments.map(a => a.penSectionId);
@@ -41,7 +41,6 @@ export async function GET(request) {
     // ── Fetch sections with full context ──────────────────────────────────────
     const sections = await prisma.penSection.findMany({
       where: {
-        isActive: true,
         ...(allowedSectionIds ? { id: { in: allowedSectionIds } } : {}),
         pen: { farm: { tenantId: user.tenantId, isActive: true } },
       },

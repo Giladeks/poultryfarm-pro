@@ -159,9 +159,119 @@ export async function GET(request) {
       });
     }
 
+    if (report === 'fcr_analysis') {
+      // Per-flock FCR: feed consumed / (weight gain in kg)
+      const flocks = await prisma.flock.findMany({
+        where: {
+          penSection: { pen: { farm: { tenantId: user.tenantId } } },
+          status: 'ACTIVE',
+          operationType: 'BROILER',
+        },
+        include: {
+          penSection: { include: { pen: { select: { id: true, name: true } } } },
+        },
+      });
+
+      const fcrData = await Promise.all(flocks.map(async (flock) => {
+        const [feedAgg, latestWeight, placementWeight] = await Promise.all([
+          prisma.feedConsumption.aggregate({
+            where: { flockId: flock.id, recordedDate: { gte: since } },
+            _sum: { quantityKg: true },
+          }),
+          prisma.weightRecord.findFirst({
+            where: { flockId: flock.id },
+            orderBy: { recordDate: 'desc' },
+          }),
+          // Assume placement weight 42g/bird
+          Promise.resolve(null),
+        ]);
+
+        const totalFeedKg   = Number(feedAgg._sum.quantityKg || 0);
+        const currentWeightG = latestWeight?.avgWeightG ? Number(latestWeight.avgWeightG) : null;
+        const placementWeightG = 42;
+
+        let fcr = null;
+        if (currentWeightG && totalFeedKg > 0 && flock.currentCount > 0) {
+          const gainKg = ((currentWeightG - placementWeightG) * flock.currentCount) / 1000;
+          fcr = gainKg > 0 ? parseFloat((totalFeedKg / gainKg).toFixed(2)) : null;
+        }
+
+        return {
+          flockId:      flock.id,
+          batchCode:    flock.batchCode,
+          penName:      flock.penSection?.pen?.name || '—',
+          sectionName:  flock.penSection?.name || '—',
+          currentCount: flock.currentCount,
+          totalFeedKg:  parseFloat(totalFeedKg.toFixed(1)),
+          currentWeightG,
+          fcr,
+          fcrRating:    fcr === null ? 'unknown' : fcr < 1.7 ? 'excellent' : fcr < 2.0 ? 'good' : fcr < 2.5 ? 'fair' : 'poor',
+          ageInDays:    Math.floor((Date.now() - new Date(flock.dateOfPlacement)) / 86400000),
+        };
+      }));
+
+      return NextResponse.json({ fcrData: fcrData.filter(f => f.totalFeedKg > 0) });
+    }
+
+    if (report === 'mortality_trend') {
+      // Daily mortality series per pen for charting
+      const pens = await prisma.pen.findMany({
+        where: { farm: { tenantId: user.tenantId }, isActive: true },
+        select: { id: true, name: true, operationType: true },
+      });
+
+      const seriesByPen = await Promise.all(pens.map(async (pen) => {
+        const records = await prisma.mortalityRecord.groupBy({
+          by: ['recordDate'],
+          where: {
+            flock: { penSection: { penId: pen.id } },
+            recordDate: { gte: since },
+          },
+          _sum: { count: true },
+          orderBy: { recordDate: 'asc' },
+        });
+
+        return {
+          penId:   pen.id,
+          penName: pen.name,
+          opType:  pen.operationType,
+          series:  records.map(r => ({
+            date:  r.recordDate,
+            value: r._sum.count || 0,
+          })),
+          total:   records.reduce((s, r) => s + (r._sum.count || 0), 0),
+        };
+      }));
+
+      // Also return a combined daily series across all pens for the overview chart
+      const allDates = [...new Set(
+        seriesByPen.flatMap(p => p.series.map(s => new Date(s.date).toISOString().split('T')[0]))
+      )].sort();
+
+      const combined = allDates.map(date => {
+        const entry = { date };
+        seriesByPen.forEach(pen => {
+          const found = pen.series.find(s => new Date(s.date).toISOString().split('T')[0] === date);
+          entry[pen.penName] = found ? found.value : 0;
+        });
+        entry.total = seriesByPen.reduce((s, pen) => {
+          const found = pen.series.find(s => new Date(s.date).toISOString().split('T')[0] === date);
+          return s + (found ? found.value : 0);
+        }, 0);
+        return entry;
+      });
+
+      return NextResponse.json({
+        seriesByPen,
+        combined,
+        pens: pens.map(p => ({ id: p.id, name: p.name })),
+      });
+    }
+
     return NextResponse.json({ error: 'Unknown report type' }, { status: 400 });
   } catch (error) {
     console.error('Analytics error:', error);
     return NextResponse.json({ error: 'Analytics query failed' }, { status: 500 });
   }
 }
+

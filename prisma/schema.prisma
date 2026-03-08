@@ -46,6 +46,7 @@ model Tenant {
   notifications       Notification[]
   alertRules          AlertRule[]
   currencies          TenantCurrency[]
+  settings         Json?        @default("{}")
 
   @@map("tenants")
 }
@@ -394,6 +395,7 @@ model EggProduction {
   approvedById    String?
   approvedAt      DateTime?
   submissionStatus SubmissionStatus @default(PENDING)
+  rejectionReason  String?
   notes           String?
   createdAt       DateTime @default(now())
 
@@ -482,6 +484,7 @@ model MortalityRecord {
   approvedById    String?
   approvedAt      DateTime?
   submissionStatus SubmissionStatus @default(PENDING)
+  rejectionReason  String?
   createdAt       DateTime      @default(now())
 
   flock      Flock      @relation(fields: [flockId], references: [id])

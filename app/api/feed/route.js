@@ -5,15 +5,15 @@ import { verifyToken } from '@/lib/middleware/auth';
 import { z } from 'zod';
 
 const consumptionSchema = z.object({
-  flockId: z.string().uuid(),
-  penSectionId: z.string().uuid(),
-  feedInventoryId: z.string().uuid(),
+  flockId: z.string().min(1),
+  penSectionId: z.string().min(1),
+  feedInventoryId: z.string().min(1),
   recordedDate: z.string(),
   quantityKg: z.number().positive(),
 });
 
 const inventoryUpdateSchema = z.object({
-  feedInventoryId: z.string().uuid(),
+  feedInventoryId: z.string().min(1),
   addStockKg: z.number().positive().optional(),
   newCostPerKg: z.number().positive().optional(),
   reorderLevelKg: z.number().positive().optional(),
@@ -179,3 +179,5 @@ export async function POST(request) {
     return NextResponse.json({ error: 'Feed operation failed' }, { status: 500 });
   }
 }
+
+

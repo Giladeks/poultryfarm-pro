@@ -291,3 +291,183 @@ body {
   font-family: 'Nunito', sans-serif !important;
   font-size: 12px !important;
 }
+
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   MOBILE RESPONSIVENESS  (max-width: 768px)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Responsive grid helpers ── */
+/* Usage: className="grid-kpi"  → 4-col on desktop, 2-col on mobile         */
+/* Usage: className="grid-2"    → 2-col on desktop, 1-col on mobile         */
+/* Usage: className="grid-3"    → 3-col on desktop, 1-col on mobile         */
+.grid-kpi { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.grid-2   { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+.grid-3   { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+
+/* ── AppShell mobile layout ── */
+/* Sidebar slides off-screen; bottom nav appears                             */
+.mobile-nav {
+  display: none;
+}
+
+/* ── Table scroll wrapper ── */
+.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+/* ── Page padding helper ── */
+.page-content { padding: 24px; }
+
+@media (max-width: 768px) {
+
+  /* ── Grid collapses ── */
+  .grid-kpi { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .grid-2   { grid-template-columns: 1fr; }
+  .grid-3   { grid-template-columns: 1fr; }
+
+  /* ── Page padding shrinks ── */
+  .page-content { padding: 16px; }
+
+  /* ── AppShell: hide desktop sidebar ── */
+  .desktop-sidebar { display: none !important; }
+
+  /* ── AppShell: main area takes full width ── */
+  .shell-main { width: 100% !important; }
+
+  /* ── AppShell: topbar adjustments ── */
+  .shell-topbar {
+    padding: 0 16px !important;
+  }
+  .shell-topbar-search {
+    display: none !important;
+  }
+  .shell-topbar-farm-name {
+    font-size: 13px !important;
+  }
+
+  /* ── Bottom nav bar ── */
+  .mobile-nav {
+    display: flex;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 60px;
+    background: #fff;
+    border-top: 1px solid var(--border-card);
+    z-index: 200;
+    box-shadow: 0 -2px 12px rgba(0,0,0,0.08);
+    align-items: stretch;
+  }
+  .mobile-nav-item {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    text-decoration: none;
+    font-size: 9px;
+    font-weight: 700;
+    color: var(--text-muted);
+    font-family: 'Nunito', sans-serif;
+    transition: color 0.15s;
+    padding: 6px 0;
+    position: relative;
+  }
+  .mobile-nav-item.active {
+    color: var(--purple);
+  }
+  .mobile-nav-item .nav-icon {
+    font-size: 20px;
+    line-height: 1;
+  }
+  .mobile-nav-item .nav-badge {
+    position: absolute;
+    top: 4px;
+    right: calc(50% - 16px);
+    min-width: 14px;
+    height: 14px;
+    background: var(--red);
+    border-radius: 7px;
+    font-size: 8px;
+    color: #fff;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 3px;
+    border: 1.5px solid #fff;
+  }
+
+  /* ── Page bottom padding to clear the nav bar ── */
+  .shell-page-main {
+    padding-bottom: 76px !important;
+  }
+
+  /* ── Cards ── */
+  .card { padding: 14px !important; }
+
+  /* ── Modal: full screen on mobile ── */
+  .modal-overlay {
+    padding: 0 !important;
+    align-items: flex-end !important;
+  }
+  .modal {
+    border-radius: 20px 20px 0 0 !important;
+    max-height: 92vh !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    padding: 20px 16px 32px !important;
+  }
+
+  /* ── Tables become scrollable ── */
+  .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+  /* ── Buttons: full width in footer stacks ── */
+  .modal-footer-stack {
+    flex-direction: column !important;
+    gap: 8px !important;
+  }
+  .modal-footer-stack .btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  /* ── Header rows: stack on mobile ── */
+  .page-header {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 12px !important;
+  }
+  .page-header-actions {
+    width: 100%;
+  }
+  .page-header-actions .btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  /* ── Filter bars: allow wrap ── */
+  .filter-bar {
+    flex-wrap: wrap !important;
+    gap: 6px !important;
+  }
+
+  /* ── KPI value font size ── */
+  .kpi-value { font-size: 22px; }
+
+  /* ── Hide non-essential table columns ── */
+  .hide-mobile { display: none !important; }
+
+  /* ── Section grid in dashboard: 1 col ── */
+  .section-grid-2col {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .grid-kpi { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .page-content { padding: 12px; }
+  .card { padding: 12px !important; }
+}

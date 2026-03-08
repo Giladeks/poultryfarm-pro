@@ -1,12 +1,13 @@
 // app/api/verification/[id]/route.js — Single verification: GET + PATCH (escalate / resolve)
 import { NextResponse } from 'next/server';
+import { sendRejectionAlert } from '@/lib/services/sms';
 import { prisma } from '@/lib/db/prisma';
 import { verifyToken } from '@/lib/middleware/auth';
 import { z } from 'zod';
 
-const VERIFIER_ROLES = ['STORE_MANAGER', 'STORE_CLERK', 'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
+const VERIFIER_ROLES = ['PEN_MANAGER', 'STORE_MANAGER', 'STORE_CLERK', 'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
 const MANAGER_ROLES  = ['FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
-const REJECT_ROLES   = ['STORE_MANAGER', 'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
+const REJECT_ROLES   = ['PEN_MANAGER', 'STORE_MANAGER', 'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
 
 // Valid status transitions
 const STATUS_TRANSITIONS = {
@@ -22,14 +23,15 @@ const patchSchema = z.object({
   discrepancyAmount: z.number().nullable().optional(),
   discrepancyNotes:  z.string().nullable().optional(),
   resolution:        z.string().nullable().optional(),
-  escalatedToId:     z.string().uuid().nullable().optional(),
+  escalatedToId:     z.string().min(1).nullable().optional(),
   // When rejecting (sending back to worker for resubmission)
   reject:            z.boolean().optional(),
   rejectReason:      z.string().optional(),
 });
 
 // ─── GET /api/verification/[id] ───────────────────────────────────────────────
-export async function GET(request, { params }) {
+export async function GET(request, { params: rawParams }) {
+  const params = await rawParams;
   const user = await verifyToken(request);
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   if (!VERIFIER_ROLES.includes(user.role))
@@ -65,7 +67,8 @@ export async function GET(request, { params }) {
 //  - Escalating a discrepancy to farm manager
 //  - Resolving a discrepancy
 //  - Rejecting a record (sends back to worker)
-export async function PATCH(request, { params }) {
+export async function PATCH(request, { params: rawParams }) {
+  const params = await rawParams;
   const user = await verifyToken(request);
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   if (!VERIFIER_ROLES.includes(user.role))
@@ -108,6 +111,7 @@ export async function PATCH(request, { params }) {
 
       // Notify the original submitter
       await notifyRejection(existing, data.rejectReason, user.tenantId).catch(() => {});
+      await sendRejectionSms(existing, data.rejectReason, user.tenantId).catch(() => {});
 
       const updated = await prisma.verification.update({
         where: { id: params.id },
@@ -265,7 +269,11 @@ async function updateSourceRecord(referenceType, referenceId, status, approverId
 }
 
 async function rejectSourceRecord(referenceType, referenceId, reason) {
-  const rejectionData = { submissionStatus: 'REJECTED' };
+  // Return to PENDING with rejectionReason so worker can see and correct it
+  const rejectionData = {
+    submissionStatus: 'PENDING',
+    rejectionReason:  reason || 'Returned for correction',
+  };
   switch (referenceType) {
     case 'EggProduction':
       return prisma.eggProduction.update({ where: { id: referenceId }, data: rejectionData });
@@ -274,7 +282,7 @@ async function rejectSourceRecord(referenceType, referenceId, reason) {
     case 'DailyReport':
       return prisma.dailyReport.update({
         where: { id: referenceId },
-        data:  { status: 'REJECTED', rejectedReason: reason || 'Rejected by manager' },
+        data:  { status: 'PENDING', rejectedReason: reason || 'Returned for correction' },
       });
     default:
       return null;
@@ -304,6 +312,45 @@ async function notifyRejection(verification, reason, tenantId) {
       channel: 'IN_APP',
     },
   });
+}
+
+async function sendRejectionSms(verification, reason, tenantId) {
+  try {
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { settings: true },
+    });
+    const smsSettings = tenant?.settings?.sms;
+    if (!smsSettings?.enabled || !smsSettings?.rejectionAlert?.enabled) return;
+
+    const sourceRecord = await fetchSourceRecord(verification.referenceType, verification.referenceId);
+    if (!sourceRecord) return;
+
+    const submitterId = sourceRecord.recordedById || sourceRecord.submittedById;
+    if (!submitterId) return;
+
+    const worker = await prisma.user.findUnique({
+      where: { id: submitterId },
+      select: { phone: true, firstName: true },
+    });
+    if (!worker?.phone) return;
+
+    // Get pen name from source record
+    let penName = 'your pen';
+    if (sourceRecord.penSection?.pen?.name) {
+      penName = `${sourceRecord.penSection.pen.name} › ${sourceRecord.penSection.name}`;
+    }
+
+    await sendRejectionAlert({
+      workerName:  worker.firstName || 'Worker',
+      recordType:  verification.referenceType,
+      penName,
+      reason,
+      recipients:  [{ phone: worker.phone }],
+    });
+  } catch (err) {
+    console.error('[SMS] Rejection alert error:', err.message);
+  }
 }
 
 async function notifyEscalation(verification, escalatedToId, tenantId) {

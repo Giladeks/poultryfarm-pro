@@ -290,7 +290,8 @@ function Spinner() {
 
 // ── Section card (pen worker) ─────────────────────────────────────────────────
 function WorkerSectionCard({ sec }) {
-  const [modal, setModal] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [modal,    setModal]    = useState(false);
   const mx    = sec.metrics;
   const isL   = mx.type === 'LAYER';
   const color = OP_COLOR[sec.penOperationType];
@@ -311,41 +312,55 @@ function WorkerSectionCard({ sec }) {
 
   return (
     <div className="card" style={{padding:0,overflow:'hidden',borderLeft:`4px solid ${alertBorder}`}}>
-      <div style={{padding:'16px 18px'}}>
-        {/* Header */}
-        <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:10}}>
-          <div>
-            <div style={{fontWeight:700,fontSize:15}}>{sec.penName} — {sec.name}</div>
-            {sec.flock
-              ? <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>{sec.flock.batchCode} · {sec.flock.breed} · {sec.ageInDays} days old</div>
-              : <div style={{fontSize:11,color:'var(--text-faint)',marginTop:2}}>No active flock</div>}
-          </div>
+      {/* ── Clickable header row — always visible ── */}
+      <div
+        onClick={()=>setExpanded(e=>!e)}
+        style={{padding:'14px 18px',cursor:'pointer',userSelect:'none',display:'flex',justifyContent:'space-between',alignItems:'center'}}
+      >
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{fontWeight:700,fontSize:14}}>{sec.penName} — {sec.name}</div>
+          {sec.flock
+            ? <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>{sec.flock.batchCode} · {sec.flock.breed} · {sec.ageInDays} days old</div>
+            : <div style={{fontSize:11,color:'var(--text-faint)',marginTop:2}}>No active flock</div>}
+        </div>
+        <div style={{display:'flex',alignItems:'center',gap:12,flexShrink:0,marginLeft:12}}>
           <div style={{textAlign:'right'}}>
-            <div style={{fontFamily:"'Poppins',sans-serif",fontSize:18,fontWeight:700,color:occColor(sec.occupancyPct)}}>{sec.occupancyPct}%</div>
+            <div style={{fontFamily:"'Poppins',sans-serif",fontSize:17,fontWeight:700,color:occColor(sec.occupancyPct)}}>{sec.occupancyPct}%</div>
             <div style={{fontSize:10,color:'var(--text-muted)'}}>{fmt(sec.currentBirds)} / {fmt(sec.capacity)}</div>
           </div>
+          <span style={{fontSize:20,color:'var(--text-muted)',transform:expanded?'rotate(90deg)':'rotate(0deg)',transition:'transform 0.2s ease',display:'inline-block',lineHeight:1}}>›</span>
         </div>
-        <OccBar pct={sec.occupancyPct} />
-
-        {flag && <div style={{marginTop:8,fontSize:11,fontWeight:700,color:flag.type==='critical'?'#ef4444':'#d97706',background:flag.type==='critical'?'#fff5f5':'#fffbeb',border:`1px solid ${flag.type==='critical'?'#fecaca':'#fde68a'}`,borderRadius:6,padding:'4px 10px',display:'inline-block'}}>⚠ {flag.msg}</div>}
-
-        {/* Core 4 */}
-        <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10,marginTop:14}}>
-          {core.map(k => (
-            <div key={k.label} style={{textAlign:'center',padding:'10px 8px',background:k.warn?'#fff5f5':'var(--bg-elevated)',border:`1px solid ${k.warn?'#fecaca':'var(--border)'}`,borderRadius:8}}>
-              <div style={{fontSize:18,marginBottom:4}}>{k.icon}</div>
-              <div style={{fontFamily:"'Poppins',sans-serif",fontSize:16,fontWeight:700,color:k.color}}>{k.val}</div>
-              <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.04em',marginTop:2}}>{k.label}</div>
-            </div>
-          ))}
-        </div>
-
-        {sec.flock && (
-          <button onClick={()=>setModal(true)} style={{marginTop:14,width:'100%',padding:'8px',background:'var(--bg-elevated)',border:'1px solid var(--border)',borderRadius:8,cursor:'pointer',fontSize:12,fontWeight:600,color:'var(--text-secondary)',display:'flex',alignItems:'center',justifyContent:'center',gap:6,transition:'all .15s'}}>
-            📈 View Trends & Charts
-          </button>
-        )}
       </div>
+
+      {/* ── Expanded content ── */}
+      {expanded && (
+        <div style={{borderTop:'1px solid var(--border)',padding:'14px 18px',background:'var(--bg-page)'}}>
+          <OccBar pct={sec.occupancyPct} />
+
+          {flag && <div style={{marginTop:8,marginBottom:10,fontSize:11,fontWeight:700,color:flag.type==='critical'?'#ef4444':'#d97706',background:flag.type==='critical'?'#fff5f5':'#fffbeb',border:`1px solid ${flag.type==='critical'?'#fecaca':'#fde68a'}`,borderRadius:6,padding:'4px 10px',display:'inline-block'}}>⚠ {flag.msg}</div>}
+
+          {/* Core 4 KPIs */}
+          <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10,marginTop:flag?0:8}}>
+            {core.map(k => (
+              <div key={k.label} style={{textAlign:'center',padding:'10px 8px',background:k.warn?'#fff5f5':'var(--bg-elevated)',border:`1px solid ${k.warn?'#fecaca':'var(--border)'}`,borderRadius:8}}>
+                <div style={{fontSize:18,marginBottom:4}}>{k.icon}</div>
+                <div style={{fontFamily:"'Poppins',sans-serif",fontSize:16,fontWeight:700,color:k.color}}>{k.val}</div>
+                <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.04em',marginTop:2}}>{k.label}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Charts — click button inside expanded panel */}
+          {sec.flock && (
+            <button
+              onClick={e=>{ e.stopPropagation(); setModal(true); }}
+              style={{marginTop:12,width:'100%',padding:'8px',background:'var(--bg-elevated)',border:'1px solid var(--border)',borderRadius:8,cursor:'pointer',fontSize:12,fontWeight:600,color:'var(--text-secondary)',display:'flex',alignItems:'center',justifyContent:'center',gap:6}}
+            >
+              📈 View Trends & Charts
+            </button>
+          )}
+        </div>
+      )}
 
       {modal && (
         <ChartModal
@@ -360,14 +375,9 @@ function WorkerSectionCard({ sec }) {
   );
 }
 
-// ── Pen section table row ─────────────────────────────────────────────────────
-function Cell({ v, c='var(--text-primary)' }) {
-  return <div style={{textAlign:'center',fontFamily:"'Poppins',sans-serif",fontSize:13,fontWeight:700,color:c}}>{v??'—'}</div>;
-}
-
 // ── Pen card (pen manager + farm manager) ─────────────────────────────────────
 function PenCard({ pen }) {
-  const [sectionsOpen, setSectionsOpen] = useState(true);
+  const [sectionsOpen, setSectionsOpen] = useState(false);
   const [modalSec,     setModalSec]     = useState(null); // { id, name }
   const isL   = pen.operationType === 'LAYER';
   const color = OP_COLOR[pen.operationType];
@@ -386,15 +396,15 @@ function PenCard({ pen }) {
     { icon:'📅', val:mx.nearestHarvest!=null?`${mx.nearestHarvest}d`:'—', label:'Nearest Harvest', color:'#8b5cf6' },
   ];
 
-  const colHeaders = isL
-    ? ['Section','Occupancy','Dead','Laying','Eggs','Grade A','Feed/d','Charts']
-    : ['Section','Occupancy','Dead','Weight','FCR','Harvest','Feed/d','Charts'];
-  const colTemplate = 'minmax(140px,1.2fr) minmax(100px,1fr) 60px 70px 70px 72px 64px 72px';
-
   return (
     <div style={{marginBottom:16}}>
       <div className="card" style={{padding:0,overflow:'hidden',borderLeft:`4px solid ${alertBorder}`}}>
-        <div style={{padding:'16px 18px'}}>
+
+        {/* ── Clickable header + KPIs ── */}
+        <div
+          onClick={()=>setSectionsOpen(o=>!o)}
+          style={{padding:'16px 18px',cursor:'pointer',userSelect:'none'}}
+        >
           {/* Pen header */}
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
             <div style={{display:'flex',alignItems:'center',gap:10}}>
@@ -404,11 +414,14 @@ function PenCard({ pen }) {
                 <div style={{fontSize:11,color:'var(--text-muted)'}}>{pen.farmName} · {pen.sectionCount} sections · {fmt(pen.totalBirds)} birds</div>
               </div>
             </div>
-            {pen.alertLevel !== 'ok' && (
-              <span style={{fontSize:10,fontWeight:700,color:pen.alertLevel==='critical'?'#ef4444':'#d97706',background:pen.alertLevel==='critical'?'#fff5f5':'#fffbeb',border:`1px solid ${pen.alertLevel==='critical'?'#fecaca':'#fde68a'}`,borderRadius:20,padding:'3px 10px'}}>
-                {pen.alertLevel==='critical'?'🔴 Alert':'🟡 Warning'}
-              </span>
-            )}
+            <div style={{display:'flex',alignItems:'center',gap:10}}>
+              {pen.alertLevel !== 'ok' && (
+                <span style={{fontSize:10,fontWeight:700,color:pen.alertLevel==='critical'?'#ef4444':'#d97706',background:pen.alertLevel==='critical'?'#fff5f5':'#fffbeb',border:`1px solid ${pen.alertLevel==='critical'?'#fecaca':'#fde68a'}`,borderRadius:20,padding:'3px 10px'}}>
+                  {pen.alertLevel==='critical'?'🔴 Alert':'🟡 Warning'}
+                </span>
+              )}
+              <span style={{fontSize:20,color:'var(--text-muted)',transform:sectionsOpen?'rotate(90deg)':'rotate(0deg)',transition:'transform 0.2s ease',display:'inline-block',lineHeight:1}}>›</span>
+            </div>
           </div>
 
           {/* Core 4 KPIs */}
@@ -421,68 +434,72 @@ function PenCard({ pen }) {
               </div>
             ))}
           </div>
-
-          <button onClick={()=>setSectionsOpen(o=>!o)} style={{marginTop:12,width:'100%',padding:'7px',background:'var(--bg-elevated)',border:'1px solid var(--border)',borderRadius:8,cursor:'pointer',fontSize:12,fontWeight:600,color:'var(--text-secondary)'}}>
-            {sectionsOpen ? '▲ Hide Section Breakdown' : '▼ Section Breakdown'}
-          </button>
         </div>
 
-        {/* Section table */}
+        {/* ── Section cards (revealed on click) ── */}
         {sectionsOpen && (
-          <div style={{borderTop:'1px solid var(--border)'}}>
-            {/* Header row */}
-            <div style={{display:'grid',gridTemplateColumns:colTemplate,gap:6,padding:'8px 16px',background:'var(--bg-page)',borderBottom:'1px solid var(--border)'}}>
-              {colHeaders.map((h,i) => (
-                <div key={h} style={{fontSize:9,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.06em',textAlign:i<2?'left':'center'}}>{h}</div>
-              ))}
-            </div>
-
-            {pen.sections.map(sec => {
-              const smx = sec.metrics;
-              const flg = sec.flags[0];
-              return (
-                <div key={sec.id}>
-                  <div style={{display:'grid',gridTemplateColumns:colTemplate,gap:6,padding:'10px 16px',alignItems:'center',borderBottom:'1px solid var(--border)',background:flg?.type==='critical'?'#fff5f5':flg?.type==='warn'?'#fffbeb':'#fff'}}>
-                    <div>
-                      <div style={{fontWeight:700,fontSize:12}}>{sec.name}</div>
-                      {sec.flock
-                        ? <div style={{fontSize:10,color:'var(--text-muted)'}}>{sec.flock.batchCode} · {sec.ageInDays}d</div>
-                        : <div style={{fontSize:10,color:'var(--text-faint)'}}>Empty</div>}
-                      {sec.workers.length>0 && <div style={{fontSize:10,color:'var(--purple)',marginTop:1}}>{sec.workers.map(w=>`${w.firstName} ${w.lastName[0]}.`).join(', ')}</div>}
-                      {flg && <div style={{fontSize:9,fontWeight:700,color:flg.type==='critical'?'#ef4444':'#d97706',marginTop:2}}>⚠ {flg.msg}</div>}
-                    </div>
-                    <div>
-                      <div style={{display:'flex',justifyContent:'space-between',fontSize:10,color:'var(--text-muted)',marginBottom:3}}>
-                        <span>{fmt(sec.currentBirds)}</span>
-                        <span style={{fontWeight:700,color:occColor(sec.occupancyPct)}}>{sec.occupancyPct}%</span>
+          <div style={{borderTop:'1px solid var(--border)',padding:'14px 16px',background:'var(--bg-page)'}}>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(260px,1fr))',gap:12}}>
+              {pen.sections.map(sec => {
+                const smx = sec.metrics;
+                const flg = sec.flags[0];
+                const secBorder = flg?.type==='critical'?'#ef4444':flg?.type==='warn'?'#f59e0b':color;
+                const secCore = isL ? [
+                  { icon:'🥚', val:fmt(smx.todayEggs),          label:'Eggs Today',   color:'#f59e0b' },
+                  { icon:'📊', val:`${smx.todayLayingRate??0}%`, label:'Laying Rate',  color:rateColor(smx.todayLayingRate) },
+                  { icon:'💀', val:fmt(smx.todayMortality),      label:'Deaths Today', color:smx.todayMortality>5?'#ef4444':'var(--text-primary)', warn:smx.todayMortality>5 },
+                  { icon:'🐦', val:fmt(sec.currentBirds),        label:'Live Birds',   color:'var(--purple)' },
+                ] : [
+                  { icon:'⚖',  val:smx.latestWeightG?`${fmt(smx.latestWeightG)}g`:'—', label:'Avg Weight',   color:'#3b82f6' },
+                  { icon:'🔄', val:smx.estimatedFCR??'—',                               label:'Est. FCR',     color:fcrColor(smx.estimatedFCR||0) },
+                  { icon:'💀', val:fmt(smx.todayMortality),                              label:'Deaths Today', color:smx.todayMortality>5?'#ef4444':'var(--text-primary)', warn:smx.todayMortality>5 },
+                  { icon:'📅', val:smx.daysToHarvest!=null?`${smx.daysToHarvest}d`:'—',label:'To Harvest',   color:'#8b5cf6' },
+                ];
+                return (
+                  <div key={sec.id} style={{background:'#fff',border:`1.5px solid ${secBorder}`,borderRadius:10,padding:14,display:'flex',flexDirection:'column',gap:10}}>
+                    {/* Section header */}
+                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+                      <div style={{minWidth:0,flex:1}}>
+                        <div style={{fontWeight:700,fontSize:13}}>{sec.name}</div>
+                        {sec.flock
+                          ? <div style={{fontSize:10,color:'var(--text-muted)',marginTop:1}}>{sec.flock.batchCode} · {sec.flock.breed} · {sec.ageInDays}d</div>
+                          : <div style={{fontSize:10,color:'var(--text-faint)',marginTop:1}}>Empty</div>}
+                        {sec.workers.length>0 && <div style={{fontSize:10,color:'var(--purple)',marginTop:2}}>{sec.workers.map(w=>`${w.firstName} ${w.lastName[0]}.`).join(', ')}</div>}
                       </div>
-                      <OccBar pct={sec.occupancyPct} h={4} />
+                      <div style={{textAlign:'right',flexShrink:0,marginLeft:8}}>
+                        <div style={{fontFamily:"'Poppins',sans-serif",fontSize:16,fontWeight:700,color:occColor(sec.occupancyPct)}}>{sec.occupancyPct}%</div>
+                        <div style={{fontSize:10,color:'var(--text-muted)'}}>{fmt(sec.currentBirds)}/{fmt(sec.capacity)}</div>
+                      </div>
                     </div>
-                    {isL ? <>
-                      <Cell v={fmt(smx.todayMortality)}        c={smx.todayMortality>5?'#ef4444':'var(--text-primary)'} />
-                      <Cell v={`${smx.todayLayingRate??0}%`}   c={rateColor(smx.todayLayingRate)} />
-                      <Cell v={fmt(smx.todayEggs)}              c='#f59e0b' />
-                      <Cell v={`${smx.todayGradeAPct??0}%`}    c={rateColor(smx.todayGradeAPct)} />
-                      <Cell v={`${smx.avgDailyFeedKg??0}kg`} />
-                    </> : <>
-                      <Cell v={fmt(smx.todayMortality)}        c={smx.todayMortality>5?'#ef4444':'var(--text-primary)'} />
-                      <Cell v={smx.latestWeightG?`${fmt(smx.latestWeightG)}g`:'—'} c='#3b82f6' />
-                      <Cell v={smx.estimatedFCR??'—'}          c={fcrColor(smx.estimatedFCR||0)} />
-                      <Cell v={smx.daysToHarvest!=null?`${smx.daysToHarvest}d`:'—'} c='#8b5cf6' />
-                      <Cell v={`${smx.avgDailyFeedKg??0}kg`} />
-                    </>}
-                    {/* Chart toggle */}
-                    <div style={{textAlign:'center'}}>
-                      {sec.flock && (
-                        <button onClick={()=>setModalSec({ id:sec.id, name:sec.name })} style={{fontSize:11,padding:'4px 8px',border:'1px solid var(--border)',borderRadius:6,background:'var(--bg-elevated)',color:'var(--text-muted)',cursor:'pointer',fontWeight:600}}>
-                          📈 Trends
-                        </button>
-                      )}
+                    <OccBar pct={sec.occupancyPct} h={4} />
+                    {flg && (
+                      <div style={{fontSize:10,fontWeight:700,color:flg.type==='critical'?'#ef4444':'#d97706',background:flg.type==='critical'?'#fff5f5':'#fffbeb',border:`1px solid ${flg.type==='critical'?'#fecaca':'#fde68a'}`,borderRadius:6,padding:'4px 10px'}}>
+                        ⚠ {flg.msg}
+                      </div>
+                    )}
+                    {/* KPI chips */}
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
+                      {secCore.map(k => (
+                        <div key={k.label} style={{textAlign:'center',padding:'8px 6px',background:k.warn?'#fff5f5':'var(--bg-elevated)',border:`1px solid ${k.warn?'#fecaca':'var(--border)'}`,borderRadius:8}}>
+                          <div style={{fontSize:16,marginBottom:2}}>{k.icon}</div>
+                          <div style={{fontFamily:"'Poppins',sans-serif",fontSize:14,fontWeight:700,color:k.color}}>{k.val}</div>
+                          <div style={{fontSize:8,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.04em',marginTop:1}}>{k.label}</div>
+                        </div>
+                      ))}
                     </div>
+                    {/* Charts button — stopPropagation so clicking it doesn't collapse the pen */}
+                    {sec.flock && (
+                      <button
+                        onClick={e => { e.stopPropagation(); setModalSec({ id:sec.id, name:sec.name }); }}
+                        style={{width:'100%',padding:'7px',background:'var(--bg-elevated)',border:'1px solid var(--border)',borderRadius:8,cursor:'pointer',fontSize:11,fontWeight:600,color:'var(--text-secondary)',display:'flex',alignItems:'center',justifyContent:'center',gap:5}}
+                      >
+                        📈 View Trends & Charts
+                      </button>
+                    )}
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
         )}
       </div>
@@ -518,7 +535,149 @@ function TaskList({ tasks }) {
 }
 
 // ── Pen Worker dashboard ──────────────────────────────────────────────────────
-function WorkerDashboard({ sections, tasks, user }) {
+
+// ── Mortality cause options ───────────────────────────────────────────────────
+const MORT_CAUSES = [
+  ['UNKNOWN','Unknown'],['DISEASE','Disease'],['HEAT_STRESS','Heat Stress'],
+  ['FEED_ISSUE','Feed Issue'],['INJURY','Injury'],['PREDATOR','Predator'],
+  ['RESPIRATORY','Respiratory'],['CULLED','Culled'],['WATER_ISSUE','Water Issue'],
+];
+
+// ── Simple portal modal shell ─────────────────────────────────────────────────
+function DashModalShell({ title, onClose, footer, children }) {
+  return createPortal(
+    <div style={{position:'fixed',inset:0,zIndex:1200,background:'rgba(0,0,0,0.45)',display:'flex',alignItems:'center',justifyContent:'center',padding:16}}
+      onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div style={{background:'#fff',borderRadius:14,width:'100%',maxWidth:460,boxShadow:'0 12px 48px rgba(0,0,0,0.2)',display:'flex',flexDirection:'column',maxHeight:'90vh'}}>
+        <div style={{padding:'18px 20px',borderBottom:'1px solid var(--border-card)',display:'flex',alignItems:'center',justifyContent:'space-between',flexShrink:0}}>
+          <span style={{fontSize:15,fontWeight:800,color:'var(--text-primary)',fontFamily:"'Poppins',sans-serif"}}>{title}</span>
+          <button onClick={onClose} style={{background:'none',border:'none',fontSize:22,cursor:'pointer',color:'var(--text-muted)',lineHeight:1}}>×</button>
+        </div>
+        <div style={{padding:'18px 20px',overflowY:'auto',flexGrow:1}}>{children}</div>
+        <div style={{padding:'14px 20px',borderTop:'1px solid var(--border-card)',display:'flex',gap:10,justifyContent:'flex-end',flexShrink:0}}>{footer}</div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+// ── Edit/correct a rejected record ────────────────────────────────────────────
+function EditRecordModal({ item, apiFetch, onClose, onSave }) {
+  const { record, type } = item;
+  const today = new Date().toISOString().split('T')[0];
+  const [eggForm, setEggForm] = useState({
+    collectionDate: record.collectionDate?.split('T')[0] || today,
+    totalEggs:    String(record.totalEggs    || ''),
+    gradeACount:  String(record.gradeACount  || ''),
+    gradeBCount:  String(record.gradeBCount  || ''),
+    crackedCount: String(record.crackedCount || ''),
+    dirtyCount:   String(record.dirtyCount   || ''),
+  });
+  const [mortForm, setMortForm] = useState({
+    recordDate: record.recordDate?.split('T')[0] || today,
+    count:     String(record.count     || ''),
+    causeCode: record.causeCode || 'UNKNOWN',
+    notes:     record.notes    || '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [err,    setErr]    = useState('');
+  const setE = (k,v) => setEggForm(p=>({...p,[k]:v}));
+  const setM = (k,v) => setMortForm(p=>({...p,[k]:v}));
+
+  const total    = Number(eggForm.totalEggs)||0;
+  const gradeSum = (Number(eggForm.gradeACount)||0)+(Number(eggForm.gradeBCount)||0)
+                 + (Number(eggForm.crackedCount)||0)+(Number(eggForm.dirtyCount)||0);
+  const count    = Number(mortForm.count)||0;
+  const isEgg    = type === 'egg';
+
+  async function save() {
+    setSaving(true); setErr('');
+    try {
+      let endpoint, body;
+      if (isEgg) {
+        if (total <= 0)       return setErr('Enter total eggs collected');
+        if (gradeSum > total) return setErr('Grade breakdown exceeds total');
+        endpoint = `/api/eggs/${record.id}`;
+        body = {
+          collectionDate: eggForm.collectionDate,
+          totalEggs: total,
+          gradeACount:  Number(eggForm.gradeACount)  || 0,
+          gradeBCount:  Number(eggForm.gradeBCount)  || 0,
+          crackedCount: Number(eggForm.crackedCount) || 0,
+          dirtyCount:   Number(eggForm.dirtyCount)   || 0,
+        };
+      } else {
+        if (count <= 0) return setErr('Enter number of deaths');
+        endpoint = `/api/mortality/${record.id}`;
+        body = { recordDate: mortForm.recordDate, count, causeCode: mortForm.causeCode, notes: mortForm.notes.trim() || undefined };
+      }
+      const res = await apiFetch(endpoint, { method: 'PATCH', body: JSON.stringify(body) });
+      const d   = await res.json();
+      if (!res.ok) return setErr(d.error || 'Failed to save');
+      onSave();
+    } finally { setSaving(false); }
+  }
+
+  return (
+    <DashModalShell title={isEgg ? '🥚 Correct Egg Record' : '💀 Correct Mortality Record'} onClose={onClose}
+      footer={<><button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+               <button className="btn btn-primary" onClick={save} disabled={saving}>{saving?'Saving…':'Resubmit Record'}</button></>}>
+      {err && <div className="alert alert-red" style={{marginBottom:12}}>⚠ {err}</div>}
+      {/* Rejection reason */}
+      <div style={{marginBottom:16,padding:'10px 14px',background:'#fff5f5',border:'1px solid #fecaca',borderRadius:8,fontSize:12}}>
+        <div style={{fontWeight:700,color:'#991b1b',marginBottom:3}}>⚠ Returned for correction</div>
+        <div style={{color:'#7f1d1d'}}>{record.rejectionReason}</div>
+      </div>
+      <div style={{display:'flex',flexDirection:'column',gap:14}}>
+        {isEgg ? (<>
+          <div>
+            <label className="label">Collection Date *</label>
+            <input type="date" className="input" value={eggForm.collectionDate} onChange={e=>setE('collectionDate',e.target.value)} max={today}/>
+          </div>
+          <div>
+            <label className="label">Total Eggs *</label>
+            <input type="number" className="input" min="0" value={eggForm.totalEggs} onChange={e=>setE('totalEggs',e.target.value)} placeholder="e.g. 1800"/>
+          </div>
+          <div>
+            <label className="label">Grade Breakdown <span style={{fontWeight:400,color:'var(--text-muted)'}}>(optional)</span></label>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:8}}>
+              {[['gradeACount','Grade A','#16a34a'],['gradeBCount','Grade B','#d97706'],['crackedCount','Cracked','#dc2626'],['dirtyCount','Dirty','#6b7280']].map(([k,lbl,col])=>(
+                <div key={k}>
+                  <div style={{fontSize:10,fontWeight:700,color:col,marginBottom:4}}>{lbl}</div>
+                  <input type="number" className="input" style={{padding:'6px 8px',textAlign:'center'}} min="0" value={eggForm[k]} onChange={e=>setE(k,e.target.value)} placeholder="0"/>
+                </div>
+              ))}
+            </div>
+            {gradeSum > 0 && <div style={{fontSize:11,marginTop:6,color:gradeSum>total?'#dc2626':'var(--text-muted)'}}>{gradeSum}/{total} accounted for</div>}
+          </div>
+        </>) : (<>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+            <div>
+              <label className="label">Date *</label>
+              <input type="date" className="input" value={mortForm.recordDate} onChange={e=>setM('recordDate',e.target.value)} max={today}/>
+            </div>
+            <div>
+              <label className="label">Number of Deaths *</label>
+              <input type="number" className="input" min="0" value={mortForm.count} onChange={e=>setM('count',e.target.value)} placeholder="0"/>
+            </div>
+          </div>
+          <div>
+            <label className="label">Cause of Death</label>
+            <select className="input" value={mortForm.causeCode} onChange={e=>setM('causeCode',e.target.value)}>
+              {MORT_CAUSES.map(([v,l])=><option key={v} value={v}>{l}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="label">Notes <span style={{fontWeight:400,color:'var(--text-muted)'}}>(optional)</span></label>
+            <textarea className="input" rows={2} value={mortForm.notes} onChange={e=>setM('notes',e.target.value)} placeholder="Observations…" style={{resize:'vertical'}}/>
+          </div>
+        </>)}
+      </div>
+    </DashModalShell>
+  );
+}
+
+function WorkerDashboard({ sections, tasks, user, apiFetch }) {
   const isL      = sections.some(s=>s.penOperationType==='LAYER');
   const totDead  = sections.reduce((s,sec)=>s+sec.metrics.todayMortality,0);
   const totBirds = sections.reduce((s,sec)=>s+sec.currentBirds,0);
@@ -532,6 +691,26 @@ function WorkerDashboard({ sections, tasks, user }) {
   const overdue  = tasks.filter(t=>t.status==='OVERDUE').length;
   const h = new Date().getHours();
   const greet = h<12?'morning':h<17?'afternoon':'evening';
+
+  // Fetch rejected records that need correction
+  const [rejected,   setRejected]   = useState([]);
+  const [editRecord, setEditRecord] = useState(null);
+
+  useEffect(() => {
+    async function loadRejected() {
+      try {
+        const [eggRes, mortRes] = await Promise.all([
+          apiFetch('/api/eggs?rejected=true'),
+          apiFetch('/api/mortality?rejected=true'),
+        ]);
+        const list = [];
+        if (eggRes.ok)  { const d = await eggRes.json();  (d.records||[]).forEach(r => list.push({ record:r, type:'egg' })); }
+        if (mortRes.ok) { const d = await mortRes.json(); (d.records||[]).forEach(r => list.push({ record:r, type:'mortality' })); }
+        setRejected(list);
+      } catch {}
+    }
+    loadRejected();
+  }, [apiFetch]);
 
   const kpis = isL ? [
     { icon:'🥚', val:fmt(todayEggs),    label:'Eggs Collected Today',    color:'#f59e0b' },
@@ -552,11 +731,51 @@ function WorkerDashboard({ sections, tasks, user }) {
         <p style={{fontSize:12,color:'var(--text-muted)',marginTop:4}}>
           {isL?'🥚 Layer':'🍗 Broiler'} · {sections.length} section{sections.length!==1?'s':''} assigned
           {overdue>0&&<span style={{color:'#ef4444',fontWeight:700,marginLeft:8}}>· {overdue} overdue</span>}
+          {rejected.length>0&&<span style={{color:'#dc2626',fontWeight:700,marginLeft:8}}>· {rejected.length} correction{rejected.length!==1?'s':''} needed</span>}
         </p>
       </div>
       <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:24}}>
         {kpis.map(k=><KpiCard key={k.label} {...k} />)}
       </div>
+      {/* ── Needs Correction banner ─────────────────────────────────────────── */}
+      {rejected.length > 0 && (
+        <div style={{marginBottom:20,background:'#fff5f5',border:'1.5px solid #fecaca',borderRadius:12,padding:'14px 18px'}}>
+          <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10}}>
+            <span style={{fontSize:16}}>⚠</span>
+            <span style={{fontWeight:700,fontSize:14,color:'#991b1b'}}>
+              {rejected.length} record{rejected.length!==1?'s':''} returned for correction
+            </span>
+          </div>
+          <div style={{display:'flex',flexDirection:'column',gap:8}}>
+            {rejected.map(item=>(
+              <div key={item.record.id} style={{background:'#fff',borderRadius:8,border:'1px solid #fecaca',padding:'10px 14px',display:'flex',justifyContent:'space-between',alignItems:'center',gap:12}}>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:13,fontWeight:700,color:'var(--text-primary)'}}>
+                    {item.type==='egg'?'🥚 Egg Collection':'💀 Mortality Record'}
+                    <span style={{fontWeight:400,color:'var(--text-muted)',marginLeft:8}}>
+                      · {new Date(item.record.collectionDate||item.record.recordDate).toLocaleDateString('en-NG',{day:'numeric',month:'short'})}
+                    </span>
+                  </div>
+                  <div style={{fontSize:12,color:'#dc2626',marginTop:3,fontStyle:'italic'}}>
+                    "{item.record.rejectionReason}"
+                  </div>
+                </div>
+                <button onClick={()=>setEditRecord(item)}
+                  style={{flexShrink:0,padding:'7px 14px',background:'#dc2626',color:'#fff',border:'none',borderRadius:7,fontSize:12,fontWeight:700,cursor:'pointer'}}>
+                  Fix & Resubmit
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {editRecord && (
+        <EditRecordModal item={editRecord} apiFetch={apiFetch}
+          onClose={()=>setEditRecord(null)}
+          onSave={()=>{ setEditRecord(null); setRejected(r=>r.filter(i=>i.record.id!==editRecord.record.id)); }} />
+      )}
+
       <div style={{display:'grid',gridTemplateColumns:'3fr 2fr',gap:16}}>
         <div>
           <div style={{fontSize:11,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:12}}>My Sections</div>
@@ -607,67 +826,118 @@ function PenManagerDashboard({ pens, tasks, user }) {
 
 // ── Farm Manager+ dashboard ───────────────────────────────────────────────────
 function ManagerDashboard({ pens, orgTotals, user }) {
-  const alerts = pens.filter(p=>p.alertLevel!=='ok').length;
+  const alerts    = pens.filter(p => p.alertLevel !== 'ok').length;
   const roleLabel = { FARM_MANAGER:'Farm Manager', FARM_ADMIN:'Farm Admin', CHAIRPERSON:'Chairperson', SUPER_ADMIN:'Super Admin' }[user?.role] || user?.role || '';
+
+  const layerPens   = pens.filter(p => p.operationType === 'LAYER');
+  const broilerPens = pens.filter(p => p.operationType === 'BROILER');
+
+  // Default to the tab that has pens; prefer LAYER
+  const defaultTab  = layerPens.length ? 'LAYER' : 'BROILER';
+  const [activeTab, setActiveTab] = useState(defaultTab);
+
+  // If one operation type is empty, lock to the one that exists
+  const hasBoth = layerPens.length > 0 && broilerPens.length > 0;
+  const visiblePens = activeTab === 'LAYER' ? layerPens : broilerPens;
+
+  const tabs = [
+    { key: 'LAYER',   icon: '🥚', label: 'Layer Operations',   count: layerPens.length },
+    { key: 'BROILER', icon: '🍗', label: 'Broiler Operations', count: broilerPens.length },
+  ].filter(t => t.count > 0);
 
   return (
     <div>
+      {/* ── Page header ── */}
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:24}}>
         <div>
           <h1 style={{fontFamily:"'Poppins',sans-serif",fontSize:22,fontWeight:700,margin:0}}>Farm Overview</h1>
           <p style={{fontSize:12,color:'var(--text-muted)',marginTop:4}}>
-            {roleLabel} · {pens.length} pens — click 📈 Trends on any section for charts
+            {roleLabel} · {pens.length} pen{pens.length!==1?'s':''} — click any pen to expand sections
             {alerts>0&&<span style={{color:'#ef4444',fontWeight:700,marginLeft:8}}>· {alerts} need attention</span>}
           </p>
         </div>
       </div>
+
+      {/* ── Org-level KPIs ── */}
       {orgTotals && (
         <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:12,marginBottom:24}}>
-          <KpiCard icon="🐦" value={fmt(orgTotals.totalBirds)}    label="Total Live Birds"   color="var(--purple)" />
-          <KpiCard icon="💀" value={fmt(orgTotals.todayMortality)} label="Deaths Today"       warn={orgTotals.todayMortality>30} />
-          <KpiCard icon="🥚" value={fmt(orgTotals.todayEggs)}      label="Layer Eggs Today"   color="#f59e0b" />
-          <KpiCard icon="📊" value={`${orgTotals.avgLayingRate??0}%`} label="Avg Laying Rate" color="#16a34a" warn={orgTotals.avgLayingRate<70} />
-          <KpiCard icon="🔔" value={orgTotals.pensWithAlerts}      label="Pens With Alerts"  warn={orgTotals.pensWithAlerts>0} />
+          <KpiCard icon="🐦" value={fmt(orgTotals.totalBirds)}         label="Total Live Birds"  color="var(--purple)" />
+          <KpiCard icon="💀" value={fmt(orgTotals.todayMortality)}      label="Deaths Today"      warn={orgTotals.todayMortality>30} />
+          <KpiCard icon="🥚" value={fmt(orgTotals.todayEggs)}           label="Layer Eggs Today"  color="#f59e0b" />
+          <KpiCard icon="📊" value={`${orgTotals.avgLayingRate??0}%`}   label="Avg Laying Rate"   color="#16a34a" warn={orgTotals.avgLayingRate<70} />
+          <KpiCard icon="🔔" value={orgTotals.pensWithAlerts}           label="Pens With Alerts"  warn={orgTotals.pensWithAlerts>0} />
         </div>
       )}
-      {['LAYER','BROILER'].map(opType => {
-        const tp = pens.filter(p=>p.operationType===opType);
-        if (!tp.length) return null;
-        return (
-          <div key={opType} style={{marginBottom:24}}>
-            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:12}}>
-              <span style={{fontSize:16}}>{OP_ICON[opType]}</span>
-              <div style={{fontSize:11,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.06em'}}>
-                {opType==='LAYER'?'Layer Operations':'Broiler Operations'} · {tp.length} pen{tp.length!==1?'s':''}
-              </div>
-            </div>
-            {tp.map(pen=><PenCard key={pen.id} pen={pen}/>)}
+
+      {/* ── Operation type tabs ── */}
+      {hasBoth && (
+        <div style={{display:'flex',gap:6,marginBottom:20,background:'var(--bg-elevated)',borderRadius:12,padding:4,border:'1px solid var(--border)',width:'fit-content'}}>
+          {tabs.map(t => {
+            const isActive = activeTab === t.key;
+            const tabColor = t.key === 'LAYER' ? '#f59e0b' : '#3b82f6';
+            return (
+              <button
+                key={t.key}
+                onClick={() => setActiveTab(t.key)}
+                style={{
+                  display:'inline-flex', alignItems:'center', gap:8,
+                  padding:'9px 20px', borderRadius:9, border:'none',
+                  background: isActive ? '#fff' : 'transparent',
+                  boxShadow: isActive ? 'var(--shadow-sm,0 1px 4px rgba(0,0,0,0.08))' : 'none',
+                  cursor:'pointer', fontFamily:'inherit', fontWeight: isActive ? 700 : 500,
+                  fontSize:13, color: isActive ? tabColor : 'var(--text-muted)',
+                  transition:'all 0.15s',
+                }}
+              >
+                <span style={{fontSize:16}}>{t.icon}</span>
+                {t.label}
+                <span style={{
+                  fontSize:10, fontWeight:700, padding:'2px 7px', borderRadius:10,
+                  background: isActive ? `${tabColor}18` : 'var(--bg-page)',
+                  color: isActive ? tabColor : 'var(--text-muted)',
+                  border:`1px solid ${isActive ? tabColor+'30' : 'var(--border)'}`,
+                  minWidth:20, textAlign:'center',
+                }}>{t.count}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── Pen list for active tab ── */}
+      <div>
+        {!hasBoth && tabs.length > 0 && (
+          <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:16}}>
+            <span style={{fontSize:16}}>{tabs[0].icon}</span>
+            <span style={{fontSize:11,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.06em'}}>
+              {tabs[0].label} · {tabs[0].count} pen{tabs[0].count!==1?'s':''}
+            </span>
           </div>
-        );
-      })}
+        )}
+        {visiblePens.map(pen => <PenCard key={pen.id} pen={pen} />)}
+      </div>
     </div>
   );
 }
-
 // ── Main ──────────────────────────────────────────────────────────────────────
 export default function DashboardPage() {
-  const { user } = useAuth();
+  const { user, apiFetch } = useAuth();
   const [data,    setData]    = useState(null);
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState(null);
 
-  if (!user) return null;
-
   const load = useCallback(async () => {
     try {
-      const res = await fetch('/api/dashboard', { credentials:'include' });
+      const res = await apiFetch('/api/dashboard');
       if (res.ok) { setData(await res.json()); setError(null); }
       else setError('Could not load dashboard data');
     } catch { setError('Network error'); }
     finally { setLoading(false); }
-  }, []);
+  }, [apiFetch]);
 
   useEffect(() => { load(); const t=setInterval(load,60000); return ()=>clearInterval(t); }, [load]);
+
+  if (!user) return null;
 
   if (loading) return (
     <AppShell>
@@ -699,7 +969,7 @@ export default function DashboardPage() {
             <div style={{color:'var(--text-muted)',fontSize:13}}>Contact your pen manager to get assigned to a section.</div>
           </div>
         )}
-        {isPenWorker && sections.length>0 && <WorkerDashboard sections={sections} tasks={tasks} user={user}/>}
+        {isPenWorker && sections.length>0 && <WorkerDashboard sections={sections} tasks={tasks} user={user} apiFetch={apiFetch}/>}
         {isPenMgr    && <PenManagerDashboard pens={pens} tasks={tasks} user={user}/>}
         {isManager   && <ManagerDashboard pens={pens} orgTotals={orgTotals} user={user}/>}
       </div>

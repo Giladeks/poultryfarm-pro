@@ -41,7 +41,8 @@ const patchSchema = z.object({
 });
 
 // ─── GET /api/feed/mill/[id] ──────────────────────────────────────────────────
-export async function GET(request, { params }) {
+export async function GET(request, { params: rawParams }) {
+  const params = await rawParams;
   const user = await verifyToken(request);
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
@@ -84,7 +85,8 @@ export async function GET(request, { params }) {
 
 // ─── PATCH /api/feed/mill/[id] ────────────────────────────────────────────────
 // Handles status transitions, QC test logging, and release to store.
-export async function PATCH(request, { params }) {
+export async function PATCH(request, { params: rawParams }) {
+  const params = await rawParams;
   const user = await verifyToken(request);
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 

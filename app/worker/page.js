@@ -1,206 +1,731 @@
 'use client';
-import { useState, useEffect } from 'react';
+// app/worker/page.js — Pen Worker Daily Dashboard
+import { useState, useEffect, useCallback } from 'react';
 import AppShell from '@/components/layout/AppShell';
 import { useAuth } from '@/components/layout/AuthProvider';
 
-const STEPS = ['Feed', 'Mortality', 'Eggs', 'Observations'];
-const STEP_ICONS = ['🌾','📉','🥚','📝'];
+const fmt    = n => Number(n || 0).toLocaleString('en-NG');
+const fmtPct = n => `${Number(n || 0).toFixed(1)}%`;
+
+const CAUSE_OPTIONS = [
+  { value: 'UNKNOWN',     label: 'Unknown' },
+  { value: 'DISEASE',     label: 'Disease' },
+  { value: 'HEAT_STRESS', label: 'Heat Stress' },
+  { value: 'FEED_ISSUE',  label: 'Feed Issue' },
+  { value: 'INJURY',      label: 'Injury' },
+  { value: 'PREDATOR',    label: 'Predator' },
+  { value: 'RESPIRATORY', label: 'Respiratory' },
+];
+
+// ── Small reusable components ─────────────────────────────────────────────────
+
+function KpiChip({ label, value, color = 'var(--purple)' }) {
+  return (
+    <div style={{ padding: '10px 14px', background: '#fff', borderRadius: 10, border: '1px solid var(--border-card)', flex: 1, minWidth: 0 }}>
+      <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 4 }}>{label}</div>
+      <div style={{ fontSize: 18, fontWeight: 800, color, fontFamily: "'Poppins',sans-serif" }}>{value}</div>
+    </div>
+  );
+}
+
+function Toast({ msg, type }) {
+  if (!msg) return null;
+  return (
+    <div style={{
+      position: 'fixed', bottom: 24, right: 24, zIndex: 9999,
+      background: type === 'error' ? '#991b1b' : '#166534',
+      color: '#fff', padding: '12px 20px', borderRadius: 10,
+      fontSize: 13, fontWeight: 600, boxShadow: '0 4px 16px rgba(0,0,0,0.2)',
+      animation: 'fadeIn 0.25s ease',
+    }}>{type === 'error' ? '✕ ' : '✓ '}{msg}</div>
+  );
+}
+
+// ── Log Egg Modal ─────────────────────────────────────────────────────────────
+
+function LogEggModal({ section, apiFetch, onClose, onSave }) {
+  const flock = section.flocks?.[0] || null;
+  const today = new Date().toISOString().split('T')[0];
+  const [form, setForm] = useState({
+    collectionDate: today,
+    totalEggs: '',
+    gradeACount: '', gradeBCount: '', crackedCount: '', dirtyCount: '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError]   = useState('');
+  const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
+
+  const total    = Number(form.totalEggs) || 0;
+  const gradeSum = (Number(form.gradeACount) || 0) + (Number(form.gradeBCount) || 0) + (Number(form.crackedCount) || 0) + (Number(form.dirtyCount) || 0);
+  const layRate  = flock?.currentCount > 0 ? ((total / flock.currentCount) * 100).toFixed(1) : null;
+
+  async function save() {
+    if (!flock)       return setError('No active flock in this section');
+    if (total <= 0)   return setError('Enter total eggs collected');
+    if (gradeSum > total) return setError('Grade breakdown exceeds total');
+    setSaving(true); setError('');
+    try {
+      const res = await apiFetch('/api/eggs', {
+        method: 'POST',
+        body: JSON.stringify({
+          flockId:       flock.id,
+          penSectionId:  section.id,
+          collectionDate: form.collectionDate,
+          totalEggs:     total,
+          ...(form.gradeACount  && { gradeACount:  Number(form.gradeACount) }),
+          ...(form.gradeBCount  && { gradeBCount:  Number(form.gradeBCount) }),
+          ...(form.crackedCount && { crackedCount: Number(form.crackedCount) }),
+          ...(form.dirtyCount   && { dirtyCount:   Number(form.dirtyCount) }),
+        }),
+      });
+      const d = await res.json();
+      if (!res.ok) return setError(d.error || 'Failed to save');
+      onSave();
+    } finally { setSaving(false); }
+  }
+
+  return (
+    <ModalShell title="🥚 Log Egg Collection" onClose={onClose}
+      footer={<><button className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save Record'}</button></>}>
+      {error && <div className="alert alert-red" style={{ marginBottom: 12 }}>⚠ {error}</div>}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div style={{ padding: '10px 14px', background: 'var(--bg-elevated)', borderRadius: 9, fontSize: 13 }}>
+          <strong>{section.pen?.name} › {section.name}</strong>
+          {flock && <span style={{ color: 'var(--text-muted)', marginLeft: 8 }}>· {flock.batchCode} · {fmt(flock.currentCount)} birds</span>}
+        </div>
+        <div>
+          <label className="label">Collection Date *</label>
+          <input type="date" className="input" value={form.collectionDate} onChange={e => set('collectionDate', e.target.value)} max={today} />
+        </div>
+        <div>
+          <label className="label">Total Eggs Collected *</label>
+          <input type="number" className="input" min="0" value={form.totalEggs} onChange={e => set('totalEggs', e.target.value)} placeholder="e.g. 1800" />
+          {layRate && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+            Laying rate: <strong style={{ color: Number(layRate) >= 80 ? 'var(--green)' : 'var(--amber)' }}>{layRate}%</strong>
+          </div>}
+        </div>
+        <div>
+          <label className="label">Grade Breakdown <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(optional)</span></label>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 8 }}>
+            {[['gradeACount','Grade A','var(--green)'],['gradeBCount','Grade B','var(--amber)'],['crackedCount','Cracked','var(--red)'],['dirtyCount','Dirty','#9ca3af']].map(([k, label, color]) => (
+              <div key={k}>
+                <div style={{ fontSize: 10, fontWeight: 700, color, marginBottom: 4 }}>{label}</div>
+                <input type="number" className="input" min="0" value={form[k]} onChange={e => set(k, e.target.value)} placeholder="0" style={{ padding: '7px 10px' }} />
+              </div>
+            ))}
+          </div>
+          {gradeSum > 0 && <div style={{ fontSize: 11, marginTop: 4, color: gradeSum > total ? 'var(--red)' : 'var(--text-muted)' }}>{gradeSum} / {total} accounted for</div>}
+        </div>
+        {total > 0 && (
+          <div style={{ padding: '10px 14px', background: 'var(--purple-light)', borderRadius: 9, border: '1px solid #d4d8ff', fontSize: 12 }}>
+            <strong style={{ color: 'var(--purple)' }}>Crates: {Math.floor(total / 30)}</strong>
+            <span style={{ color: 'var(--text-muted)', marginLeft: 8 }}>{total % 30} loose</span>
+          </div>
+        )}
+      </div>
+    </ModalShell>
+  );
+}
+
+// ── Log Mortality Modal ───────────────────────────────────────────────────────
+
+function LogMortalityModal({ section, apiFetch, onClose, onSave }) {
+  const flock = section.flocks?.[0] || null;
+  const today = new Date().toISOString().split('T')[0];
+  const [form, setForm] = useState({ recordDate: today, count: '', causeCode: 'UNKNOWN', notes: '' });
+  const [saving, setSaving] = useState(false);
+  const [error, setError]   = useState('');
+  const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
+
+  const count    = Number(form.count) || 0;
+  const mortRate = flock?.currentCount > 0 ? ((count / flock.currentCount) * 100).toFixed(2) : null;
+  const isSpike  = count > 0 && flock?.currentCount > 0 && count > flock.currentCount * 0.01;
+
+  async function save() {
+    if (!flock)    return setError('No active flock in this section');
+    if (count <= 0) return setError('Enter number of deaths');
+    if (flock.currentCount && count > flock.currentCount)
+      return setError(`Count (${count}) exceeds live bird count (${fmt(flock.currentCount)})`);
+    setSaving(true); setError('');
+    try {
+      const res = await apiFetch('/api/mortality', {
+        method: 'POST',
+        body: JSON.stringify({
+          flockId:      flock.id,
+          penSectionId: section.id,
+          recordDate:   form.recordDate,
+          count,
+          causeCode:    form.causeCode,
+          ...(form.notes.trim() && { notes: form.notes.trim() }),
+        }),
+      });
+      const d = await res.json();
+      if (!res.ok) return setError(d.error || 'Failed to save');
+      onSave();
+    } finally { setSaving(false); }
+  }
+
+  return (
+    <ModalShell title="💀 Record Mortality" onClose={onClose}
+      footer={<><button className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save Record'}</button></>}>
+      {error && <div className="alert alert-red" style={{ marginBottom: 12 }}>⚠ {error}</div>}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div style={{ padding: '10px 14px', background: 'var(--bg-elevated)', borderRadius: 9, fontSize: 13 }}>
+          <strong>{section.pen?.name} › {section.name}</strong>
+          {flock && <span style={{ color: 'var(--text-muted)', marginLeft: 8 }}>· {flock.batchCode} · {fmt(flock.currentCount)} birds</span>}
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div>
+            <label className="label">Date *</label>
+            <input type="date" className="input" value={form.recordDate} onChange={e => set('recordDate', e.target.value)} max={today} />
+          </div>
+          <div>
+            <label className="label">Number of Deaths *</label>
+            <input type="number" className="input" min="0" value={form.count} onChange={e => set('count', e.target.value)} placeholder="0" />
+            {mortRate !== null && (
+              <div style={{ fontSize: 11, marginTop: 4, color: Number(mortRate) > 1 ? 'var(--red)' : 'var(--text-muted)' }}>
+                Mortality rate: <strong>{mortRate}%</strong>
+                {isSpike && <span style={{ marginLeft: 6, color: 'var(--red)' }}>⚠ Above 1% threshold</span>}
+              </div>
+            )}
+          </div>
+        </div>
+        <div>
+          <label className="label">Cause of Death</label>
+          <select className="input" value={form.causeCode} onChange={e => set('causeCode', e.target.value)}>
+            {CAUSE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="label">Notes <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(optional)</span></label>
+          <textarea className="input" rows={2} value={form.notes} onChange={e => set('notes', e.target.value)} placeholder="Observations, symptoms…" style={{ resize: 'vertical' }} />
+        </div>
+      </div>
+    </ModalShell>
+  );
+}
+
+// ── Modal Shell ───────────────────────────────────────────────────────────────
+
+function ModalShell({ title, onClose, footer, children }) {
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 1100, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+      onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={{ background: '#fff', borderRadius: 14, width: '100%', maxWidth: 460, boxShadow: '0 12px 48px rgba(0,0,0,0.2)', animation: 'fadeInUp 0.2s ease', display: 'flex', flexDirection: 'column', maxHeight: '90vh' }}>
+        <div style={{ padding: '18px 20px', borderBottom: '1px solid var(--border-card)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+          <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--text-primary)', fontFamily: "'Poppins',sans-serif" }}>{title}</span>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: 'var(--text-muted)', lineHeight: 1 }}>×</button>
+        </div>
+        <div style={{ padding: '18px 20px', overflowY: 'auto', flexGrow: 1 }}>{children}</div>
+        <div style={{ padding: '14px 20px', borderTop: '1px solid var(--border-card)', display: 'flex', gap: 10, justifyContent: 'flex-end', flexShrink: 0 }}>{footer}</div>
+      </div>
+    </div>
+  );
+}
+
+// ── Section Card ──────────────────────────────────────────────────────────────
+
+function SectionCard({ sec, onLogEggs, onLogMortality }) {
+  const [expanded, setExpanded] = useState(false);
+  const flock     = sec.flocks?.[0] || null;
+  const isLayer   = sec.pen?.operationType === 'LAYER';
+  const metrics   = sec.metrics || {};
+  const hasFlock  = !!flock;
+
+  const opColor   = isLayer ? '#f59e0b' : '#3b82f6';
+  const opIcon    = isLayer ? '🥚' : '🍗';
+  const opLabel   = isLayer ? 'Layer' : 'Broiler';
+
+  return (
+    <div style={{ background: '#fff', borderRadius: 12, border: '1px solid var(--border-card)', boxShadow: '0 1px 4px rgba(0,0,0,0.04)', overflow: 'hidden' }}>
+      {/* Header row — always visible, click to expand */}
+      <div onClick={() => setExpanded(e => !e)}
+        style={{ padding: '14px 16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12, userSelect: 'none' }}>
+        <div style={{ width: 38, height: 38, borderRadius: 10, background: `${opColor}15`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, flexShrink: 0 }}>
+          {opIcon}
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 800, fontSize: 13, color: 'var(--text-primary)' }}>{sec.pen?.name} › {sec.name}</div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+            {hasFlock ? `${flock.batchCode} · ${fmt(flock.currentCount)} birds` : 'No active flock'}
+            <span style={{ marginLeft: 8, padding: '1px 7px', borderRadius: 99, background: `${opColor}15`, color: opColor, fontWeight: 700, fontSize: 10 }}>{opLabel}</span>
+          </div>
+        </div>
+        {/* Today's quick stats */}
+        <div style={{ display: 'flex', gap: 10, flexShrink: 0, alignItems: 'center' }}>
+          {isLayer && hasFlock && (
+            <div style={{ textAlign: 'right' }}>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Today</div>
+              <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--amber)' }}>{fmt(metrics.todayEggs || 0)} 🥚</div>
+            </div>
+          )}
+          {hasFlock && (
+            <div style={{ textAlign: 'right' }}>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Deaths</div>
+              <div style={{ fontSize: 14, fontWeight: 800, color: (metrics.todayMortality || 0) > 5 ? 'var(--red)' : 'var(--text-primary)' }}>{metrics.todayMortality || 0} 💀</div>
+            </div>
+          )}
+          <span style={{ fontSize: 18, color: 'var(--text-muted)', transform: expanded ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s', display: 'inline-block' }}>›</span>
+        </div>
+      </div>
+
+      {/* Expanded detail */}
+      {expanded && (
+        <div style={{ borderTop: '1px solid var(--border-card)', padding: '14px 16px', background: 'var(--bg-base)', animation: 'fadeIn 0.15s ease' }}>
+          {!hasFlock ? (
+            <div style={{ textAlign: 'center', padding: '16px 0', color: 'var(--text-muted)', fontSize: 13 }}>No active flock in this section</div>
+          ) : (
+            <>
+              {/* KPI chips */}
+              <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
+                <KpiChip label="Live Birds" value={fmt(flock.currentCount)} color="var(--text-primary)" />
+                <KpiChip label="Occupancy" value={fmtPct(sec.occupancy)} color="var(--purple)" />
+                {isLayer && <KpiChip label="7d Laying Rate" value={fmtPct(metrics.avgLayingRate)} color="var(--amber)" />}
+                {!isLayer && metrics.latestWeight && <KpiChip label="Avg Weight" value={`${metrics.latestWeight.avgWeightG}g`} color="var(--blue)" />}
+                <KpiChip label="7d Mortality" value={fmt(metrics.weekMortality || 0)} color={(metrics.weekMortality || 0) > 10 ? 'var(--red)' : 'var(--text-muted)'} />
+                {isLayer && <KpiChip label="7d Eggs" value={fmt(metrics.weekEggs || 0)} color="var(--amber)" />}
+              </div>
+
+              {/* Action buttons */}
+              <div style={{ display: 'flex', gap: 8 }}>
+                {isLayer && (
+                  <button onClick={() => onLogEggs(sec)}
+                    style={{ flex: 1, padding: '10px', borderRadius: 9, border: 'none', background: '#fffbeb', color: '#d97706', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+                    🥚 Log Eggs
+                  </button>
+                )}
+                <button onClick={() => onLogMortality(sec)}
+                  style={{ flex: 1, padding: '10px', borderRadius: 9, border: 'none', background: '#fef2f2', color: '#dc2626', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+                  💀 Log Mortality
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+// ── Edit Rejected Record Modal ────────────────────────────────────────────────
+function EditRecordModal({ item, sections, apiFetch, onClose, onSave }) {
+  const { record, type } = item;
+  const today = new Date().toISOString().split('T')[0];
+
+  // Find matching section from assigned sections
+  const section = sections.find(s => s.id === record.penSectionId) || null;
+  const flock   = section?.flocks?.[0] || null;
+
+  // Egg form state
+  const [eggForm, setEggForm] = useState({
+    collectionDate: record.collectionDate?.split('T')[0] || today,
+    totalEggs:   String(record.totalEggs  || ''),
+    gradeACount: String(record.gradeACount  || ''),
+    gradeBCount: String(record.gradeBCount  || ''),
+    crackedCount: String(record.crackedCount || ''),
+    dirtyCount:   String(record.dirtyCount   || ''),
+  });
+
+  // Mortality form state
+  const [mortForm, setMortForm] = useState({
+    recordDate: record.recordDate?.split('T')[0] || today,
+    count:     String(record.count     || ''),
+    causeCode: record.causeCode || 'UNKNOWN',
+    notes:     record.notes    || '',
+  });
+
+  const [saving, setSaving] = useState(false);
+  const [error,  setError]  = useState('');
+  const setE = (k, v) => setEggForm(p  => ({ ...p, [k]: v }));
+  const setM = (k, v) => setMortForm(p => ({ ...p, [k]: v }));
+
+  const total    = Number(eggForm.totalEggs) || 0;
+  const gradeSum = (Number(eggForm.gradeACount)||0) + (Number(eggForm.gradeBCount)||0) +
+                   (Number(eggForm.crackedCount)||0) + (Number(eggForm.dirtyCount)||0);
+  const layRate  = flock?.currentCount > 0 ? ((total / flock.currentCount) * 100).toFixed(1) : null;
+  const count    = Number(mortForm.count) || 0;
+  const mortRate = flock?.currentCount > 0 ? ((count / flock.currentCount) * 100).toFixed(2) : null;
+
+  async function save() {
+    setSaving(true); setError('');
+    try {
+      let body, endpoint;
+      if (type === 'egg') {
+        if (total <= 0)        return setError('Enter total eggs collected');
+        if (gradeSum > total)  return setError('Grade breakdown exceeds total');
+        endpoint = `/api/eggs/${record.id}`;
+        body = {
+          collectionDate: eggForm.collectionDate,
+          totalEggs: total,
+          ...(eggForm.gradeACount  && { gradeACount:  Number(eggForm.gradeACount)  }),
+          ...(eggForm.gradeBCount  && { gradeBCount:  Number(eggForm.gradeBCount)  }),
+          ...(eggForm.crackedCount && { crackedCount: Number(eggForm.crackedCount) }),
+          ...(eggForm.dirtyCount   && { dirtyCount:   Number(eggForm.dirtyCount)   }),
+        };
+      } else {
+        if (count <= 0) return setError('Enter number of deaths');
+        endpoint = `/api/mortality/${record.id}`;
+        body = {
+          recordDate: mortForm.recordDate,
+          count,
+          causeCode: mortForm.causeCode,
+          ...(mortForm.notes.trim() && { notes: mortForm.notes.trim() }),
+        };
+      }
+      const res = await apiFetch(endpoint, { method: 'PATCH', body: JSON.stringify(body) });
+      const d   = await res.json();
+      if (!res.ok) return setError(d.error || 'Failed to save');
+      onSave();
+    } finally { setSaving(false); }
+  }
+
+  const isEgg = type === 'egg';
+  const title = isEgg ? '🥚 Correct Egg Record' : '💀 Correct Mortality Record';
+
+  return (
+    <ModalShell title={title} onClose={onClose}
+      footer={
+        <>
+          <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" onClick={save} disabled={saving}>
+            {saving ? 'Saving…' : 'Resubmit Record'}
+          </button>
+        </>
+      }>
+      {error && <div className="alert alert-red" style={{ marginBottom: 12 }}>⚠ {error}</div>}
+
+      {/* Rejection reason banner */}
+      <div style={{ marginBottom: 16, padding: '10px 14px', background: '#fff5f5', border: '1px solid #fecaca', borderRadius: 8, fontSize: 12 }}>
+        <div style={{ fontWeight: 700, color: '#991b1b', marginBottom: 3 }}>⚠ Returned for correction</div>
+        <div style={{ color: '#7f1d1d' }}>{record.rejectionReason}</div>
+      </div>
+
+      {section && (
+        <div style={{ padding: '10px 14px', background: 'var(--bg-elevated)', borderRadius: 9, fontSize: 13, marginBottom: 14 }}>
+          <strong>{section.pen?.name} › {section.name}</strong>
+          {flock && <span style={{ color: 'var(--text-muted)', marginLeft: 8 }}>· {flock.batchCode} · {Number(flock.currentCount||0).toLocaleString('en-NG')} birds</span>}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {isEgg ? (
+          <>
+            <div>
+              <label className="label">Collection Date *</label>
+              <input type="date" className="input" value={eggForm.collectionDate}
+                onChange={e => setE('collectionDate', e.target.value)} max={today} />
+            </div>
+            <div>
+              <label className="label">Total Eggs Collected *</label>
+              <input type="number" className="input" min="0" value={eggForm.totalEggs}
+                onChange={e => setE('totalEggs', e.target.value)} placeholder="e.g. 1800" />
+              {layRate !== null && (
+                <div style={{ fontSize: 11, marginTop: 4, color: 'var(--text-muted)' }}>
+                  Laying rate: <strong style={{ color: '#16a34a' }}>{layRate}%</strong>
+                </div>
+              )}
+            </div>
+            <div>
+              <label className="label">Grade Breakdown <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(optional)</span></label>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 8 }}>
+                {[['gradeACount','Grade A','#16a34a'],['gradeBCount','Grade B','#d97706'],['crackedCount','Cracked','#dc2626'],['dirtyCount','Dirty','#6b7280']].map(([k,lbl,col]) => (
+                  <div key={k}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: col, marginBottom: 4 }}>{lbl}</div>
+                    <input type="number" className="input" style={{ padding: '6px 8px', textAlign: 'center' }}
+                      min="0" value={eggForm[k]} onChange={e => setE(k, e.target.value)} placeholder="0" />
+                  </div>
+                ))}
+              </div>
+              {gradeSum > 0 && (
+                <div style={{ fontSize: 11, marginTop: 6, color: gradeSum > total ? '#dc2626' : 'var(--text-muted)' }}>
+                  {gradeSum} / {total} accounted for
+                </div>
+              )}
+            </div>
+          </>
+        ) : (
+          <>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div>
+                <label className="label">Date *</label>
+                <input type="date" className="input" value={mortForm.recordDate}
+                  onChange={e => setM('recordDate', e.target.value)} max={today} />
+              </div>
+              <div>
+                <label className="label">Number of Deaths *</label>
+                <input type="number" className="input" min="0" value={mortForm.count}
+                  onChange={e => setM('count', e.target.value)} placeholder="0" />
+                {mortRate !== null && (
+                  <div style={{ fontSize: 11, marginTop: 4, color: Number(mortRate) > 1 ? 'var(--red)' : 'var(--text-muted)' }}>
+                    Mortality rate: <strong>{mortRate}%</strong>
+                  </div>
+                )}
+              </div>
+            </div>
+            <div>
+              <label className="label">Cause of Death</label>
+              <select className="input" value={mortForm.causeCode} onChange={e => setM('causeCode', e.target.value)}>
+                {[['UNKNOWN','Unknown'],['DISEASE','Disease'],['HEAT_STRESS','Heat Stress'],['FEED_ISSUE','Feed Issue'],
+                  ['INJURY','Injury'],['PREDATOR','Predator'],['RESPIRATORY','Respiratory'],['CULLED','Culled'],['WATER_ISSUE','Water Issue']
+                ].map(([v,l]) => <option key={v} value={v}>{l}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="label">Notes <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(optional)</span></label>
+              <textarea className="input" rows={2} value={mortForm.notes}
+                onChange={e => setM('notes', e.target.value)}
+                placeholder="Observations, symptoms…" style={{ resize: 'vertical' }} />
+            </div>
+          </>
+        )}
+      </div>
+    </ModalShell>
+  );
+}
+
+// ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function WorkerPage() {
   const { apiFetch, user } = useAuth();
-  const [tasks, setTasks] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [step, setStep] = useState(0);
-  const [submitted, setSubmitted] = useState({});
-  const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState({ feedKg:'', mortalityCount:'', mortalityCause:'UNKNOWN', eggsTotal:'', eggsGradeA:'', eggsGradeB:'', eggsCracked:'', observations:'' });
-  const [selectedSection, setSelectedSection] = useState(null);
-  const [successStep, setSuccessStep] = useState(null);
+  const [sections,   setSections]   = useState([]);
+  const [tasks,      setTasks]      = useState([]);
+  const [loading,    setLoading]    = useState(true);
+  const [eggModal,   setEggModal]   = useState(null);   // section
+  const [mortModal,  setMortModal]  = useState(null);   // section
+  const [editRecord, setEditRecord] = useState(null);   // { record, type, section }
+  const [rejected,   setRejected]   = useState([]);
+  const [toast,      setToast]      = useState(null);
+  const [saving,     setSaving]     = useState(false);
 
-  useEffect(() => { loadTasks(); }, []);
-
-  const loadTasks = async () => {
-    try {
-      const res = await apiFetch('/api/tasks');
-      if (res.ok) { const d = await res.json(); setTasks(d.tasks||[]); }
-    } finally { setLoading(false); }
+  const showToast = (msg, type = 'success') => {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 3500);
   };
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [dashRes, taskRes, eggRes, mortRes] = await Promise.all([
+        apiFetch('/api/dashboard'),
+        apiFetch('/api/tasks'),
+        apiFetch('/api/eggs?rejected=true'),
+        apiFetch('/api/mortality?rejected=true'),
+      ]);
+      if (dashRes.ok) {
+        const d = await dashRes.json();
+        setSections(d.sections || []);
+      }
+      if (taskRes.ok) {
+        const d = await taskRes.json();
+        setTasks(d.tasks || []);
+      }
+      // Collect records returned for correction (have a rejectionReason)
+      const rejectedList = [];
+      if (eggRes.ok) {
+        const d = await eggRes.json();
+        (d.records || []).filter(r => r.rejectionReason).forEach(r =>
+          rejectedList.push({ record: r, type: 'egg' })
+        );
+      }
+      if (mortRes.ok) {
+        const d = await mortRes.json();
+        (d.records || []).filter(r => r.rejectionReason).forEach(r =>
+          rejectedList.push({ record: r, type: 'mortality' })
+        );
+      }
+      setRejected(rejectedList);
+    } finally { setLoading(false); }
+  }, [apiFetch]);
+
+  useEffect(() => { load(); }, [load]);
 
   const handleComplete = async (taskId) => {
     setSaving(true);
     try {
-      const res = await apiFetch('/api/tasks?action=complete', { method:'POST', body: JSON.stringify({ taskId, completionNotes:'Completed via mobile check-in' }) });
-      if (res.ok) loadTasks();
+      const res = await apiFetch('/api/tasks?action=complete', {
+        method: 'POST',
+        body: JSON.stringify({ taskId, completionNotes: 'Completed via worker dashboard' }),
+      });
+      if (res.ok) { load(); showToast('Task marked complete'); }
     } finally { setSaving(false); }
   };
 
-  const submitStep = async () => {
-    setSaving(true);
-    try {
-      await new Promise(r => setTimeout(r, 600));
-      setSuccessStep(step);
-      setSubmitted(p => ({ ...p, [step]: true }));
-      setTimeout(() => { setSuccessStep(null); if (step < STEPS.length-1) setStep(s=>s+1); }, 900);
-    } finally { setSaving(false); }
-  };
+  const completedCount = tasks.filter(t => t.status === 'COMPLETED').length;
+  const totalCount     = tasks.length;
+  const pct            = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
 
-  const completedCount = tasks.filter(t=>t.status==='COMPLETED').length;
-  const totalCount = tasks.length;
-  const pct = totalCount > 0 ? Math.round((completedCount/totalCount)*100) : 0;
+  const layerSections  = sections.filter(s => s.pen?.operationType === 'LAYER');
+  const broilerSections = sections.filter(s => s.pen?.operationType === 'BROILER');
 
   return (
     <AppShell>
-      <div className="animate-in">
-        {/* Header */}
-        <div style={{ marginBottom:24 }}>
-          <h1 style={{ fontFamily:"'Poppins',sans-serif", fontSize:22, fontWeight:700, color:'var(--text-primary)', margin:0 }}>
-            Good morning, {user?.firstName || 'Worker'} 👋
-          </h1>
-          <p style={{ color:'var(--text-muted)', fontSize:12, marginTop:3 }}>Daily check-in · {new Date().toLocaleDateString('en-NG',{weekday:'long',day:'numeric',month:'long'})}</p>
-        </div>
+      <style>{`
+        @keyframes fadeIn    { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+        @keyframes fadeInUp  { from{opacity:0;transform:translateY(14px)} to{opacity:1;transform:translateY(0)} }
+      `}</style>
 
-        {/* Progress bar */}
-        <div className="card" style={{ marginBottom:20, padding:'18px 20px' }}>
-          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10 }}>
-            <span style={{ fontSize:13, fontWeight:700, color:'var(--text-primary)' }}>Today's Progress</span>
-            <span style={{ fontFamily:"'Poppins',sans-serif", fontSize:20, fontWeight:700, color:'var(--purple)' }}>{pct}%</span>
-          </div>
-          <div className="progress-bar" style={{ height:10 }}>
-            <div className="progress-fill" style={{ width:`${pct}%`, background:'linear-gradient(90deg,#6c63ff,#48c774)', transition:'width 0.6s ease' }} />
-          </div>
-          <div style={{ display:'flex', justifyContent:'space-between', marginTop:8, fontSize:11, color:'var(--text-muted)' }}>
-            <span>{completedCount} completed</span>
-            <span>{totalCount - completedCount} remaining</span>
-          </div>
-        </div>
+      {toast && <Toast msg={toast.msg} type={toast.type} />}
 
-        <div style={{ display:'grid', gridTemplateColumns:'3fr 2fr', gap:16 }}>
-          {/* Check-in stepper */}
-          <div className="card">
-            <div className="section-header">Daily Check-in</div>
-
-            {/* Step indicators */}
-            <div style={{ display:'flex', gap:0, marginBottom:24 }}>
-              {STEPS.map((s,i) => (
-                <div key={s} style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', position:'relative' }}>
-                  {i > 0 && <div style={{ position:'absolute', left:0, top:18, width:'50%', height:2, background: i<=step ? 'var(--purple)' : 'var(--border)' }} />}
-                  {i < STEPS.length-1 && <div style={{ position:'absolute', right:0, top:18, width:'50%', height:2, background: i<step ? 'var(--purple)' : 'var(--border)' }} />}
-                  <div style={{ width:36, height:36, borderRadius:'50%', background: submitted[i] ? 'var(--green)' : i===step ? 'var(--purple)' : 'var(--bg-elevated)', border: `2px solid ${submitted[i] ? 'var(--green)' : i===step ? 'var(--purple)' : 'var(--border)'}`, display:'flex', alignItems:'center', justifyContent:'center', fontSize:16, transition:'all 0.3s', zIndex:1, position:'relative' }}>
-                    {submitted[i] ? '✓' : STEP_ICONS[i]}
+      {/* ── Needs Correction banner ── */}
+      {rejected.length > 0 && (
+        <div style={{ marginBottom: 24, background: '#fff5f5', border: '1.5px solid #fecaca', borderRadius: 12, padding: '14px 18px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+            <span style={{ fontSize: 16 }}>⚠</span>
+            <span style={{ fontWeight: 700, fontSize: 14, color: '#991b1b' }}>
+              {rejected.length} record{rejected.length > 1 ? 's' : ''} returned for correction
+            </span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {rejected.map(item => (
+              <div key={item.record.id} style={{ background: '#fff', borderRadius: 8, border: '1px solid #fecaca', padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>
+                    {item.type === 'egg' ? '🥚 Egg Collection' : '💀 Mortality Record'}
+                    <span style={{ fontWeight: 400, color: 'var(--text-muted)', marginLeft: 8 }}>
+                      · {new Date(item.record.collectionDate || item.record.recordDate).toLocaleDateString('en-NG', { day: 'numeric', month: 'short' })}
+                    </span>
                   </div>
-                  <div style={{ fontSize:10, marginTop:6, color: i===step ? 'var(--purple)' : 'var(--text-muted)', fontWeight: i===step ? 700 : 400 }}>{s}</div>
+                  <div style={{ fontSize: 12, color: '#dc2626', marginTop: 3, fontStyle: 'italic' }}>
+                    "{item.record.rejectionReason}"
+                  </div>
                 </div>
-              ))}
+                <button
+                  onClick={() => setEditRecord(item)}
+                  style={{ flexShrink: 0, padding: '7px 14px', background: '#dc2626', color: '#fff', border: 'none', borderRadius: 7, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+                  Fix & Resubmit
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Header */}
+      <div style={{ marginBottom: 24 }}>
+        <h1 style={{ fontFamily: "'Poppins',sans-serif", fontSize: 22, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
+          Good {new Date().getHours() < 12 ? 'morning' : new Date().getHours() < 17 ? 'afternoon' : 'evening'}, {user?.firstName || 'Worker'} 👋
+        </h1>
+        <p style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 3 }}>
+          Daily check-in · {new Date().toLocaleDateString('en-NG', { weekday: 'long', day: 'numeric', month: 'long' })}
+        </p>
+      </div>
+
+      {loading ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {[1,2,3].map(i => <div key={i} style={{ height: 70, background: 'var(--bg-elevated)', borderRadius: 12, animation: 'pulse 1.5s infinite' }} />)}
+        </div>
+      ) : sections.length === 0 ? (
+        <div style={{ background: '#fff', borderRadius: 14, border: '1px solid var(--border-card)', padding: '48px 24px', textAlign: 'center' }}>
+          <div style={{ fontSize: 48, marginBottom: 12 }}>📋</div>
+          <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 6 }}>No sections assigned</div>
+          <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Contact your pen manager to get assigned to a section.</div>
+        </div>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 20, alignItems: 'start' }}>
+
+          {/* ── Left: Sections ── */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+            {/* Progress */}
+            <div style={{ background: '#fff', borderRadius: 12, border: '1px solid var(--border-card)', padding: '16px 18px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                <span style={{ fontSize: 13, fontWeight: 700 }}>Today's Tasks</span>
+                <span style={{ fontFamily: "'Poppins',sans-serif", fontSize: 20, fontWeight: 800, color: 'var(--purple)' }}>{pct}%</span>
+              </div>
+              <div style={{ height: 8, background: 'var(--bg-elevated)', borderRadius: 99, overflow: 'hidden' }}>
+                <div style={{ height: '100%', width: `${pct}%`, background: 'linear-gradient(90deg,#6c63ff,#48c774)', borderRadius: 99, transition: 'width 0.6s ease' }} />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, fontSize: 11, color: 'var(--text-muted)' }}>
+                <span>{completedCount} completed</span>
+                <span>{totalCount - completedCount} remaining</span>
+              </div>
             </div>
 
-            {/* Step content */}
-            <div style={{ transition:'all 0.3s' }}>
-              {step === 0 && (
-                <StepCard title="Feed Record" icon="🌾" color="var(--green)">
-                  <label className="label">Feed given today (kg)</label>
-                  <input type="number" value={form.feedKg} onChange={e=>setForm(p=>({...p,feedKg:e.target.value}))} className="input" placeholder="e.g. 250" />
-                </StepCard>
-              )}
-              {step === 1 && (
-                <StepCard title="Mortality Count" icon="📉" color="var(--red)">
-                  <label className="label">Deaths recorded today</label>
-                  <input type="number" value={form.mortalityCount} onChange={e=>setForm(p=>({...p,mortalityCount:e.target.value}))} className="input" style={{ marginBottom:12 }} placeholder="0" />
-                  <label className="label">Primary cause</label>
-                  <select value={form.mortalityCause} onChange={e=>setForm(p=>({...p,mortalityCause:e.target.value}))} className="input">
-                    {['UNKNOWN','DISEASE','INJURY','HEAT_STRESS','FEED_ISSUE','PREDATOR','CULLED'].map(c => <option key={c} value={c}>{c.replace('_',' ')}</option>)}
-                  </select>
-                </StepCard>
-              )}
-              {step === 2 && (
-                <StepCard title="Egg Collection" icon="🥚" color="var(--amber)">
-                  <label className="label">Total eggs collected</label>
-                  <input type="number" value={form.eggsTotal} onChange={e=>setForm(p=>({...p,eggsTotal:e.target.value}))} className="input" style={{ marginBottom:12 }} placeholder="e.g. 1800" />
-                  <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:8 }}>
-                    {[['eggsGradeA','Grade A','var(--green)'],['eggsGradeB','Grade B','var(--amber)'],['eggsCracked','Cracked','var(--red)']].map(([k,label,c]) => (
-                      <div key={k}><label className="label" style={{ color:c }}>{label}</label><input type="number" value={form[k]} onChange={e=>setForm(p=>({...p,[k]:e.target.value}))} className="input" placeholder="0" /></div>
-                    ))}
-                  </div>
-                </StepCard>
-              )}
-              {step === 3 && (
-                <StepCard title="Observations" icon="📝" color="var(--blue)">
-                  <label className="label">Notes & observations</label>
-                  <textarea value={form.observations} onChange={e=>setForm(p=>({...p,observations:e.target.value}))} className="input" rows={4} placeholder="Any health concerns, equipment issues, or general observations…" style={{ resize:'vertical' }} />
-                </StepCard>
-              )}
-            </div>
+            {/* Layer sections */}
+            {layerSections.length > 0 && (
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: '#d97706', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8, paddingLeft: 2 }}>
+                  🥚 Layer Sections ({layerSections.length})
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {layerSections.map(sec => (
+                    <SectionCard key={sec.id} sec={sec}
+                      onLogEggs={() => setEggModal(sec)}
+                      onLogMortality={() => setMortModal(sec)} />
+                  ))}
+                </div>
+              </div>
+            )}
 
-            {/* Step navigation */}
-            <div style={{ display:'flex', gap:8, marginTop:20 }}>
-              {step > 0 && <button onClick={() => setStep(s=>s-1)} className="btn btn-ghost" style={{ flex:1 }}>← Back</button>}
-              <button onClick={submitted[step] ? () => setStep(s=>Math.min(s+1,STEPS.length-1)) : submitStep}
-                disabled={saving}
-                className="btn btn-primary" style={{ flex:3 }}>
-                {saving ? 'Saving…' : submitted[step] ? 'Next →' : step === STEPS.length-1 ? '✓ Submit Check-in' : `Submit ${STEPS[step]} →`}
-              </button>
-            </div>
-
-            {successStep !== null && (
-              <div className="alert alert-green" style={{ marginTop:12, justifyContent:'center' }}>
-                <span>✅</span><span><strong>{STEPS[successStep]}</strong> recorded successfully!</span>
+            {/* Broiler sections */}
+            {broilerSections.length > 0 && (
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: '#3b82f6', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8, paddingLeft: 2 }}>
+                  🍗 Broiler Sections ({broilerSections.length})
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {broilerSections.map(sec => (
+                    <SectionCard key={sec.id} sec={sec}
+                      onLogEggs={() => setEggModal(sec)}
+                      onLogMortality={() => setMortModal(sec)} />
+                  ))}
+                </div>
               </div>
             )}
           </div>
 
-          {/* Task list */}
-          <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
-            <div className="card">
-              <div className="section-header">My Tasks ({totalCount})</div>
-              {loading ? <div style={{ height:120, background:'var(--bg-elevated)', borderRadius:8 }} /> : tasks.length === 0 ? (
-                <div style={{ textAlign:'center', padding:'24px 0', color:'var(--text-muted)', fontSize:13 }}>✅ No tasks assigned today</div>
+          {/* ── Right: Tasks ── */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ background: '#fff', borderRadius: 12, border: '1px solid var(--border-card)', padding: '16px 18px' }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text-primary)', marginBottom: 12 }}>My Tasks Today ({totalCount})</div>
+              {tasks.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '20px 0', color: 'var(--text-muted)', fontSize: 13 }}>✅ No tasks assigned today</div>
               ) : (
-                <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
-                  {tasks.map(t => (
-                    <div key={t.id} style={{ padding:'12px', background:'var(--bg-elevated)', border:'1px solid var(--border)', borderRadius:9, transition:'all 0.2s' }}
-                      onMouseEnter={e => { e.currentTarget.style.borderColor='var(--purple)'; }}
-                      onMouseLeave={e => { e.currentTarget.style.borderColor='var(--border)'; }}>
-                      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:6 }}>
-                        <div style={{ fontSize:13, fontWeight:700, color:'var(--text-primary)' }}>{t.title}</div>
-                        <span className={`status-badge ${t.status==='COMPLETED'?'status-green':t.status==='OVERDUE'?'status-red':t.status==='IN_PROGRESS'?'status-blue':'status-grey'}`}>{t.status}</span>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {tasks.map(t => {
+                    const statusColor = t.status === 'COMPLETED' ? '#16a34a' : t.status === 'OVERDUE' ? '#dc2626' : t.status === 'IN_PROGRESS' ? '#3b82f6' : '#64748b';
+                    return (
+                      <div key={t.id} style={{ padding: '12px', background: 'var(--bg-elevated)', borderRadius: 9, border: `1px solid ${t.status === 'OVERDUE' ? '#fecaca' : 'var(--border)'}` }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4, gap: 8 }}>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1.3 }}>{t.title}</div>
+                          <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 99, background: `${statusColor}15`, color: statusColor, flexShrink: 0 }}>{t.status}</span>
+                        </div>
+                        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: t.status !== 'COMPLETED' ? 8 : 0 }}>
+                          {t.penSection?.pen?.name} · {t.penSection?.name}
+                        </div>
+                        {t.status !== 'COMPLETED' && (
+                          <button onClick={() => handleComplete(t.id)} disabled={saving}
+                            style={{ width: '100%', padding: '6px', borderRadius: 7, border: 'none', background: 'var(--purple)', color: '#fff', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
+                            ✓ Mark Done
+                          </button>
+                        )}
                       </div>
-                      <div style={{ fontSize:11, color:'var(--text-muted)', marginBottom:t.status!=='COMPLETED'?8:0 }}>{t.penSection?.pen?.name} · {t.penSection?.name}</div>
-                      {t.status !== 'COMPLETED' && (
-                        <button onClick={() => handleComplete(t.id)} disabled={saving} className="btn btn-primary" style={{ width:'100%', fontSize:12, padding:'6px' }}>
-                          ✓ Mark Done
-                        </button>
-                      )}
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
-
-            {/* Quick actions */}
-            <div className="card">
-              <div className="section-header">Quick Actions</div>
-              <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
-                {[['🌾 Record Feed','var(--green)',0],['📉 Log Mortality','var(--red)',1],['🥚 Collect Eggs','var(--amber)',2]].map(([label,color,s]) => (
-                  <button key={label} onClick={() => setStep(s)} className="btn btn-ghost" style={{ justifyContent:'flex-start', padding:'10px 14px', borderLeft:`3px solid ${color}` }}>
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </div>
           </div>
         </div>
-      </div>
-    </AppShell>
-  );
-}
+      )}
 
-function StepCard({ title, icon, color, children }) {
-  return (
-    <div style={{ animation:'fadeInUp 0.25s ease forwards' }}>
-      <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:16, padding:'10px 14px', background:`${color}10`, borderRadius:9, border:`1px solid ${color}30` }}>
-        <span style={{ fontSize:22 }}>{icon}</span>
-        <span style={{ fontSize:15, fontWeight:700, color:'var(--text-primary)' }}>{title}</span>
-      </div>
-      {children}
-    </div>
+      {/* Modals */}
+      {eggModal && (
+        <LogEggModal section={eggModal} apiFetch={apiFetch}
+          onClose={() => setEggModal(null)}
+          onSave={() => { setEggModal(null); load(); showToast('Egg collection recorded — pending verification'); }} />
+      )}
+      {mortModal && (
+        <LogMortalityModal section={mortModal} apiFetch={apiFetch}
+          onClose={() => setMortModal(null)}
+          onSave={() => { setMortModal(null); load(); showToast('Mortality recorded — pending verification'); }} />
+      )}
+      {editRecord && (
+        <EditRecordModal item={editRecord} sections={sections} apiFetch={apiFetch}
+          onClose={() => setEditRecord(null)}
+          onSave={() => { setEditRecord(null); load(); showToast('Record corrected and resubmitted for verification ✓'); }} />
+      )}
+    </AppShell>
   );
 }

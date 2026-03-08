@@ -25,6 +25,11 @@ const ROLE_ROUTES = {
   '/health':         ['FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'PEN_MANAGER', 'SUPER_ADMIN'],
   '/feed':           ['FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'PEN_MANAGER', 'STORE_MANAGER', 'SUPER_ADMIN'],
   '/users':          ['FARM_ADMIN', 'FARM_MANAGER', 'CHAIRPERSON', 'SUPER_ADMIN'],
+  '/eggs':           ['PEN_WORKER', 'PEN_MANAGER', 'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'],
+  '/mortality':      ['PEN_WORKER', 'PEN_MANAGER', 'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'],
+  '/reports':        ['PEN_MANAGER', 'FARM_MANAGER', 'FARM_ADMIN', 'STORE_MANAGER', 'CHAIRPERSON', 'SUPER_ADMIN'],
+  '/audit':          ['FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'],
+  '/verification':   ['FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'PEN_MANAGER', 'STORE_MANAGER', 'SUPER_ADMIN'],
 };
 
 // Default landing page per role

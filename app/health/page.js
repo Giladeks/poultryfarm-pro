@@ -20,6 +20,7 @@ export default function HealthPage() {
   const [completeForm, setCompleteForm] = useState({ batchNumber:'', notes:'' });
   const [saving, setSaving] = useState(false);
   const [activeTab, setActiveTab] = useState('upcoming');
+  const [opTab, setOpTab]         = useState('ALL'); // 'ALL' | 'LAYER' | 'BROILER'
 
   useEffect(() => { loadData(); }, []);
 
@@ -47,10 +48,18 @@ export default function HealthPage() {
   };
 
   const { vaccinations=[], summary={}, flocks=[] } = data || {};
+  const opFiltered = opTab === 'ALL'
+    ? vaccinations
+    : vaccinations.filter(v => (v.flock?.operationType || v.flock?.birdType) === opTab);
+
+  const hasLayers   = vaccinations.some(v => (v.flock?.operationType || v.flock?.birdType) === 'LAYER');
+  const hasBroilers = vaccinations.some(v => (v.flock?.operationType || v.flock?.birdType) === 'BROILER');
+  const hasBoth     = hasLayers && hasBroilers;
+
   const tabs = {
-    upcoming: vaccinations.filter(v => v.status === 'SCHEDULED'),
-    overdue:  vaccinations.filter(v => v.status === 'OVERDUE'),
-    done:     vaccinations.filter(v => v.status === 'COMPLETED'),
+    upcoming: opFiltered.filter(v => v.status === 'SCHEDULED'),
+    overdue:  opFiltered.filter(v => v.status === 'OVERDUE'),
+    done:     opFiltered.filter(v => v.status === 'COMPLETED'),
   };
   const shown = tabs[activeTab] || [];
   const STATUS_CLASS = { SCHEDULED:'status-blue', COMPLETED:'status-green', OVERDUE:'status-red', MISSED:'status-grey' };
@@ -87,6 +96,30 @@ export default function HealthPage() {
             </div>
           ))}
         </div>
+
+        {/* Op type pill switcher */}
+        {hasBoth && (
+          <div style={{ display:'flex', gap:6, marginBottom:16, background:'var(--bg-elevated)', borderRadius:12, padding:4, border:'1px solid var(--border)', width:'fit-content' }}>
+            {[
+              { key:'ALL',     icon:'💉', label:'All',     color:'var(--purple)' },
+              { key:'LAYER',   icon:'🥚', label:'Layers',   color:'#f59e0b' },
+              { key:'BROILER', icon:'🍗', label:'Broilers', color:'#3b82f6' },
+            ].map(t => {
+              const isActive = opTab === t.key;
+              return (
+                <button key={t.key} onClick={() => setOpTab(t.key)}
+                  style={{ display:'inline-flex', alignItems:'center', gap:7, padding:'8px 16px', borderRadius:9, border:'none',
+                    background: isActive ? '#fff' : 'transparent',
+                    boxShadow: isActive ? '0 1px 4px rgba(0,0,0,0.08)' : 'none',
+                    cursor:'pointer', fontFamily:'inherit', fontWeight: isActive ? 700 : 500,
+                    fontSize:13, color: isActive ? t.color : 'var(--text-muted)', transition:'all 0.15s' }}>
+                  <span style={{ fontSize:15 }}>{t.icon}</span>
+                  {t.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         {/* Tabs — underline style (standardised) */}
         <div style={{ display:'flex', gap:0, borderBottom:'2px solid var(--border)', marginBottom:20 }}>

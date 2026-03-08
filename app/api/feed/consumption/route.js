@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
 import { verifyToken } from '@/lib/middleware/auth';
 import { z } from 'zod';
+import { sendLowFeedAlert } from '@/lib/services/sms';
 
 // Roles that can LOG consumption (workers + managers)
 const ALLOWED_ROLES = [
@@ -13,9 +14,9 @@ const ALLOWED_ROLES = [
 const MANAGER_ROLES = ['FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN', 'STORE_MANAGER'];
 
 const createConsumptionSchema = z.object({
-  flockId:         z.string().uuid(),
-  penSectionId:    z.string().uuid(),
-  feedInventoryId: z.string().uuid(),
+  flockId:         z.string().min(1),
+  penSectionId:    z.string().min(1),
+  feedInventoryId: z.string().min(1),
   recordedDate:    z.string(), // ISO date string
   quantityKg:      z.number().positive(),
   notes:           z.string().optional().nullable(),
@@ -206,13 +207,15 @@ export async function POST(request) {
       }),
     ]);
 
-    // Check if stock is now below reorder level — trigger notification
+    // Check if stock is now below reorder level — trigger notification + SMS
     const updatedStock = Number(feedItem.currentStockKg) - data.quantityKg;
     if (updatedStock <= Number(feedItem.reorderLevelKg)) {
-      // Fire-and-forget low stock notification to STORE_MANAGER + FARM_MANAGER
+      // Fire-and-forget: in-app notifications
       prisma.notification.createMany({
         data: await buildLowStockNotifications(feedItem, updatedStock, user.tenantId),
       }).catch(() => {});
+      // Fire-and-forget: SMS alert
+      sendLowFeedSms(feedItem, updatedStock, user.tenantId).catch(() => {});
     }
 
     await prisma.auditLog.create({
@@ -268,3 +271,54 @@ async function buildLowStockNotifications(feedItem, currentStockKg, tenantId) {
     channel: 'IN_APP',
   }));
 }
+
+async function sendLowFeedSms(feedItem, currentStockKg, tenantId) {
+  try {
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { settings: true },
+    });
+    const smsSettings = tenant?.settings?.sms;
+    if (!smsSettings?.enabled || !smsSettings?.lowFeedAlert?.enabled) return;
+
+    // Get store name for the message
+    const store = await prisma.store.findUnique({
+      where: { id: feedItem.storeId },
+      select: { name: true },
+    });
+
+    const recipients = await prisma.user.findMany({
+      where: {
+        tenantId,
+        role:     { in: ['STORE_MANAGER', 'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON'] },
+        isActive: true,
+        phone:    { not: null },
+      },
+      select: { phone: true },
+    });
+
+    const extraPhones = (smsSettings.alertPhones || []).map(p => ({ phone: p.phone }));
+    const allRecipients = [...recipients, ...extraPhones].filter(r => r.phone);
+
+    await sendLowFeedAlert({
+      feedType:       feedItem.feedType,
+      currentStockKg,
+      reorderLevelKg: feedItem.reorderLevelKg,
+      storeName:      store?.name || 'Store',
+      recipients:     allRecipients,
+    });
+  } catch (err) {
+    console.error('[SMS] Low feed alert error:', err.message);
+  }
+}
+
+
+
+// app/api/feed/consumption/[id]/route.js — Single consumption: GET + PATCH + DELETE
+import { NextResponse } from 'next/server';
+import { prisma } from '@/lib/db/prisma';
+import { verifyToken } from '@/lib/middleware/auth';
+import { z } from 'zod';
+
+const MANAGER_ROLES = ['FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN', 'STORE_MANAGER'];
+

@@ -1,6 +1,7 @@
 # PoultryFarm Pro — Module Development Roadmap
-> Last updated: 6 March 2026
-> Stack: Next.js 14 App Router · Prisma · PostgreSQL · JWT Auth · Tailwind + custom CSS
+> Last updated: 8 March 2026 (rev 2)
+> Stack: Next.js 16 App Router · Prisma 5.22 · PostgreSQL · JWT Auth (localStorage Bearer) · Tailwind + custom CSS
+> Currency: Nigerian Naira (₦) · Locale: en-NG
 
 ---
 
@@ -15,29 +16,32 @@
 
 ---
 
-## Phase 1 — Core Operations (Current)
+## Phase 1 — Core Operations ✅ COMPLETE
 
 ### ✅ Authentication & Shell
-- JWT login / logout
+- JWT login / logout (localStorage `pfp_token`, Bearer header via `apiFetch`)
 - Role-based navigation (11 roles)
-- AppShell: collapsible sidebar, topbar, user avatar
+- AppShell: collapsible sidebar, topbar, notification bell, user avatar
 - AuthProvider: `apiFetch`, 401 auto-redirect
+- Session expiry toast
 
 ### ✅ Dashboard (`/dashboard`)
-- Role-differentiated views: Worker / PenManager / FarmManager
+- Role-differentiated views: PenWorker / PenManager / FarmManager / FarmAdmin+
 - KPI cards: live birds, mortality, eggs, FCR
-- Per-pen occupancy bars
+- Per-pen occupancy bars with Layer/Broiler colour coding
 - ChartModal (2×2 chart grid): Layer and Broiler charts
   - Eggs & laying rate, Grade A %, daily mortality, feed consumption (Layer)
   - Live weight vs Ross 308 target, uniformity %, daily mortality, feed (Broiler)
 - DayToggle (7/14/30d) on all charts
 - Alert feed, task list, pen status cards
+- Pen worker view: assigned sections with expandable KPI chips
 
 ### ✅ Farm Structure (`/farm-structure`)
 - Farm → Pen → Section hierarchy
 - Pen capacity and occupancy visualisation
 - Layer and Broiler metric chips per section
 - Add/edit modals for farms, pens, and sections
+- Layer / Broiler tab switcher
 
 ### ✅ Flock Management (`/farm`)
 - Flock card grid with survival rate, age, mortality
@@ -50,6 +54,7 @@
 - Quick-schedule sidebar with common vaccine shortcuts
 - Mark-done modal with batch number recording
 - Status summary widget
+- Layer / Broiler tab switcher
 
 ### ✅ Feed Management (`/feed`)
 - Inventory tab: stock cards, low-stock alerts, Layer vs Broiler chart, consumption log
@@ -57,12 +62,33 @@
 - Receipts (GRN) tab: delivery recording with QC status
 - Purchase Orders tab: create, submit, approve, reject, fulfil flow
 - Suppliers tab: supplier cards, add/edit modals
+- Layer / Broiler tab switcher
+
+### ✅ Egg Production (`/eggs`)
+- Log egg collection with grade breakdown (A, B, Cracked, Dirty)
+- Laying rate % calculation against flock size
+- Crates calculation (÷ 30)
+- 7/14/30/90d range filter
+- By-flock breakdown view
+- Records tab with edit/delete
+- Flock loaded from farm-structure API (uses `activeFlock` per section)
+
+### ✅ Mortality Records (`/mortality`)
+- Log deaths with cause-of-death tile selector (9 causes)
+- Mortality rate % calculation
+- Cause breakdown chart (horizontal bar)
+- Daily mortality bar chart with spike threshold line
+- By-flock breakdown
+- Records tab with edit/delete
 
 ### ✅ Verification (`/verification`)
 - Pending / verified / discrepancy tabs
 - Action modal: verify, flag discrepancy, reject, escalate, resolve
-- LoadingRows skeleton for table
+- Reject → worker sees rejection reason, can edit and resubmit
 - StatCard KPI row
+- **VERIFIER_ROLES (flat list):** `PEN_MANAGER, STORE_MANAGER, STORE_CLERK, FARM_MANAGER, FARM_ADMIN, CHAIRPERSON, SUPER_ADMIN`
+  - PEN_MANAGER added — can verify egg/mortality records submitted by their workers
+  - Note: typed verification (role matched to record type) is planned for Phase 5
 
 ### ✅ User Admin (`/users`)
 - Staff list with role colour coding
@@ -70,204 +96,230 @@
 - Create / edit modal with pen section assignment
 - Role permission descriptions
 
-### ✅ Analytics / BI (`/owner`)
+### ✅ Analytics / BI (`/owner` or `/analytics`)
 - Profitability by pen chart
 - Cost breakdown bar chart
 - 90-day revenue forecast (with confidence %)
 - AI harvest predictor (optimal date, projected weight + margin)
-- Export centre (PDF / CSV buttons — UI ready, export logic pending)
+- Export centre (PDF / CSV buttons — UI ready)
 - Period selector: 7 / 30 / 90d
+- Restricted to FARM_ADMIN, CHAIRPERSON, SUPER_ADMIN
 
 ### ✅ Worker Portal (`/worker`)
-- Daily check-in stepper: Feed → Mortality → Eggs → Observations
-- Progress bar with % complete
-- Task list with mark-done
-- Quick action shortcuts
-
-### ✅ Billing (`/billing`)
-- Plan overview, usage meters
-- Upgrade / cancel flow
+- Assigned sections loaded from `/api/dashboard`
+- Sections grouped by Layer / Broiler, each collapsible
+- KPI chips per section: live birds, occupancy, laying rate/weight, 7d mortality, 7d eggs
+- Action buttons inside expanded section: Log Eggs (layers), Log Mortality
+- Modals pre-filled with section + flock context
+- Real API calls with toast notifications
 
 ---
 
-## Phase 2 — Quality & Foundation Fixes (Active)
+## Phase 2 — Quality & Foundation Fixes ✅ COMPLETE
 
-### 🔧 Batch 1 — Shared Foundation (Current)
-**Files delivered:** `lib/utils/format.js`, `lib/constants/roles.js`,
-`components/ui/DayToggle.js`, `components/ui/ChartTip.js`
+### ✅ Shared UI Components
+- `lib/utils/format.js` — currency, number, date formatters
+- `lib/utils/roles.js` — role labels and permission helpers
+- `components/ui/DayToggle.js` — 7/14/30/90d toggle
+- `components/ui/ChartTip.js` — chart tooltip wrapper
+- `components/ui/Modal.js` — `createPortal` modal base
+- `components/ui/KpiCard.js` — shared KPI card
+- `components/ui/TabBar.js` — shared underline tab bar
+- `components/ui/Skeleton.js` — SkeletonBar + SkeletonCard
 
-- Centralise all `fmt` / `fmtCur` / `fmtDate` / `timeAgo` helpers
-- Single `MANAGER_ROLES` and all role group constants
-- Shared `DayToggle` and `ChartTip` components
-- Eliminates ~8 instances of copy-pasted code
+### ✅ Bug Fixes (Batch 5)
+- `storeId` hardcoding in feed receipts — resolved via API auto-lookup
+- Field name mismatches in ReceiptsTab (deliveryDate → receiptDate, etc.)
+- POST endpoint correction for GRN route
 
-### 📋 Batch 2 — AppShell Fixes
-- Wire notification bell to real `/api/notifications` GET endpoint
-- Show unread count badge from live data
-- Bell dropdown: list recent unread notifications with mark-all-read
-- Session expiry: show "Session expired" toast before redirect on 401
-- Fix: `FARM_OWNER` invalid role in `app/farm/page.js` → replace with `FARM_ADMIN`
-- Fix: nav Feed item missing `PEN_MANAGER` role
+### ✅ Global unicode sweep
+- All `\uXXXX` escape sequences replaced with actual characters across all 35 JS files
+- Affected: emoji, em dash, middle dot, ellipsis, angle brackets, and more
 
-### 📋 Batch 3 — Portal Modal Migration
-- Migrate all remaining inline `modal-overlay` usages to `createPortal`
-- Affected files: `app/health/page.js`, `app/farm/page.js`,
-  `app/farm-structure/page.js`, `app/users/page.js`
-- Extract shared `<Modal>` portal component to `components/ui/Modal.js`
-
-### 📋 Batch 4 — Design System Consistency
-- Standardise all pages to underline tab style (Health uses pill style — fix)
-- Extract shared `<KpiCard>` component used by all pages
-- Add `@keyframes pulse` + `.skeleton` utility class to `globals.css`
-- Fix progress bar heights: all pages → 6px (currently 4px / 5px / 6px mixed)
-- Remove inline font styles that duplicate `.section-header` CSS class
-
-### 📋 Batch 5 — Bug Fixes
-- Feed page `AddFeedTypeModal`: remove hardcoded `storeId`, resolve from tenant server-side
-- `app/farm/page.js` line 7413: `FARM_OWNER` → `FARM_ADMIN`
-- Align nav role lists in `AppShell.js` to match page-level RBAC
+### ✅ ID validation fixes
+- `z.string().uuid()` → `z.string().min(1)` across eggs, mortality, and other routes
+- Seed data uses slug IDs (e.g. `flock-lay-1`), not UUIDs — uuid() validation was rejecting all saves
 
 ---
 
-## Phase 3 — Feature Modules (Planned)
+## Phase 3 — Feature Modules ✅ COMPLETE
 
-### 📋 Notifications Centre
-**Route:** `/notifications`
-**Depends on:** Batch 2 bell wiring, existing `Notification` Prisma model + write side
-- Full notification inbox with filters (unread / all / by category)
-- Mark as read, mark all as read, delete
-- Notification categories: Low Stock, Overdue Vaccination, PO Approved, Mortality Spike, Task Overdue
-- Push notification opt-in (browser)
-- `/api/notifications` GET + PATCH routes
+### ✅ Egg Production module — full build
+- API: `GET/POST /api/eggs`, `GET/PATCH/DELETE /api/eggs/[id]`
+- Schema: `rejectionReason String?` added via SQL migration
+- Worker-scoped GET (only sees sections assigned to them)
 
-### 📋 Egg Production Module
-**Route:** `/eggs`
-**Depends on:** existing `/api/eggs/route.js`
-- Daily egg log: total, Grade A / B / cracked, laying rate
-- 7/14/30d trend charts by pen and flock
-- Grade A % tracking vs farm target
-- Egg inventory: trays on hand, sold, wastage
-- Production calendar heatmap
+### ✅ Mortality Records module — full build
+- API: `GET/POST /api/mortality`, `GET/PATCH/DELETE /api/mortality/[id]`
+- Schema: `rejectionReason String?` added via SQL migration
+- Worker-scoped GET (only sees sections assigned to them)
 
-### 📋 Mortality Records
-**Route:** `/mortality`
-**Depends on:** existing `/api/mortality/route.js`
-- Daily mortality log with cause classification
-- Cumulative mortality rate by flock
-- Anomaly detection alerts (z-score based — logic exists in `notifications.js`)
-- Mortality trend chart with flock comparison
-- Post-mortem notes field
-
-### 📋 Global Command Search
-**Shortcut:** `Cmd+K` / `Ctrl+K`
-**Component:** `components/ui/CommandPalette.js`
-- Full-text search across: flocks, pens, suppliers, users, feed types
-- Recent pages shortlist
-- Keyboard-navigable results
-- No new API route needed — uses existing endpoints with `?search=` param
-
-### 📋 Reports & Export Engine
-**Route:** `/reports`
-**Depends on:** Analytics page Export Centre (UI exists, logic pending)
-- Monthly production report (PDF)
-- Financial summary (PDF + CSV)
-- Feed analysis (CSV)
-- Mortality records (CSV)
-- Compliance report for regulatory submissions
-- Date range selector
-- Background generation with download link
+### ✅ Reports / Export (UI ready)
+- PDF export engine (`lib/services/pdf-export.js`)
+- Report pages: daily summary, egg production, mortality, feed consumption
+- CSV export hooks
 
 ---
 
-## Phase 4 — Advanced Features (Future)
+## Phase 4 — Advanced Features 🔧 IN PROGRESS
 
-### 🔮 Mobile Responsive Layout
-- Responsive sidebar: hamburger menu on < 768px
-- Stacked card grids on mobile
-- Touch-friendly modals and forms
-- Worker Portal optimised for mobile-first (most critical for field workers)
+### ✅ Batch 1 — Audit Log Viewer
+- `GET /api/audit-log` with filters: date range, entity type, action, user
+- Full audit log page with paginated table
+- Role-gated: FARM_ADMIN, CHAIRPERSON, SUPER_ADMIN
 
-### 🔮 Feed Mill Module
-**Route:** `/mill`
-**Depends on:** existing `/api/feed/mill/route.js` (partially built)
-- Production batch management
-- Formula management with ingredient ratios
-- QC sign-off workflow
-- Mill output vs feed inventory reconciliation
+### ✅ Batch 2 — PDF Export Engine
+- `lib/services/pdf-export.js` using pdfmake
+- Exportable: egg production report, mortality report, daily summary
+- Triggered from Reports page and individual record pages
 
-### 🔮 Real-Time Dashboard Updates
-- WebSocket or Server-Sent Events for live KPI updates
-- No full page refresh on new data
-- Live alert badge counter
+### ✅ Worker Dashboard — Complete rewrite
+- Replaced stub page (fake setTimeout, no DB writes) with fully functional version
+- Sections loaded from `/api/dashboard`, scoped to worker assignments
+- Real API calls to `/api/eggs` and `/api/mortality`
 
-### 🔮 Multi-Farm View
-- Organisation-level dashboard across multiple farms
-- Aggregate KPIs per tenant
-- Cross-farm flock transfer workflow
+### ✅ isActive bug fixes
+- `penWorkerAssignment` has no `isActive` field — removed from all `where` clauses
+- `penSection` has no `isActive` field — removed from all `where` clauses
+- Affected: dashboard route, farm-structure route
 
-### 🔮 Audit Log Viewer
-**Route:** `/audit`
-**Depends on:** `prisma.auditLog` (already written to across all API routes)
-- Who changed what, when
-- Filter by entity type, date range, user
-- Export to CSV for compliance
+### ✅ Worker-scoped data
+- Eggs GET: filters by worker's assigned `penSectionId`s
+- Mortality GET: filters by worker's assigned `penSectionId`s
 
-### 🔮 Integrations
-- Accounting export: QuickBooks / Sage CSV format
-- SMS alerts via Termii (Nigerian SMS gateway) for critical alerts
-- WhatsApp notifications via Twilio for farm managers
+### ✅ Dashboard hooks order fix
+- Moved early `if (!user) return null` guard to after all hooks (React Rules of Hooks)
+- Replaced raw `fetch()` with `apiFetch` in dashboard page
 
----
+### ✅ Section expand/collapse — Worker dashboard
+- Section cards collapse by default, show KPI chips + chart button on click
+- Chevron indicator rotates to show open/closed state
 
-## Technical Debt Tracker
-
-| # | Issue | Severity | Batch |
-|---|-------|----------|-------|
-| T1 | `fmt`, `fmtCur`, `fmtDate` duplicated in 6+ files | Medium | Batch 1 ✅ |
-| T2 | `MANAGER_ROLES` declared 8+ times inconsistently | Medium | Batch 1 ✅ |
-| T3 | `DayToggle` duplicated in dashboard + feed | Low | Batch 1 ✅ |
-| T4 | `ChartTip` duplicated in dashboard | Low | Batch 1 ✅ |
-| T5 | Hardcoded "3" on notification bell | High | Batch 2 |
-| T6 | No session-expiry UX on 401 | Medium | Batch 2 |
-| T7 | `FARM_OWNER` (invalid role) in farm/page.js | High | Batch 2 |
-| T8 | Health/Farm/FarmStructure/Users modals not portal-rendered | Medium | Batch 3 |
-| T9 | Health page uses pill tabs instead of underline tabs | Low | Batch 4 |
-| T10 | No shared `KpiCard` component — 4 different implementations | Low | Batch 4 |
-| T11 | `@keyframes pulse` not in globals.css (defined inline per-page) | Low | Batch 4 |
-| T12 | Progress bar heights inconsistent (4/5/6px) | Low | Batch 4 |
-| T13 | Feed `AddFeedTypeModal` missing `storeId` resolution | High | Batch 5 |
-| T14 | Nav role lists mismatched with page-level RBAC | Medium | Batch 5 |
+### 📋 Batch 3 — Termii SMS Alerts (NEXT UP)
+- `lib/services/sms.js` — Termii REST client (`POST https://api.ng.termii.com/api/sms/send`)
+- Requires `TERMII_API_KEY` env var
+- Alert triggers:
+  - High mortality event → notify Farm Manager + Pen Manager
+  - Low feed stock → notify Store Manager
+  - Verification rejected → notify submitting worker
+- Settings UI: enable/disable SMS per tenant, configure phone numbers
+- Hook into: `/api/mortality` (POST), `/api/feed/inventory`, `/api/verification/[id]` (PATCH)
 
 ---
 
-## Conventions & Standards
+## Phase 5 — Production Hardening 📋 PLANNED
 
-### File Naming
-- Pages: `app/[route]/page.js`
-- API routes: `app/api/[resource]/route.js`
-- Shared components: `components/ui/ComponentName.js`
-- Layout: `components/layout/FileName.js`
-- Utilities: `lib/utils/name.js`
-- Constants: `lib/constants/name.js`
-- Services: `lib/services/name.js`
+### 📋 Typed Verification (Role × Record Type)
+- Current: flat `VERIFIER_ROLES` list — any verifier can verify any record type
+- Planned: verification route checks both role AND `referenceType`
+  ```
+  EggProduction    → PEN_MANAGER, FARM_MANAGER, FARM_ADMIN, CHAIRPERSON
+  MortalityRecord  → PEN_MANAGER, FARM_MANAGER, FARM_ADMIN, CHAIRPERSON
+  FeedConsumption  → STORE_MANAGER, STORE_CLERK, FARM_MANAGER, FARM_ADMIN, CHAIRPERSON
+  StoreReceipt     → STORE_MANAGER, FARM_MANAGER, FARM_ADMIN, CHAIRPERSON
+  DailyReport      → PEN_MANAGER, FARM_MANAGER, FARM_ADMIN, CHAIRPERSON
+  ```
+- Frontend: soft warning if verifier's role doesn't match expected role for that record type
+- Prevents Store Clerk from verifying egg counts, Pen Manager from verifying store receipts
 
-### Component Patterns
-- All modals → `createPortal` to `document.body`
-- All pages wrap in `<AppShell>` + `<div className="animate-in">`
-- All authenticated fetches → `apiFetch` from `useAuth()`
-- Role checks on client → import from `lib/constants/roles.js`
-- Date formatting → `lib/utils/format.js`
-- Tab style → underline (3px solid `var(--purple)` bottom border)
-- Loading state → `.skeleton` class or `<Skeleton>` component
+### 📋 Multi-tenant Onboarding Flow
+- New tenant sign-up form
+- Automated provisioning: tenant record, default farm, admin user
+- Welcome email with credentials
+- Trial period handling (14-day, Stripe integration)
 
-### Colour Semantics (never use raw hex for status)
-| Purpose | Token |
-|---------|-------|
-| Brand / primary | `var(--purple)` |
-| Success / healthy | `var(--green)` |
-| Warning / low stock | `var(--amber)` |
-| Error / critical | `var(--red)` |
-| Info / scheduled | `var(--blue)` |
-| Layer flocks | `#f59e0b` (amber) |
-| Broiler flocks | `#3b82f6` (blue) |
-| Breeder flocks | `#8b5cf6` (violet) |
+### 📋 Email Notifications
+- `lib/services/email.js` — Nodemailer / Resend integration
+- Triggers: low stock, overdue vaccination, mortality spike, verification rejected
+- Configurable per-user in profile settings
+
+### 📋 Rate Limiting & API Security
+- Per-tenant request rate limiting on all API routes
+- Input sanitisation middleware
+- Audit all routes for missing `tenantId` scoping
+
+### 📋 Test Suite
+- Unit tests: format utils, role helpers, calculation functions
+- API integration tests: eggs, mortality, verification flows
+- Seed-based test fixtures
+
+---
+
+## Phase 6 — Scale & Monetisation 🔮 FUTURE
+
+### 🔮 Stripe Billing — Full Integration
+- Subscription tiers: Starter / Growth / Enterprise
+- Usage-based limits (users, farms, flocks)
+- Billing portal (upgrade, downgrade, cancel)
+- Webhook handling: payment failed, subscription cancelled
+- Dunning emails
+
+### 🔮 Mobile App (React Native)
+- Worker daily log (eggs + mortality) — offline-capable
+- Push notifications for tasks and alerts
+- QR code scan for pen/flock identification
+
+### 🔮 Feed Mill Module — Full Build
+- Feed batch production tracking
+- QC testing records with pass/fail
+- Raw material inventory
+- Cost per kg calculation
+- Integration with main feed inventory
+
+### 🔮 HR / Payroll Module
+- Staff attendance tracking
+- Leave management
+- Basic payroll calculation (salary + deductions)
+- Payslip generation (PDF)
+
+### 🔮 Asset Management
+- Equipment register with depreciation
+- Maintenance scheduling and history
+- Asset utilisation reports
+
+### 🔮 Multi-farm / Multi-tenant Dashboard
+- Chairperson view: cross-farm KPI aggregation
+- Farm comparison charts
+- Consolidated P&L
+
+---
+
+## Technical Debt & Known Constraints
+
+| Item | Status | Notes |
+|------|--------|-------|
+| Prisma version | ✅ Locked at 5.22.0 | Do NOT upgrade to 7.x — breaking changes |
+| Next.js version | ✅ 16 | `serverExternalPackages` (top-level), `turbopack: {}` |
+| Auth token location | ✅ localStorage `pfp_token` | Always use `apiFetch` — never raw `fetch()` |
+| Seed IDs | ✅ Slugs, not UUIDs | Use `z.string().min(1)` not `.uuid()` in all Zod schemas |
+| `penWorkerAssignment` | ✅ No `isActive` field | Never filter by it |
+| `penSection` | ✅ No `isActive` field | Never filter by it |
+| `.btn` CSS class | ⚠️ global `display:block; width:100%` | Never use `className="btn"` on buttons inside flex rows |
+| Unicode in repo dump | ✅ Fixed | All `\uXXXX` escapes replaced across all 35 files |
+| `schema.prisma` | ⚠️ Do not replace | Add fields via SQL (`npx prisma db execute`) then `npx prisma generate` |
+| `operationType` vs `birdType` | ⚠️ Both exist on flocks | Feed/Health pages use `birdType`; pen/structure pages use `operationType` |
+| `storeId` in verification | ✅ Fixed | API auto-resolves via `prisma.store.findFirst` — never send from client |
+| React hooks order | ✅ Fixed | All hooks declared before any early returns (Rules of Hooks) |
+| Next.js 16 — `params` must be awaited | ✅ Fixed (all routes) | In Next.js 16, `params` in dynamic route handlers is a Promise — always destructure as `{ params: rawParams }` then `const params = await rawParams;` at the top of every handler. Affected: `verification/[id]`, `eggs/[id]`, `mortality/[id]`, `feed/consumption/[id]`, `feed/mill/[id]`, `feed/receipts/[id]`. Apply to ALL new dynamic routes — failure manifests as Prisma "needs at least one of `id`" error. |
+| Verification — three separate role constants | ✅ Fixed | Three distinct role arrays exist: `VERIFIER_ROLES` (see/act), `REJECT_ROLES` (reject back to worker), `MANAGER_ROLES` (resolve escalations). Adding a role to one does NOT add it to the others. When granting any role access to verification, update ALL THREE lists in both `app/api/verification/route.js`, `app/api/verification/[id]/route.js`, AND `app/verification/page.js`. |
+| `activeFlock` vs `flocks[]` in farm-structure API | ✅ Fixed | The farm-structure API returns `activeFlock` (single object) per section — NOT a `flocks[]` array. Pages must use `sec.activeFlock`, never `sec.flocks.map(...)`. Affected: eggs page, mortality page, any page loading flocks via `/api/farm-structure`. |
+
+---
+
+## Role × Feature Access Matrix
+
+| Feature | PEN_WORKER | PEN_MANAGER | STORE_CLERK | STORE_MANAGER | FARM_MANAGER | FARM_ADMIN | CHAIRPERSON |
+|---------|-----------|------------|------------|--------------|-------------|-----------|------------|
+| Worker Dashboard | ✅ | — | — | — | — | — | — |
+| Log Eggs / Mortality | ✅ | — | — | — | — | — | — |
+| Egg Production page | — | ✅ | — | — | ✅ | ✅ | ✅ |
+| Mortality page | — | ✅ | — | — | ✅ | ✅ | ✅ |
+| Verify Records | — | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Feed Management | — | — | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Health Management | — | ✅ | — | — | ✅ | ✅ | ✅ |
+| Farm Structure | — | ✅ | — | — | ✅ | ✅ | ✅ |
+| Flock Management | — | ✅ | — | — | ✅ | ✅ | ✅ |
+| User Admin | — | — | — | — | — | ✅ | ✅ |
+| Audit Log | — | — | — | — | — | ✅ | ✅ |
+| Analytics / BI | — | — | — | — | — | ✅ | ✅ |
+| Billing | — | — | — | — | — | ✅ | ✅ |

@@ -13,7 +13,8 @@ const patchSchema = z.object({
 });
 
 // ─── GET /api/feed/consumption/[id] ──────────────────────────────────────────
-export async function GET(request, { params }) {
+export async function GET(request, { params: rawParams }) {
+  const params = await rawParams;
   const user = await verifyToken(request);
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
@@ -43,7 +44,8 @@ export async function GET(request, { params }) {
 
 // ─── PATCH /api/feed/consumption/[id] ────────────────────────────────────────
 // Update a consumption record. Managers only. Re-adjusts inventory stock delta.
-export async function PATCH(request, { params }) {
+export async function PATCH(request, { params: rawParams }) {
+  const params = await rawParams;
   const user = await verifyToken(request);
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   if (!MANAGER_ROLES.includes(user.role))
@@ -131,7 +133,8 @@ export async function PATCH(request, { params }) {
 
 // ─── DELETE /api/feed/consumption/[id] ───────────────────────────────────────
 // Soft-delete by reversing the stock deduction. Managers only.
-export async function DELETE(request, { params }) {
+export async function DELETE(request, { params: rawParams }) {
+  const params = await rawParams;
   const user = await verifyToken(request);
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   if (!MANAGER_ROLES.includes(user.role))

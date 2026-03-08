@@ -6,8 +6,8 @@ import { z } from 'zod';
 import { aggregateProduction } from '@/lib/services/analytics';
 
 const createEggSchema = z.object({
-  flockId: z.string().uuid(),
-  penSectionId: z.string().uuid(),
+  flockId: z.string().min(1),
+  penSectionId: z.string().min(1),
   collectionDate: z.string(),
   totalEggs: z.number().int().min(0),
   gradeACount: z.number().int().min(0).default(0),
@@ -23,11 +23,23 @@ export async function GET(request) {
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { searchParams } = new URL(request.url);
-  const flockId = searchParams.get('flockId');
-  const days = parseInt(searchParams.get('days') || '30');
-  const groupBy = searchParams.get('groupBy') || 'day';
+  const flockId      = searchParams.get('flockId');
+  const days         = parseInt(searchParams.get('days') || '30');
+  const groupBy      = searchParams.get('groupBy') || 'day';
+  const rejectedOnly = searchParams.get('rejected') === 'true';
   const since = new Date();
   since.setDate(since.getDate() - days);
+
+  // Workers only see their own sections' records
+  const WORKER_ROLES = ['PEN_WORKER'];
+  let allowedSectionIds = null;
+  if (WORKER_ROLES.includes(user.role)) {
+    const assignments = await prisma.penWorkerAssignment.findMany({
+      where: { userId: user.sub },
+      select: { penSectionId: true },
+    });
+    allowedSectionIds = assignments.map(a => a.penSectionId);
+  }
 
   try {
     const records = await prisma.eggProduction.findMany({
@@ -35,6 +47,8 @@ export async function GET(request) {
         flock: { penSection: { pen: { farm: { tenantId: user.tenantId } } } },
         collectionDate: { gte: since },
         ...(flockId && { flockId }),
+        ...(allowedSectionIds && { penSectionId: { in: allowedSectionIds } }),
+        ...(rejectedOnly && { rejectionReason: { not: null } }),
       },
       include: {
         flock: { select: { batchCode: true, breed: true, operationType: true } },

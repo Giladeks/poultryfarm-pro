@@ -8,7 +8,7 @@ const createFlockSchema = z.object({
   batchCode: z.string().min(3).max(50),
   operationType: z.enum(['LAYER', 'BROILER', 'BREEDER', 'TURKEY']),
   breed: z.string().min(2).max(100),
-  penSectionId: z.string().uuid(),
+  penSectionId: z.string().min(1),
   dateOfPlacement: z.string(),
   initialCount: z.number().int().positive(),
   targetWeightG: z.number().optional(),
@@ -151,3 +151,4 @@ export async function POST(request) {
     return NextResponse.json({ error: 'Failed to create flock' }, { status: 500 });
   }
 }
+

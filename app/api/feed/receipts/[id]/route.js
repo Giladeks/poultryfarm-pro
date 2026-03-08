@@ -15,7 +15,8 @@ const patchSchema = z.object({
 });
 
 // ─── GET /api/feed/receipts/[id] ─────────────────────────────────────────────
-export async function GET(request, { params }) {
+export async function GET(request, { params: rawParams }) {
+  const params = await rawParams;
   const user = await verifyToken(request);
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
@@ -46,7 +47,8 @@ export async function GET(request, { params }) {
 
 // ─── PATCH /api/feed/receipts/[id] ───────────────────────────────────────────
 // Update QC status. If FAILED with partial acceptance, adjusts stock accordingly.
-export async function PATCH(request, { params }) {
+export async function PATCH(request, { params: rawParams }) {
+  const params = await rawParams;
   const user = await verifyToken(request);
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   if (!MANAGER_ROLES.includes(user.role))
