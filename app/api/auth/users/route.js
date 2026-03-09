@@ -22,6 +22,8 @@ const createUserSchema = z.object({
 });
 
 const ADMIN_ROLES = ['FARM_ADMIN','FARM_MANAGER','CHAIRPERSON','SUPER_ADMIN'];
+// Only these roles can change another user's email address
+const EMAIL_CHANGE_ROLES = ['FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN'];
 
 export async function GET(request) {
   const user = await verifyToken(request);
@@ -30,8 +32,15 @@ export async function GET(request) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
   try {
+    const { searchParams } = new URL(request.url);
+    const rolesParam = searchParams.get('roles');
+
     const users = await prisma.user.findMany({
-      where: { tenantId: user.tenantId },
+      where: {
+        tenantId: user.tenantId,
+        isActive: true,
+        ...(rolesParam && { role: { in: rolesParam.split(',') } }),
+      },
       select: {
         id: true, email: true, firstName: true, lastName: true, phone: true,
         role: true, farmId: true, isActive: true, lastLoginAt: true, createdAt: true,
@@ -135,7 +144,7 @@ export async function PATCH(request) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
   try {
-    const { userId, isActive, role, farmId } = await request.json();
+    const { userId, isActive, role, farmId, firstName, lastName, email, phone } = await request.json();
 
     const target = await prisma.user.findFirst({
       where: { id: userId, tenantId: user.tenantId },
@@ -145,18 +154,29 @@ export async function PATCH(request) {
     if (userId === user.sub && isActive === false)
       return NextResponse.json({ error: 'Cannot deactivate your own account' }, { status: 400 });
 
-    // Only CHAIRPERSON / FARM_ADMIN can change roles
+    // Only CHAIRPERSON / FARM_ADMIN / SUPER_ADMIN can change roles
     if (role && !['CHAIRPERSON','FARM_ADMIN','SUPER_ADMIN'].includes(user.role))
       return NextResponse.json({ error: 'Insufficient permissions to change roles' }, { status: 403 });
+
+    // Only FARM_ADMIN and above can change email addresses
+    if (email && !EMAIL_CHANGE_ROLES.includes(user.role))
+      return NextResponse.json({ error: 'Insufficient permissions to change email addresses' }, { status: 403 });
 
     const updated = await prisma.user.update({
       where: { id: userId },
       data: {
-        ...(isActive !== undefined && { isActive }),
-        ...(role && { role }),
-        ...(farmId !== undefined && { farmId }),
+        ...(isActive    !== undefined && { isActive }),
+        ...(role                      && { role }),
+        ...(farmId      !== undefined && { farmId }),
+        ...(firstName                 && { firstName: firstName.trim() }),
+        ...(lastName                  && { lastName: lastName.trim() }),
+        ...(phone       !== undefined && { phone: phone?.trim() || null }),
+        ...(email && EMAIL_CHANGE_ROLES.includes(user.role) && { email: email.toLowerCase().trim() }),
       },
-      select: { id: true, email: true, firstName: true, lastName: true, role: true, isActive: true },
+      select: {
+        id: true, email: true, firstName: true, lastName: true,
+        phone: true, role: true, isActive: true,
+      },
     });
 
     await prisma.auditLog.create({
@@ -166,12 +186,21 @@ export async function PATCH(request) {
         action: role ? 'ROLE_CHANGE' : 'UPDATE',
         entityType: 'User',
         entityId: userId,
-        changes: { role, isActive, farmId },
+        changes: {
+          ...(role      && { role }),
+          ...(isActive  !== undefined && { isActive }),
+          ...(firstName && { firstName }),
+          ...(lastName  && { lastName }),
+          ...(email     && { email }),
+          ...(phone     !== undefined && { phone }),
+        },
       },
     }).catch(() => {});
 
     return NextResponse.json({ user: updated });
   } catch (error) {
+    if (error.code === 'P2002')
+      return NextResponse.json({ error: 'A user with this email already exists' }, { status: 409 });
     console.error('User update error:', error);
     return NextResponse.json({ error: 'Failed to update user' }, { status: 500 });
   }

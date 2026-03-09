@@ -190,12 +190,24 @@ model User {
   workOrdersCreated     WorkOrder[]         @relation("WOCreatedBy")
   feedMillBatches       FeedMillBatch[]
   qcTests               QCTest[]
-  verifications         Verification[]
+  verifications            Verification[]  @relation("VerificationVerifiedBy")
+  verificationsResolved    Verification[]  @relation("VerificationResolvedBy")
+  verificationsEscalated   Verification[]  @relation("VerificationEscalatedTo")
   auditLogs             AuditLog[]
   notifications         Notification[]      @relation("NotificationRecipient")
   sentNotifications     Notification[]      @relation("NotificationSender")
   biosecurityLogs       BiosecurityLog[]
   staffProfile          StaffProfile?
+  investigationsFlagged    Investigation[] @relation("InvestigationFlaggedBy")
+  investigationsEscalated  Investigation[] @relation("InvestigationEscalatedTo")
+  investigationsResolved   Investigation[] @relation("InvestigationResolvedBy")
+  salesInvoicesCreated     SalesInvoice[]  @relation("SalesInvoiceCreatedBy")
+  salesInvoicesApproved    SalesInvoice[]  @relation("SalesInvoiceApprovedBy")
+  salesInvoicesReconciled  SalesInvoice[]  @relation("SalesInvoiceReconciledBy")
+  supplierInvoicesCreated  SupplierInvoice[] @relation("SupplierInvoiceCreatedBy")
+  supplierInvoicesApproved SupplierInvoice[] @relation("SupplierInvoiceApprovedBy")
+  supplierInvoicesReconciled SupplierInvoice[] @relation("SupplierInvoiceReconciledBy")
+  paymentRemindersSent     PaymentReminder[]
 
   @@unique([tenantId, email])
   @@map("users")
@@ -217,6 +229,8 @@ enum UserRole {
   PRODUCTION_STAFF     // Feed mill production
   QC_TECHNICIAN        // Feed quality testing
   PEN_WORKER           // Daily data entry
+  // INTERNAL_CONTROL  // Input verification
+  // ACCOUNTANT        // handling go the financials
 }
 
 // Pen worker assignments (workers can be assigned to multiple sections)
@@ -850,6 +864,7 @@ model Supplier {
   storeReceipts        StoreReceipt[]
   purchaseOrders       PurchaseOrder[]
   purchaseRequisitions PurchaseRequisition[]
+  supplierInvoices     SupplierInvoice[]
 
   @@map("suppliers")
 }
@@ -1201,7 +1216,8 @@ model Customer {
   notes         String?
   createdAt     DateTime     @default(now())
 
-  salesOrders SalesOrder[]
+  salesOrders   SalesOrder[]
+  salesInvoices SalesInvoice[]
 
   @@map("customers")
 }
@@ -1722,7 +1738,9 @@ model Verification {
   createdAt         DateTime           @default(now())
 
   store      Store @relation(fields: [storeId], references: [id])
-  verifiedBy User  @relation(fields: [verifiedById], references: [id])
+  verifiedBy  User  @relation("VerificationVerifiedBy",  fields: [verifiedById],  references: [id])
+  resolvedBy  User? @relation("VerificationResolvedBy",  fields: [resolvedById],  references: [id])
+  escalatedTo User? @relation("VerificationEscalatedTo", fields: [escalatedToId], references: [id])
 
   @@map("verifications")
 }
@@ -1954,3 +1972,176 @@ enum AuditAction {
   PASSWORD_CHANGE
 }
 
+// MODULE 13 — INTERNAL CONTROL
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum InvestigationStatus {
+  OPEN
+  UNDER_REVIEW
+  ESCALATED
+  CLOSED
+}
+
+model Investigation {
+  id             String              @id @default(uuid())
+  tenantId       String
+  referenceType  String              // EggProduction | StoreReceipt | FeedConsumption | etc.
+  referenceId    String
+  flaggedById    String
+  status         InvestigationStatus @default(OPEN)
+  flagReason     String
+  findings       String?
+  escalatedToId  String?
+  escalatedAt    DateTime?
+  resolvedById   String?
+  resolvedAt     DateTime?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  flaggedBy    User  @relation("InvestigationFlaggedBy",   fields: [flaggedById],   references: [id])
+  escalatedTo  User? @relation("InvestigationEscalatedTo", fields: [escalatedToId], references: [id])
+  resolvedBy   User? @relation("InvestigationResolvedBy",  fields: [resolvedById],  references: [id])
+
+  @@index([tenantId])
+  @@index([status])
+  @@index([referenceId])
+  @@map("investigations")
+}
+
+
+// MODULE 14 — ACCOUNTS / FINANCIALS
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  PARTIALLY_PAID
+  PAID
+  OVERDUE
+  VOID
+}
+
+enum SupplierInvoiceStatus {
+  PENDING
+  APPROVED
+  PARTIALLY_PAID
+  PAID
+  OVERDUE
+  DISPUTED
+  VOID
+}
+
+model SalesInvoice {
+  id            String        @id @default(uuid())
+  tenantId      String
+  invoiceNumber String
+  customerId    String
+  flockId       String?       // optional: which flock produced the goods
+  farmId        String?
+  invoiceDate   DateTime      @db.Date
+  dueDate       DateTime      @db.Date
+  currency      Currency      @default(NGN)
+  exchangeRate  Decimal       @default(1.0) @db.Decimal(12, 6)  // rate to NGN
+  subtotal      Decimal       @default(0)   @db.Decimal(14, 2)
+  taxAmount     Decimal       @default(0)   @db.Decimal(14, 2)
+  totalAmount   Decimal       @default(0)   @db.Decimal(14, 2)
+  amountPaid    Decimal       @default(0)   @db.Decimal(14, 2)
+  status        InvoiceStatus @default(DRAFT)
+  lineItems     Json          @default("[]")  // [{ description, qty, unit, unitPrice, total }]
+  // Payment
+  paidAt        DateTime?
+  paymentRef    String?
+  paymentMethod String?
+  // Bank reconciliation
+  reconciledAt      DateTime?
+  reconciledById    String?
+  // Metadata
+  notes         String?   @db.Text
+  createdById   String
+  approvedById  String?
+  approvedAt    DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  customer    Customer @relation(fields: [customerId],   references: [id])
+  createdBy   User     @relation("SalesInvoiceCreatedBy",     fields: [createdById],    references: [id])
+  approvedBy  User?    @relation("SalesInvoiceApprovedBy",    fields: [approvedById],   references: [id])
+  reconciledBy User?   @relation("SalesInvoiceReconciledBy",  fields: [reconciledById], references: [id])
+
+  reminders PaymentReminder[]
+
+  @@unique([tenantId, invoiceNumber])
+  @@index([tenantId])
+  @@index([status])
+  @@index([dueDate])
+  @@index([customerId])
+  @@map("sales_invoices")
+}
+
+model SupplierInvoice {
+  id              String                @id @default(uuid())
+  tenantId        String
+  invoiceNumber   String
+  supplierId      String
+  linkedReceiptId String?               // ties to StoreReceipt GRN
+  linkedPOId      String?               // ties to PurchaseOrder
+  invoiceDate     DateTime              @db.Date
+  dueDate         DateTime              @db.Date
+  currency        Currency              @default(NGN)
+  exchangeRate    Decimal               @default(1.0) @db.Decimal(12, 6)
+  subtotal        Decimal               @default(0)   @db.Decimal(14, 2)
+  taxAmount       Decimal               @default(0)   @db.Decimal(14, 2)
+  totalAmount     Decimal               @default(0)   @db.Decimal(14, 2)
+  amountPaid      Decimal               @default(0)   @db.Decimal(14, 2)
+  status          SupplierInvoiceStatus @default(PENDING)
+  lineItems       Json                  @default("[]")
+  // Payment
+  paidAt        DateTime?
+  paymentRef    String?
+  paymentMethod String?
+  // Approval
+  approvedById  String?
+  approvedAt    DateTime?
+  // Bank reconciliation
+  reconciledAt     DateTime?
+  reconciledById   String?
+  // Metadata
+  notes        String?  @db.Text
+  createdById  String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  supplier      Supplier @relation(fields: [supplierId],    references: [id])
+  createdBy     User     @relation("SupplierInvoiceCreatedBy",      fields: [createdById],    references: [id])
+  approvedBy    User?    @relation("SupplierInvoiceApprovedBy",     fields: [approvedById],   references: [id])
+  reconciledBy  User?    @relation("SupplierInvoiceReconciledBy",   fields: [reconciledById], references: [id])
+
+  reminders PaymentReminder[]
+
+  @@unique([tenantId, invoiceNumber])
+  @@index([tenantId])
+  @@index([status])
+  @@index([dueDate])
+  @@index([supplierId])
+  @@map("supplier_invoices")
+}
+
+model PaymentReminder {
+  id              String   @id @default(uuid())
+  tenantId        String
+  invoiceType     String   // 'SALES' | 'SUPPLIER'
+  salesInvoiceId    String?
+  supplierInvoiceId String?
+  sentAt          DateTime @default(now())
+  sentById        String
+  channel         String   // 'EMAIL' | 'IN_APP'
+  message         String?  @db.Text
+
+  sentBy          User             @relation(fields: [sentById],           references: [id])
+  salesInvoice    SalesInvoice?    @relation(fields: [salesInvoiceId],    references: [id])
+  supplierInvoice SupplierInvoice? @relation(fields: [supplierInvoiceId], references: [id])
+
+  @@index([invoiceType, salesInvoiceId])
+  @@index([invoiceType, supplierInvoiceId])
+  @@map("payment_reminders")
+}

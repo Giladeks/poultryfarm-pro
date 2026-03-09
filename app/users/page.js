@@ -140,7 +140,7 @@ function UserModal({ mode, editUser, farms, penSections, onClose, onSave, apiFet
     try {
       const payload = mode === 'create'
         ? { ...form, farmId: form.farmId || null }
-        : { userId: editUser.id, role: form.role, farmId: form.farmId || null,
+        : { userId: editUser.id, role: form.role, farmId: form.farmId || null, firstName: form.firstName, lastName: form.lastName, email: form.email, phone: form.phone || null,
             phone: form.phone, penSectionIds: form.penSectionIds,
             ...(form.isActive !== undefined && { isActive: form.isActive }) };
 
@@ -180,11 +180,11 @@ function UserModal({ mode, editUser, farms, penSections, onClose, onSave, apiFet
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <div>
             <label className="label">First Name *</label>
-            <input className="input" value={form.firstName} onChange={e => up('firstName', e.target.value)} placeholder="Amina" disabled={mode === 'edit'} />
+            <input className="input" value={form.firstName} onChange={e => up('firstName', e.target.value)} placeholder="Amina" />
           </div>
           <div>
             <label className="label">Last Name *</label>
-            <input className="input" value={form.lastName} onChange={e => up('lastName', e.target.value)} placeholder="Bello" disabled={mode === 'edit'} />
+            <input className="input" value={form.lastName} onChange={e => up('lastName', e.target.value)} placeholder="Bello" />
           </div>
         </div>
 
@@ -192,7 +192,7 @@ function UserModal({ mode, editUser, farms, penSections, onClose, onSave, apiFet
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <div>
             <label className="label">Email Address *</label>
-            <input className="input" type="email" value={form.email} onChange={e => up('email', e.target.value)} placeholder="amina@greenacres.ng" disabled={mode === 'edit'} />
+            <input className="input" type="email" value={form.email} onChange={e => up('email', e.target.value)} placeholder="amina@greenacres.ng" />
           </div>
           <div>
             <label className="label">Phone</label>
@@ -731,4 +731,3 @@ export default function UsersPage() {
     </AppShell>
   );
 }
-

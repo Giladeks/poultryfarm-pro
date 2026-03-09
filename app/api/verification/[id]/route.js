@@ -55,8 +55,9 @@ export async function GET(request, { params: rawParams }) {
     const verification = await prisma.verification.findFirst({
       where: { id: params.id, tenantId: user.tenantId },
       include: {
-        store:      true,
-        verifiedBy: { select: { id: true, firstName: true, lastName: true, role: true } },
+        store:       true,
+        verifiedBy:  { select: { id: true, firstName: true, lastName: true, role: true } },
+        escalatedTo: { select: { id: true, firstName: true, lastName: true, role: true } },
       },
     });
 
@@ -160,13 +161,16 @@ export async function PATCH(request, { params: rawParams }) {
       where: { id: params.id },
       data:  updateData,
       include: {
-        store:      { select: { id: true, name: true } },
-        verifiedBy: { select: { id: true, firstName: true, lastName: true } },
+        store:       { select: { id: true, name: true } },
+        verifiedBy:  { select: { id: true, firstName: true, lastName: true } },
+        escalatedTo: { select: { id: true, firstName: true, lastName: true } },
       },
     });
 
     if (data.status === 'RESOLVED') {
       await updateSourceRecord(existing.referenceType, existing.referenceId, 'APPROVED', user.sub).catch(() => {});
+      // Notify: person who escalated + original record submitter
+      await notifyResolution(existing, updated, user, user.tenantId).catch(() => {});
     }
 
     if (data.status === 'ESCALATED' && data.escalatedToId) {
@@ -409,6 +413,50 @@ async function sendRejectionEmail(verification, reason, rejector, tenantId) {
     penName,
     rejectorName,
     reason,
+  });
+}
+
+async function notifyResolution(existing, updated, resolver, tenantId) {
+  const sourceRecord = await fetchSourceRecord(existing.referenceType, existing.referenceId);
+  const resolverName = [resolver.firstName, resolver.lastName].filter(Boolean).join(' ');
+  const recordLabel  = existing.referenceType.replace(/([A-Z])/g, ' $1').trim();
+
+  const title   = `Discrepancy Resolved: ${recordLabel}`;
+  const message = `${resolverName} has resolved the discrepancy.${updated.resolution ? ` Resolution: ${updated.resolution}` : ''}`;
+
+  const recipientIds = new Set();
+
+  // 1. Person who originally flagged it (verifiedBy = the one who created the verification)
+  if (existing.verifiedById) recipientIds.add(existing.verifiedById);
+
+  // 2. Original record submitter
+  if (sourceRecord) {
+    const submitterId = sourceRecord.recordedById || sourceRecord.submittedById;
+    if (submitterId) recipientIds.add(submitterId);
+  }
+
+  // Remove the resolver themselves from notifications
+  recipientIds.delete(resolver.sub);
+
+  if (recipientIds.size === 0) return;
+
+  await prisma.notification.createMany({
+    data: [...recipientIds].map(recipientId => ({
+      tenantId,
+      recipientId,
+      type:    'ALERT',
+      title,
+      message,
+      data: {
+        verificationId:   existing.id,
+        verificationType: existing.verificationType,
+        referenceType:    existing.referenceType,
+        referenceId:      existing.referenceId,
+        resolution:       updated.resolution,
+      },
+      channel: 'IN_APP',
+    })),
+    skipDuplicates: true,
   });
 }
 

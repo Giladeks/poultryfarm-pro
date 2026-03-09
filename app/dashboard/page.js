@@ -920,20 +920,638 @@ function ManagerDashboard({ pens, orgTotals, user }) {
   );
 }
 // ── Main ──────────────────────────────────────────────────────────────────────
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ROLE DASHBOARDS — Store Manager, Store Clerk, Feed Mill Manager, QC Technician
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function fmtKg(n)  { return n != null ? `${parseFloat(n).toLocaleString('en-NG', {maximumFractionDigits:1})} kg` : '—'; }
+function fmtCur(n) { return n != null ? `₦${parseFloat(n).toLocaleString('en-NG', {minimumFractionDigits:0, maximumFractionDigits:0})}` : '—'; }
+function fmtDate(d) {
+  if (!d) return '—';
+  return new Date(d).toLocaleDateString('en-NG', { day:'2-digit', month:'short', year:'numeric' });
+}
+function timeAgo(d) {
+  if (!d) return '—';
+  const diff = Math.floor((Date.now() - new Date(d)) / 1000);
+  if (diff < 60) return 'just now';
+  if (diff < 3600) return `${Math.floor(diff/60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff/3600)}h ago`;
+  return `${Math.floor(diff/86400)}d ago`;
+}
+
+function RoleBadge({ label, color='#6c63ff' }) {
+  return (
+    <span style={{ padding:'2px 10px', borderRadius:99, fontSize:11, fontWeight:700,
+      background:`${color}18`, color, display:'inline-block' }}>{label}</span>
+  );
+}
+function StatusBadge({ status }) {
+  const map = {
+    PASS:'#16a34a', FAIL:'#dc2626', PASSED:'#16a34a', FAILED:'#dc2626',
+    PENDING:'#d97706', IN_PROGRESS:'#6c63ff', PLANNED:'#64748b', COMPLETED:'#16a34a',
+  };
+  const labels = {
+    PASS:'Pass', FAIL:'Fail', PASSED:'Passed', FAILED:'Failed',
+    PENDING:'Pending', IN_PROGRESS:'In Progress', PLANNED:'Planned', COMPLETED:'Completed',
+  };
+  const color = map[status] || '#64748b';
+  return <RoleBadge label={labels[status] || status} color={color} />;
+}
+function RoleKpiTile({ icon, label, value, sub, color='#6c63ff', warn }) {
+  return (
+    <div className="card" style={{ padding:'18px 20px', borderTop:`3px solid ${warn?'#ef4444':color}` }}>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:10 }}>
+        <span style={{ fontSize:11, fontWeight:700, textTransform:'uppercase', letterSpacing:'.07em', color:'var(--text-muted)' }}>{label}</span>
+        <div style={{ width:34, height:34, borderRadius:9, background:`${warn?'#ef4444':color}18`, display:'flex', alignItems:'center', justifyContent:'center', fontSize:18 }}>{icon}</div>
+      </div>
+      <div style={{ fontSize:26, fontWeight:800, color:warn?'#ef4444':'var(--text-primary)', lineHeight:1.1 }}>{value}</div>
+      {sub && <div style={{ fontSize:12, color:'var(--text-muted)', marginTop:4 }}>{sub}</div>}
+    </div>
+  );
+}
+function RoleSectionHeader({ title, sub }) {
+  return (
+    <div style={{ margin:'24px 0 10px' }}>
+      <div style={{ fontSize:14, fontWeight:700, color:'var(--text-primary)' }}>{title}</div>
+      {sub && <div style={{ fontSize:12, color:'var(--text-muted)', marginTop:2 }}>{sub}</div>}
+    </div>
+  );
+}
+function RoleEmptyCard({ icon='📭', msg }) {
+  return (
+    <div style={{ padding:'28px 20px', textAlign:'center', color:'var(--text-muted)', fontSize:13 }}>
+      <div style={{ fontSize:26, marginBottom:8 }}>{icon}</div>{msg}
+    </div>
+  );
+}
+
+// ── Store Manager / Store Clerk ───────────────────────────────────────────────
+function StoreDashboard({ data, isClerk }) {
+  const {
+    inventory = { items:[], lowStock:[], lowStockCount:0, totalStockKg:0, stockValue:0 },
+    receipts = [], issuances = [], consumption = { weekTotalKg:0, trend:[] },
+    pendingVerifications = 0,
+  } = data || {};
+  return (
+    <div style={{ padding:'24px 28px', maxWidth:1400 }}>
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(165px,1fr))', gap:14, marginBottom:4 }}>
+        <RoleKpiTile icon="📦" label="Feed Lines"       value={inventory.items.length}               sub="Active stock lines"          color="#6c63ff" />
+        <RoleKpiTile icon="⚠️" label="Low Stock"        value={inventory.lowStockCount}              sub="At or below reorder"         color="#ef4444" warn={inventory.lowStockCount>0} />
+        <RoleKpiTile icon="🌾" label="Total Stock"      value={fmtKg(inventory.totalStockKg)}        sub="Across all stores"           color="#0ea5e9" />
+        <RoleKpiTile icon="💰" label="Stock Value"      value={fmtCur(inventory.stockValue)}         sub="Current cost basis"          color="#10b981" />
+        <RoleKpiTile icon="🚚" label="7d Consumption"   value={fmtKg(consumption.weekTotalKg)}       sub="All pens this week"          color="#f59e0b" />
+        {!isClerk && <RoleKpiTile icon="✅" label="Pending Verif." value={pendingVerifications} sub="Store records to check" color="#9333ea" warn={pendingVerifications>0} />}
+      </div>
+
+      {inventory.lowStockCount > 0 && (
+        <div style={{ background:'#fef2f2', border:'1px solid #fecaca', borderRadius:10, padding:'12px 16px', marginTop:16, display:'flex', alignItems:'center', gap:10 }}>
+          <span style={{ fontSize:20 }}>🚨</span>
+          <div>
+            <div style={{ fontWeight:700, color:'#dc2626', fontSize:13 }}>{inventory.lowStockCount} feed line{inventory.lowStockCount>1?'s':''} below reorder level</div>
+            <div style={{ fontSize:12, color:'#ef4444', marginTop:2 }}>{inventory.lowStock.map(i=>i.feedType).join(', ')}</div>
+          </div>
+        </div>
+      )}
+
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16, marginTop:20 }}>
+        {/* Inventory table */}
+        <div className="card" style={{ padding:0, overflow:'hidden' }}>
+          <div style={{ padding:'14px 18px', borderBottom:'1px solid var(--border-card)', fontWeight:700, fontSize:13 }}>📦 Feed Inventory</div>
+          {inventory.items.length===0 ? <RoleEmptyCard msg="No inventory items" /> : (
+            <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
+              <thead>
+                <tr style={{ background:'var(--bg-secondary)' }}>
+                  {['Feed Type','Stock (kg)','Reorder (kg)','Status'].map(h=>(
+                    <th key={h} style={{ padding:'8px 12px', textAlign:'left', fontSize:11, fontWeight:700, color:'var(--text-muted)', textTransform:'uppercase' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {inventory.items.slice(0,8).map(item => {
+                  const isLow = parseFloat(item.currentStockKg) <= parseFloat(item.reorderLevelKg);
+                  return (
+                    <tr key={item.id} style={{ borderBottom:'1px solid var(--border-card)' }}>
+                      <td style={{ padding:'9px 12px', fontWeight:600 }}>{item.feedType}</td>
+                      <td style={{ padding:'9px 12px', color:isLow?'#dc2626':'var(--text-primary)', fontWeight:isLow?700:400 }}>{parseFloat(item.currentStockKg).toFixed(1)}</td>
+                      <td style={{ padding:'9px 12px', color:'var(--text-muted)' }}>{parseFloat(item.reorderLevelKg).toFixed(1)}</td>
+                      <td style={{ padding:'9px 12px' }}><RoleBadge label={isLow?'Low Stock':'OK'} color={isLow?'#ef4444':'#16a34a'} /></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {/* 7-day consumption chart */}
+        <div className="card" style={{ padding:'14px 18px' }}>
+          <div style={{ fontWeight:700, fontSize:13, marginBottom:14 }}>📊 7-Day Consumption (kg)</div>
+          {consumption.trend.length===0 ? <RoleEmptyCard icon="📈" msg="No consumption data this week" /> : (
+            <ResponsiveContainer width="100%" height={190}>
+              <BarChart data={consumption.trend} margin={{ top:4, right:8, left:-10, bottom:0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <XAxis dataKey="date" tickFormatter={d=>new Date(d).toLocaleDateString('en-NG',{day:'2-digit',month:'short'})} tick={{ fontSize:10 }} />
+                <YAxis tick={{ fontSize:10 }} />
+                <Tooltip formatter={v=>[`${parseFloat(v).toFixed(1)} kg`,'Consumed']} contentStyle={{ fontSize:12, borderRadius:8 }} />
+                <Bar dataKey="totalKg" fill="#6c63ff" radius={[4,4,0,0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+      </div>
+
+      <RoleSectionHeader title="Recent Receipts (GRNs)" sub="Last 30 days" />
+      <div className="card" style={{ padding:0, overflow:'hidden' }}>
+        {receipts.length===0 ? <RoleEmptyCard msg="No receipts in the last 30 days" /> : (
+          <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
+            <thead>
+              <tr style={{ background:'var(--bg-secondary)' }}>
+                {['Date','Feed Type','Supplier','Qty (kg)','QC Status','Received By'].map(h=>(
+                  <th key={h} style={{ padding:'8px 12px', textAlign:'left', fontSize:11, fontWeight:700, color:'var(--text-muted)', textTransform:'uppercase' }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {receipts.map(r=>(
+                <tr key={r.id} style={{ borderBottom:'1px solid var(--border-card)' }}>
+                  <td style={{ padding:'9px 12px', color:'var(--text-muted)' }}>{fmtDate(r.receiptDate)}</td>
+                  <td style={{ padding:'9px 12px', fontWeight:600 }}>{r.feedInventory?.feedType||'—'}</td>
+                  <td style={{ padding:'9px 12px' }}>{r.supplier?.name||'—'}</td>
+                  <td style={{ padding:'9px 12px' }}>{r.quantityReceived ? parseFloat(r.quantityReceived).toFixed(1) : '—'}</td>
+                  <td style={{ padding:'9px 12px' }}><StatusBadge status={r.qualityStatus||'PENDING'} /></td>
+                  <td style={{ padding:'9px 12px', color:'var(--text-muted)' }}>{r.receivedBy?`${r.receivedBy.firstName} ${r.receivedBy.lastName}`:'—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {issuances.length>0 && (
+        <>
+          <RoleSectionHeader title="Recent Issuances" sub="Last 7 days" />
+          <div className="card" style={{ padding:0, overflow:'hidden' }}>
+            <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
+              <thead>
+                <tr style={{ background:'var(--bg-secondary)' }}>
+                  {['Date','Feed Type','Qty (kg)','Purpose','Issued By'].map(h=>(
+                    <th key={h} style={{ padding:'8px 12px', textAlign:'left', fontSize:11, fontWeight:700, color:'var(--text-muted)', textTransform:'uppercase' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {issuances.map(r=>(
+                  <tr key={r.id} style={{ borderBottom:'1px solid var(--border-card)' }}>
+                    <td style={{ padding:'9px 12px', color:'var(--text-muted)' }}>{fmtDate(r.issuanceDate)}</td>
+                    <td style={{ padding:'9px 12px', fontWeight:600 }}>{r.feedInventory?.feedType||'—'}</td>
+                    <td style={{ padding:'9px 12px' }}>{r.quantityIssued ? parseFloat(r.quantityIssued).toFixed(1) : '—'}</td>
+                    <td style={{ padding:'9px 12px', color:'var(--text-muted)' }}>{r.purpose||'—'}</td>
+                    <td style={{ padding:'9px 12px', color:'var(--text-muted)' }}>{r.issuedBy?`${r.issuedBy.firstName} ${r.issuedBy.lastName}`:'—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── Feed Mill Manager ─────────────────────────────────────────────────────────
+function FeedMillDashboard({ data }) {
+  const {
+    inventory = { items:[], lowStock:[], lowStockCount:0 },
+    consumption = { weekTotalKg:0, trend:[] },
+    mill = { batches:[], stats:{ planned:0, inProgress:0, completed7d:0 } },
+    qc   = { pending:[], recent:[], passRate7d:null },
+  } = data || {};
+  return (
+    <div style={{ padding:'24px 28px', maxWidth:1400 }}>
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(160px,1fr))', gap:14, marginBottom:4 }}>
+        <RoleKpiTile icon="🏭" label="In Progress"      value={mill.stats.inProgress}   sub="Currently producing"    color="#6c63ff" />
+        <RoleKpiTile icon="📋" label="Planned"          value={mill.stats.planned}       sub="Queued batches"         color="#0ea5e9" />
+        <RoleKpiTile icon="✅" label="Completed (7d)"   value={mill.stats.completed7d}   sub="Finished this week"     color="#10b981" />
+        <RoleKpiTile icon="🔬" label="QC Pending"       value={qc.pending.length}        sub="Tests awaiting results" color="#f59e0b" warn={qc.pending.length>0} />
+        <RoleKpiTile icon="📊" label="Pass Rate (7d)"   value={qc.passRate7d!=null?`${qc.passRate7d}%`:'—'} sub="This week" color="#16a34a" />
+        <RoleKpiTile icon="⚠️" label="Low Stock Lines"  value={inventory.lowStockCount}  sub="At reorder level"       color="#ef4444" warn={inventory.lowStockCount>0} />
+      </div>
+
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16, marginTop:20 }}>
+        <div className="card" style={{ padding:0, overflow:'hidden' }}>
+          <div style={{ padding:'14px 18px', borderBottom:'1px solid var(--border-card)', fontWeight:700, fontSize:13 }}>🏭 Production Batches</div>
+          {mill.batches.length===0 ? <RoleEmptyCard msg="No recent batches" /> : (
+            <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
+              <thead>
+                <tr style={{ background:'var(--bg-secondary)' }}>
+                  {['Batch','Formula','Planned kg','Status'].map(h=>(
+                    <th key={h} style={{ padding:'8px 12px', textAlign:'left', fontSize:11, fontWeight:700, color:'var(--text-muted)', textTransform:'uppercase' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {mill.batches.map(b=>(
+                  <tr key={b.id} style={{ borderBottom:'1px solid var(--border-card)' }}>
+                    <td style={{ padding:'9px 12px', fontFamily:'monospace', fontSize:11, fontWeight:600 }}>{b.batchCode}</td>
+                    <td style={{ padding:'9px 12px' }}>{b.formulaName||'—'}</td>
+                    <td style={{ padding:'9px 12px' }}>{b.plannedQtyKg?parseFloat(b.plannedQtyKg).toFixed(0):'—'}</td>
+                    <td style={{ padding:'9px 12px' }}><StatusBadge status={b.status} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        <div className="card" style={{ padding:0, overflow:'hidden' }}>
+          <div style={{ padding:'14px 18px', borderBottom:'1px solid var(--border-card)', fontWeight:700, fontSize:13 }}>🔬 QC Tests Pending</div>
+          {qc.pending.length===0 ? <RoleEmptyCard icon="✅" msg="No pending QC tests" /> : (
+            <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
+              <thead>
+                <tr style={{ background:'var(--bg-secondary)' }}>
+                  {['Batch','Test Type','Logged'].map(h=>(
+                    <th key={h} style={{ padding:'8px 12px', textAlign:'left', fontSize:11, fontWeight:700, color:'var(--text-muted)', textTransform:'uppercase' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {qc.pending.map(t=>(
+                  <tr key={t.id} style={{ borderBottom:'1px solid var(--border-card)' }}>
+                    <td style={{ padding:'9px 12px', fontFamily:'monospace', fontSize:11 }}>{t.feedMillBatch?.batchCode||'—'}</td>
+                    <td style={{ padding:'9px 12px', fontWeight:600 }}>{t.testType}</td>
+                    <td style={{ padding:'9px 12px', color:'var(--text-muted)' }}>{timeAgo(t.createdAt)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+
+      <RoleSectionHeader title="7-Day Feed Consumption Trend" sub="Total kg issued to pens" />
+      <div className="card" style={{ padding:'14px 18px' }}>
+        {consumption.trend.length===0 ? <RoleEmptyCard icon="📈" msg="No data this week" /> : (
+          <ResponsiveContainer width="100%" height={160}>
+            <BarChart data={consumption.trend} margin={{ top:4, right:8, left:-10, bottom:0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+              <XAxis dataKey="date" tickFormatter={d=>new Date(d).toLocaleDateString('en-NG',{day:'2-digit',month:'short'})} tick={{ fontSize:10 }} />
+              <YAxis tick={{ fontSize:10 }} />
+              <Tooltip formatter={v=>[`${parseFloat(v).toFixed(1)} kg`,'Consumed']} contentStyle={{ fontSize:12, borderRadius:8 }} />
+              <Bar dataKey="totalKg" fill="#6c63ff" radius={[4,4,0,0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+
+      {qc.recent.length>0 && (
+        <>
+          <RoleSectionHeader title="Recent QC Results" sub="Last 7 days" />
+          <div className="card" style={{ padding:0, overflow:'hidden' }}>
+            <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
+              <thead>
+                <tr style={{ background:'var(--bg-secondary)' }}>
+                  {['Batch','Test Type','Result','Date'].map(h=>(
+                    <th key={h} style={{ padding:'8px 12px', textAlign:'left', fontSize:11, fontWeight:700, color:'var(--text-muted)', textTransform:'uppercase' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {qc.recent.map(t=>(
+                  <tr key={t.id} style={{ borderBottom:'1px solid var(--border-card)' }}>
+                    <td style={{ padding:'9px 12px', fontFamily:'monospace', fontSize:11 }}>{t.feedMillBatch?.batchCode||'—'}</td>
+                    <td style={{ padding:'9px 12px', fontWeight:600 }}>{t.testType}</td>
+                    <td style={{ padding:'9px 12px' }}><StatusBadge status={t.result} /></td>
+                    <td style={{ padding:'9px 12px', color:'var(--text-muted)' }}>{timeAgo(t.createdAt)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── QC Technician ─────────────────────────────────────────────────────────────
+function QCDashboard({ data }) {
+  const {
+    qc   = { pending:[], recent:[], passRate7d:null },
+    mill = { batches:[], stats:{ planned:0, inProgress:0, completed7d:0 } },
+  } = data || {};
+  const passCount = qc.recent.filter(t=>t.result==='PASS').length;
+  const failCount = qc.recent.filter(t=>t.result==='FAIL').length;
+  return (
+    <div style={{ padding:'24px 28px', maxWidth:1400 }}>
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(160px,1fr))', gap:14, marginBottom:4 }}>
+        <RoleKpiTile icon="⏳" label="Tests Pending"    value={qc.pending.length}  sub="Awaiting your results"  color="#f59e0b" warn={qc.pending.length>0} />
+        <RoleKpiTile icon="✅" label="Passed (7d)"      value={passCount}           sub="This week"              color="#16a34a" />
+        <RoleKpiTile icon="❌" label="Failed (7d)"      value={failCount}           sub="Requires follow-up"     color="#ef4444" warn={failCount>0} />
+        <RoleKpiTile icon="📊" label="Pass Rate (7d)"  value={qc.passRate7d!=null?`${qc.passRate7d}%`:'—'} sub="7-day average" color="#6c63ff" />
+        <RoleKpiTile icon="🏭" label="Active Batches"  value={mill.stats.inProgress+mill.stats.planned} sub="Planned + in progress" color="#0ea5e9" />
+      </div>
+
+      {qc.pending.length>0 && (
+        <div style={{ background:'#fffbeb', border:'1px solid #fde68a', borderRadius:10, padding:'12px 16px', marginTop:16, display:'flex', alignItems:'center', gap:10 }}>
+          <span style={{ fontSize:20 }}>🔬</span>
+          <div>
+            <div style={{ fontWeight:700, color:'#92400e', fontSize:13 }}>{qc.pending.length} test{qc.pending.length>1?'s':''} awaiting your results</div>
+            <div style={{ fontSize:12, color:'#b45309', marginTop:2 }}>Go to Feed → Feed Mill to log results</div>
+          </div>
+        </div>
+      )}
+
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16, marginTop:20 }}>
+        <div className="card" style={{ padding:0, overflow:'hidden' }}>
+          <div style={{ padding:'14px 18px', borderBottom:'1px solid var(--border-card)', fontWeight:700, fontSize:13 }}>⏳ Tests Pending</div>
+          {qc.pending.length===0 ? <RoleEmptyCard icon="✅" msg="All tests completed — great work!" /> : (
+            <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
+              <thead>
+                <tr style={{ background:'var(--bg-secondary)' }}>
+                  {['Batch','Formula','Test Type','Logged'].map(h=>(
+                    <th key={h} style={{ padding:'8px 12px', textAlign:'left', fontSize:11, fontWeight:700, color:'var(--text-muted)', textTransform:'uppercase' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {qc.pending.map(t=>(
+                  <tr key={t.id} style={{ borderBottom:'1px solid var(--border-card)' }}>
+                    <td style={{ padding:'9px 12px', fontFamily:'monospace', fontSize:11, fontWeight:600 }}>{t.feedMillBatch?.batchCode||'—'}</td>
+                    <td style={{ padding:'9px 12px', color:'var(--text-muted)' }}>{t.feedMillBatch?.formulaName||'—'}</td>
+                    <td style={{ padding:'9px 12px', fontWeight:600 }}>{t.testType}</td>
+                    <td style={{ padding:'9px 12px', color:'var(--text-muted)' }}>{timeAgo(t.createdAt)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        <div className="card" style={{ padding:0, overflow:'hidden' }}>
+          <div style={{ padding:'14px 18px', borderBottom:'1px solid var(--border-card)', fontWeight:700, fontSize:13 }}>📋 Recent Results (7d)</div>
+          {qc.recent.length===0 ? <RoleEmptyCard msg="No results logged this week" /> : (
+            <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
+              <thead>
+                <tr style={{ background:'var(--bg-secondary)' }}>
+                  {['Batch','Test','Result','When'].map(h=>(
+                    <th key={h} style={{ padding:'8px 12px', textAlign:'left', fontSize:11, fontWeight:700, color:'var(--text-muted)', textTransform:'uppercase' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {qc.recent.map(t=>(
+                  <tr key={t.id} style={{ borderBottom:'1px solid var(--border-card)' }}>
+                    <td style={{ padding:'9px 12px', fontFamily:'monospace', fontSize:11 }}>{t.feedMillBatch?.batchCode||'—'}</td>
+                    <td style={{ padding:'9px 12px', fontWeight:600 }}>{t.testType}</td>
+                    <td style={{ padding:'9px 12px' }}><StatusBadge status={t.result} /></td>
+                    <td style={{ padding:'9px 12px', color:'var(--text-muted)' }}>{timeAgo(t.createdAt)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+
+      <RoleSectionHeader title="Production Batches" sub="Recent batches for reference" />
+      <div className="card" style={{ padding:0, overflow:'hidden' }}>
+        {mill.batches.length===0 ? <RoleEmptyCard msg="No recent batches" /> : (
+          <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
+            <thead>
+              <tr style={{ background:'var(--bg-secondary)' }}>
+                {['Batch Code','Formula','Planned kg','Actual kg','Status','Date'].map(h=>(
+                  <th key={h} style={{ padding:'8px 12px', textAlign:'left', fontSize:11, fontWeight:700, color:'var(--text-muted)', textTransform:'uppercase' }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {mill.batches.map(b=>(
+                <tr key={b.id} style={{ borderBottom:'1px solid var(--border-card)' }}>
+                  <td style={{ padding:'9px 12px', fontFamily:'monospace', fontSize:11, fontWeight:600 }}>{b.batchCode}</td>
+                  <td style={{ padding:'9px 12px' }}>{b.formulaName||'—'}</td>
+                  <td style={{ padding:'9px 12px' }}>{b.plannedQtyKg?parseFloat(b.plannedQtyKg).toFixed(0):'—'}</td>
+                  <td style={{ padding:'9px 12px' }}>{b.actualQtyKg?parseFloat(b.actualQtyKg).toFixed(0):'—'}</td>
+                  <td style={{ padding:'9px 12px' }}><StatusBadge status={b.status} /></td>
+                  <td style={{ padding:'9px 12px', color:'var(--text-muted)' }}>{fmtDate(b.productionDate)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── IC Officer Dashboard ──────────────────────────────────────────────────────
+function IcDashboard({ user, apiFetch }) {
+  const [invSummary, setInvSummary] = useState(null);
+  const [recentInvs, setRecentInvs] = useState([]);
+  const [auditMeta,  setAuditMeta]  = useState(null);
+  const [loading,    setLoading]    = useState(true);
+
+  const timeAgo = d => {
+    const mins = Math.floor((Date.now() - new Date(d)) / 60000);
+    if (mins < 60)   return `${mins}m ago`;
+    if (mins < 1440) return `${Math.floor(mins / 60)}h ago`;
+    return `${Math.floor(mins / 1440)}d ago`;
+  };
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      try {
+        const [invRes, auditRes] = await Promise.all([
+          apiFetch('/api/investigations?limit=5'),
+          apiFetch('/api/audit?limit=1'),
+        ]);
+        if (invRes.ok)   { const d = await invRes.json();   setInvSummary(d.summary || {}); setRecentInvs(d.investigations || []); }
+        if (auditRes.ok) { const d = await auditRes.json(); setAuditMeta(d.meta); }
+      } catch { /* silent */ }
+      finally { setLoading(false); }
+    })();
+  }, [apiFetch]);
+
+  const INV_STATUS_META = {
+    OPEN:         { label: 'Open',         color: '#d97706', bg: '#fffbeb', icon: '🔓' },
+    UNDER_REVIEW: { label: 'Under Review', color: '#6c63ff', bg: '#f5f3ff', icon: '🔍' },
+    ESCALATED:    { label: 'Escalated',    color: '#9333ea', bg: '#fdf4ff', icon: '🔺' },
+    CLOSED:       { label: 'Closed',       color: '#16a34a', bg: '#f0fdf4', icon: '✓'  },
+  };
+
+  const openCount      = invSummary?.OPEN         || 0;
+  const reviewCount    = invSummary?.UNDER_REVIEW  || 0;
+  const escalatedCount = invSummary?.ESCALATED     || 0;
+  const closedCount    = invSummary?.CLOSED        || 0;
+  const activeCount    = openCount + reviewCount + escalatedCount;
+
+  if (loading) return (
+    <div style={{display:'flex',flexDirection:'column',gap:14}}>
+      {[1,2,3].map(i=><div key={i} className="card" style={{height:80,opacity:.4,animation:'pulse 1.5s ease-in-out infinite'}}/>)}
+    </div>
+  );
+
+  return (
+    <div style={{display:'flex',flexDirection:'column',gap:20}}>
+      {/* Header */}
+      <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',flexWrap:'wrap',gap:12}}>
+        <div>
+          <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:4}}>
+            <span style={{fontSize:26}}>🛡️</span>
+            <h1 style={{fontFamily:"'Poppins',sans-serif",fontSize:22,fontWeight:800,color:'var(--text-primary)',margin:0}}>Internal Control</h1>
+          </div>
+          <p style={{fontSize:13,color:'var(--text-muted)',margin:0}}>Welcome back, {user?.firstName}. Here's your audit overview.</p>
+        </div>
+        {escalatedCount > 0 && (
+          <div style={{display:'flex',alignItems:'center',gap:8,padding:'9px 16px',background:'#fdf4ff',border:'1px solid #e9d5ff',borderRadius:10}}>
+            <span style={{fontSize:16}}>🔺</span>
+            <span style={{fontSize:13,fontWeight:700,color:'#9333ea'}}>{escalatedCount} escalated to Chairperson</span>
+          </div>
+        )}
+      </div>
+      {/* KPI row */}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',gap:14}}>
+        {[
+          { icon:'🔓', label:'Open',              value:openCount,      color:'#d97706', urgent:openCount>5 },
+          { icon:'🔍', label:'Under Review',       value:reviewCount,    color:'#6c63ff', urgent:false },
+          { icon:'🔺', label:'Escalated',          value:escalatedCount, color:'#9333ea', urgent:escalatedCount>0 },
+          { icon:'✓',  label:'Closed',             value:closedCount,    color:'#16a34a', urgent:false },
+          { icon:'📋', label:'Total Audit Events', value: auditMeta ? auditMeta.actionCounts.reduce((s,a)=>s+a.count,0).toLocaleString() : '—', color:'var(--purple)', urgent:false },
+        ].map(k=>(
+          <div key={k.label} style={{background:k.urgent?'#fef2f2':'#fff',borderRadius:12,padding:'18px 20px',border:`1px solid ${k.urgent?'#fecaca':'var(--border-card)'}`,boxShadow:'0 1px 4px rgba(0,0,0,0.04)',display:'flex',alignItems:'flex-start',gap:14}}>
+            <div style={{width:42,height:42,borderRadius:10,flexShrink:0,background:`${k.urgent?'#ef4444':k.color}18`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:20}}>{k.icon}</div>
+            <div>
+              <div style={{fontSize:22,fontWeight:800,color:k.urgent?'#dc2626':'var(--text-primary)',lineHeight:1.1}}>{k.value}</div>
+              <div style={{fontSize:12,fontWeight:600,color:'var(--text-secondary)',marginTop:2}}>{k.label}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+      {/* Active investigations banner */}
+      {activeCount > 0 && (
+        <div style={{padding:'14px 18px',background:'#fffbeb',border:'1px solid #fde68a',borderRadius:12,display:'flex',alignItems:'center',gap:14}}>
+          <span style={{fontSize:24}}>⚠️</span>
+          <div style={{flex:1}}>
+            <div style={{fontSize:14,fontWeight:700,color:'#92400e'}}>{activeCount} active investigation{activeCount!==1?'s':''} require attention</div>
+            <div style={{fontSize:12,color:'#d97706',marginTop:2}}>
+              {openCount>0&&`${openCount} open`}{openCount>0&&reviewCount>0?' · ':''}{reviewCount>0&&`${reviewCount} under review`}{escalatedCount>0&&` · ${escalatedCount} escalated`}
+            </div>
+          </div>
+          <a href="/audit" style={{padding:'8px 16px',borderRadius:8,border:'1px solid #fde68a',background:'#fff',color:'#d97706',fontSize:12,fontWeight:700,textDecoration:'none',whiteSpace:'nowrap'}}>View Investigations →</a>
+        </div>
+      )}
+      {/* Two-column section */}
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+        {/* Recent investigations */}
+        <div style={{background:'#fff',borderRadius:14,border:'1px solid var(--border-card)',boxShadow:'0 1px 4px rgba(0,0,0,0.04)',overflow:'hidden'}}>
+          <div style={{padding:'16px 20px',borderBottom:'1px solid var(--border-card)',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+            <div style={{fontSize:13,fontWeight:800,color:'var(--text-primary)',fontFamily:"'Poppins',sans-serif"}}>🚩 Recent Investigations</div>
+            <a href="/audit" style={{fontSize:11,fontWeight:700,color:'var(--purple)',textDecoration:'none'}}>View all →</a>
+          </div>
+          {recentInvs.length===0 ? (
+            <div style={{padding:'40px 24px',textAlign:'center',color:'var(--text-muted)',fontSize:13}}>
+              <div style={{fontSize:32,marginBottom:8}}>🎉</div>No open investigations
+            </div>
+          ) : (
+            <div style={{display:'flex',flexDirection:'column'}}>
+              {recentInvs.map((inv,idx)=>{
+                const sm=INV_STATUS_META[inv.status]||INV_STATUS_META.OPEN;
+                return (
+                  <div key={inv.id} style={{padding:'14px 20px',borderBottom:idx<recentInvs.length-1?'1px solid var(--border-card)':'none',display:'flex',alignItems:'flex-start',gap:12}}>
+                    <div style={{width:32,height:32,borderRadius:8,flexShrink:0,background:sm.bg,display:'flex',alignItems:'center',justifyContent:'center',fontSize:15}}>{sm.icon}</div>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:12,fontWeight:700,color:'var(--text-primary)',marginBottom:2,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{inv.referenceType}</div>
+                      <div style={{fontSize:11,color:'var(--text-muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{inv.flagReason}</div>
+                      <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>{timeAgo(inv.createdAt)}</div>
+                    </div>
+                    <span style={{fontSize:10,fontWeight:700,padding:'3px 8px',borderRadius:99,background:sm.bg,color:sm.color,whiteSpace:'nowrap',flexShrink:0}}>{sm.label}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+        {/* Audit activity breakdown */}
+        <div style={{background:'#fff',borderRadius:14,border:'1px solid var(--border-card)',boxShadow:'0 1px 4px rgba(0,0,0,0.04)',overflow:'hidden'}}>
+          <div style={{padding:'16px 20px',borderBottom:'1px solid var(--border-card)',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+            <div style={{fontSize:13,fontWeight:800,color:'var(--text-primary)',fontFamily:"'Poppins',sans-serif"}}>📋 Audit Activity Breakdown</div>
+            <a href="/audit" style={{fontSize:11,fontWeight:700,color:'var(--purple)',textDecoration:'none'}}>Open log →</a>
+          </div>
+          {!auditMeta ? (
+            <div style={{padding:'40px 24px',textAlign:'center',color:'var(--text-muted)',fontSize:13}}>No audit data</div>
+          ) : (
+            <div style={{padding:'16px 20px',display:'flex',flexDirection:'column',gap:10}}>
+              {auditMeta.actionCounts.slice(0,6).map(({action,count})=>{
+                const maxCount=Math.max(...auditMeta.actionCounts.map(a=>a.count));
+                const pct=maxCount>0?(count/maxCount)*100:0;
+                const colors={CREATE:'#16a34a',UPDATE:'#f59e0b',DELETE:'#ef4444',LOGIN:'#3b82f6',APPROVE:'#8b5cf6',REJECT:'#ef4444',ROLE_CHANGE:'#ec4899'};
+                const color=colors[action]||'#64748b';
+                return (
+                  <div key={action}>
+                    <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
+                      <span style={{fontSize:11,fontWeight:700,color:'var(--text-secondary)'}}>{action}</span>
+                      <span style={{fontSize:11,fontWeight:700,color}}>{count.toLocaleString()}</span>
+                    </div>
+                    <div style={{height:6,background:'var(--bg-elevated)',borderRadius:3,overflow:'hidden'}}>
+                      <div style={{height:'100%',width:`${pct}%`,background:color,borderRadius:3,transition:'width 0.5s ease'}}/>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+      {/* Quick access links */}
+      <div style={{background:'#fff',borderRadius:14,border:'1px solid var(--border-card)',padding:20,boxShadow:'0 1px 4px rgba(0,0,0,0.04)'}}>
+        <div style={{fontSize:13,fontWeight:800,color:'var(--text-primary)',fontFamily:"'Poppins',sans-serif",marginBottom:14}}>🔗 Quick Actions</div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',gap:10}}>
+          {[
+            {href:'/audit',        icon:'📋', label:'Audit Log',      sub:'Browse all events'},
+            {href:'/audit',        icon:'🚩', label:'Investigations', sub:'Manage flags'},
+            {href:'/verification', icon:'✅', label:'Verifications',  sub:'View verified records'},
+            {href:'/feed',         icon:'🌾', label:'Feed Records',   sub:'Receipts & issuances'},
+            {href:'/farm',         icon:'🐦', label:'Flock Records',  sub:'Production & health'},
+          ].map(link=>(
+            <a key={link.label} href={link.href}
+              style={{display:'flex',flexDirection:'column',gap:4,padding:'14px 16px',borderRadius:10,border:'1px solid var(--border-card)',textDecoration:'none',background:'#fafafa'}}
+              onMouseEnter={e=>{e.currentTarget.style.borderColor='var(--purple)';e.currentTarget.style.background='#f5f3ff';}}
+              onMouseLeave={e=>{e.currentTarget.style.borderColor='var(--border-card)';e.currentTarget.style.background='#fafafa';}}>
+              <span style={{fontSize:20}}>{link.icon}</span>
+              <span style={{fontSize:12,fontWeight:700,color:'var(--text-primary)'}}>{link.label}</span>
+              <span style={{fontSize:11,color:'var(--text-muted)'}}>{link.sub}</span>
+            </a>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Main ───────────────────────────────────────────────────────────────────────
 export default function DashboardPage() {
   const { user, apiFetch } = useAuth();
   const [data,    setData]    = useState(null);
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState(null);
 
+  const STORE_ROLES = ['STORE_MANAGER', 'STORE_CLERK'];
+  const MILL_ROLES  = ['FEED_MILL_MANAGER'];
+  const QC_ROLES    = ['QC_TECHNICIAN'];
+  const role        = user?.role;
+
+  const useStoreDashboard = role && (STORE_ROLES.includes(role) || MILL_ROLES.includes(role) || QC_ROLES.includes(role));
+
   const load = useCallback(async () => {
     try {
-      const res = await apiFetch('/api/dashboard');
+      const endpoint = useStoreDashboard ? '/api/dashboard/store' : '/api/dashboard';
+      const res = await apiFetch(endpoint);
       if (res.ok) { setData(await res.json()); setError(null); }
       else setError('Could not load dashboard data');
     } catch { setError('Network error'); }
     finally { setLoading(false); }
-  }, [apiFetch]);
+  }, [apiFetch, useStoreDashboard]);
 
   useEffect(() => { load(); const t=setInterval(load,60000); return ()=>clearInterval(t); }, [load]);
 
@@ -957,6 +1575,31 @@ export default function DashboardPage() {
     </AppShell>
   );
 
+  // ── Internal Control Officer ──────────────────────────────────────────────
+  if (role === 'INTERNAL_CONTROL') {
+    return (
+      <AppShell>
+        <div className="animate-in">
+          <IcDashboard user={user} apiFetch={apiFetch} />
+        </div>
+      </AppShell>
+    );
+  }
+
+  // ── Store / Feed Mill / QC roles ──────────────────────────────────────────
+  if (useStoreDashboard && data) {
+    return (
+      <AppShell>
+        <div className="animate-in">
+          {STORE_ROLES.includes(role) && <StoreDashboard data={data} isClerk={role==='STORE_CLERK'} />}
+          {MILL_ROLES.includes(role)  && <FeedMillDashboard data={data} />}
+          {QC_ROLES.includes(role)    && <QCDashboard data={data} />}
+        </div>
+      </AppShell>
+    );
+  }
+
+  // ── Pen worker / Pen manager / Farm manager+ (existing logic) ─────────────
   const { isManager, isPenMgr, isPenWorker, sections=[], pens=[], orgTotals, tasks=[] } = data||{};
 
   return (

@@ -13,12 +13,14 @@ const ADMIN_ONLY = ['FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
 // ── Nav definition ─────────────────────────────────────────────────────────────
 // Administration items are grouped separately and shown only to ADMIN_ONLY roles.
 const NAV_MAIN = [
-  { href: '/dashboard',     icon: '📊', label: 'Dashboard',     roles: ['FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','PEN_MANAGER','STORE_MANAGER','FEED_MILL_MANAGER','SUPER_ADMIN','PEN_WORKER','PRODUCTION_STAFF','STORE_CLERK','QC_TECHNICIAN'] },
+  { href: '/dashboard',     icon: '📊', label: 'Dashboard',     roles: ['FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','PEN_MANAGER','STORE_MANAGER','FEED_MILL_MANAGER','SUPER_ADMIN','PEN_WORKER','PRODUCTION_STAFF','STORE_CLERK','QC_TECHNICIAN','INTERNAL_CONTROL','ACCOUNTANT'] },
   { href: '/farm-structure', icon: '🏡', label: 'Farm Structure', roles: ['FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN'] },
   { href: '/farm',          icon: '🐦', label: 'Flocks',         roles: ['FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','PEN_MANAGER','SUPER_ADMIN'] },
   { href: '/health',        icon: '💉', label: 'Health',         roles: ['FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','PEN_MANAGER','SUPER_ADMIN'] },
   { href: '/feed',          icon: '🌾', label: 'Feed',           roles: ['STORE_MANAGER','STORE_CLERK','FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN','PEN_MANAGER'] },
   { href: '/verification',  icon: '✅', label: 'Verification',   roles: ['FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','PEN_MANAGER','STORE_MANAGER','SUPER_ADMIN'] },
+  { href: '/audit',         icon: '🔍', label: 'Audit',           roles: ['FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN','INTERNAL_CONTROL'] },
+  { href: '/finance',       icon: '💰', label: 'Finance',          roles: ['FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN','ACCOUNTANT','INTERNAL_CONTROL'] },
   { href: '/worker',        icon: '📋', label: 'My Tasks',       roles: ['PEN_WORKER','PEN_MANAGER','PRODUCTION_STAFF','STORE_CLERK','QC_TECHNICIAN'] },
   { href: '/owner',         icon: '📈', label: 'Analytics',      roles: ['CHAIRPERSON'] },
   { href: '/billing',       icon: '💳', label: 'Billing',        roles: ['CHAIRPERSON','FARM_ADMIN','SUPER_ADMIN'] },

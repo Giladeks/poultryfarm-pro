@@ -6,6 +6,7 @@ import AppShell from '@/components/layout/AppShell';
 import { useAuth } from '@/components/layout/AuthProvider';
 
 const ADMIN_ROLES = ['FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
+const ADMIN_ONLY  = ADMIN_ROLES;
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
 function Toast({ msg, type, onDone }) {

@@ -4,12 +4,13 @@ import { NextResponse } from 'next/server';
 import { prisma }       from '@/lib/db/prisma';
 import { verifyToken }  from '@/lib/middleware/auth';
 
-const ALLOWED_ROLES = ['FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
+// ← Phase 7: added INTERNAL_CONTROL
+const ALLOWED_ROLES = ['FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN', 'INTERNAL_CONTROL'];
 
 const ENTITY_TYPES = [
   'User', 'Farm', 'Flock', 'FeedConsumption', 'FeedInventory',
   'FeedMillBatch', 'StoreReceipt', 'PurchaseOrder', 'DailyReport',
-  'Verification',
+  'Verification', 'Investigation',
 ];
 
 const ACTIONS = ['LOGIN', 'CREATE', 'UPDATE', 'DELETE', 'APPROVE', 'REJECT', 'ROLE_CHANGE'];
@@ -49,7 +50,6 @@ export async function GET(request) {
           ...(to   && { lte: new Date(new Date(to).setHours(23, 59, 59, 999)) }),
         },
       }),
-      // Free-text search across entityId and entityType
       ...(search && {
         OR: [
           { entityId:   { contains: search, mode: 'insensitive' } },
@@ -79,7 +79,6 @@ export async function GET(request) {
       prisma.auditLog.count({ where }),
     ]);
 
-    // ── Aggregate stats for the filter set ──────────────────────
     const [actionCounts, entityCounts] = await Promise.all([
       prisma.auditLog.groupBy({
         by: ['action'],

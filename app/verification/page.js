@@ -437,6 +437,11 @@ function DiscrepancyRow({ v, canVerify, canManage, onAction, apiFetch }) {
                       {v.status === 'ESCALATED' && v.escalatedAt && (
                         <div style={{ marginTop: 4, padding: '8px 10px', background: '#fdf4ff', borderRadius: 7, fontSize: 12 }}>
                           <div style={{ color: '#9333ea', fontWeight: 700, marginBottom: 2 }}>🔺 Escalated {timeAgo(v.escalatedAt)}</div>
+                          {v.escalatedTo && (
+                            <div style={{ color: '#7c3aed', marginTop: 2 }}>
+                              Assigned to: <strong>{v.escalatedTo.firstName} {v.escalatedTo.lastName}</strong> ({v.escalatedTo.role?.replace(/_/g,' ')})
+                            </div>
+                          )}
                         </div>
                       )}
                       {v.status === 'RESOLVED' && v.resolution && (
@@ -492,12 +497,11 @@ export default function VerificationPage() {
   const [summary,      setSummary]      = useState(null);
   const [loading,      setLoading]      = useState(true);
   const [tabLoading,   setTabLoading]   = useState(false);
-  const [actionModal,  setActionModal]  = useState(null);
-  const [toast,        setToast]        = useState(null);
-  const [collapsed,    setCollapsed]    = useState(
-    () => Object.fromEntries(SWIM_LANES.map(l => [l.type, true]))
-  );
-  const [managers,     setManagers]     = useState([]);
+  const [actionModal,    setActionModal]    = useState(null);
+  const [toast,          setToast]          = useState(null);
+  const [collapsed,      setCollapsed]      = useState(() => Object.fromEntries(SWIM_LANES.map(l => [l.type, true])));
+  const [managers,       setManagers]       = useState([]);
+  const [discrepFilter,  setDiscrepFilter]  = useState('all'); // 'all' | 'escalated' | 'open' | 'resolved'
 
   const canVerify = VERIFIER_ROLES.includes(user?.role);
   const canReject = REJECT_ROLES.includes(user?.role);
@@ -529,18 +533,21 @@ export default function VerificationPage() {
     } catch (e) { showToast(e.message, 'error'); }
   }, [apiFetch]);
 
-  const fetchVerifications = useCallback(async (statuses) => {
+  const fetchVerifications = useCallback(async (status) => {
     try {
-      const qs  = statuses
-        ? '?' + statuses.map(s => `status=${s}`).join('&')
-        : '';
+      // Support comma-separated statuses → ?status=X&status=Y
+      let qs = '';
+      if (status) {
+        const parts = status.split(',').map(s => s.trim());
+        qs = '?' + parts.map(s => `status=${encodeURIComponent(s)}`).join('&');
+      }
       const res = await apiFetch(`/api/verification${qs}`);
       const d   = await res.json();
       if (!res.ok) throw new Error(d.error);
       setVerifications(d.verifications || []);
-      if (!summary) setSummary(d.summary);
+      setSummary(d.summary);
     } catch (e) { showToast(e.message, 'error'); }
-  }, [apiFetch, summary]);
+  }, [apiFetch]);
 
   useEffect(() => {
     (async () => {
@@ -553,7 +560,7 @@ export default function VerificationPage() {
   useEffect(() => {
     if (activeTab === 'pending') return;
     setTabLoading(true);
-    const statusMap = { verified: ['VERIFIED'], discrepancies: ['DISCREPANCY_FOUND', 'ESCALATED', 'RESOLVED'] };
+    const statusMap = { verified: 'VERIFIED', discrepancies: 'DISCREPANCY_FOUND,ESCALATED,RESOLVED' };
     fetchVerifications(statusMap[activeTab]).finally(() => setTabLoading(false));
   }, [activeTab, fetchVerifications]);
 
@@ -587,7 +594,7 @@ export default function VerificationPage() {
         }),
       });
       const d = await res.json();
-      if (!res.ok) throw new Error(d.error);
+      if (!res.ok) throw new Error(typeof d.error === 'string' ? d.error : 'Action failed');
       showToast(action === 'verify' ? 'Record verified successfully' : 'Discrepancy flagged — managers notified');
     } else if (action === 'reject') {
       if (item.verificationId) {
@@ -612,19 +619,46 @@ export default function VerificationPage() {
   };
 
   const handleVerificationAction = async (v, action, { notes, escalatedToId } = {}) => {
+    const newStatus = action === 'escalate' ? 'ESCALATED' : 'RESOLVED';
     const res = await apiFetch(`/api/verification/${v.id}`, {
       method: 'PATCH',
       body: JSON.stringify({
-        status:           action === 'escalate' ? 'ESCALATED' : 'RESOLVED',
+        status:           newStatus,
         discrepancyNotes: action === 'escalate' ? notes : undefined,
         resolution:       action === 'resolve'  ? notes : undefined,
         escalatedToId:    action === 'escalate' ? (escalatedToId || null) : undefined,
       }),
     });
     const d = await res.json();
-    if (!res.ok) throw new Error(d.error);
+    if (!res.ok) throw new Error(d.error || 'Failed to update');
+
+    // Optimistically update the row immediately — no reload needed
+    setVerifications(prev => prev.map(item =>
+      item.id === v.id
+        ? {
+            ...item,
+            status:           newStatus,
+            resolution:       action === 'resolve'  ? notes : item.resolution,
+            discrepancyNotes: action === 'escalate' ? notes : item.discrepancyNotes,
+            escalatedAt:      action === 'escalate' ? new Date().toISOString() : item.escalatedAt,
+            resolvedAt:       action === 'resolve'  ? new Date().toISOString() : item.resolvedAt,
+          }
+        : item
+    ));
+
+    // Update summary badge counts
+    setSummary(prev => prev ? {
+      ...prev,
+      discrepancies: action === 'resolve' ? Math.max(0, (prev.discrepancies || 1) - 1) : prev.discrepancies,
+      escalated: action === 'escalate'
+        ? (prev.escalated || 0) + 1
+        : action === 'resolve' ? Math.max(0, (prev.escalated || 0) - 1) : prev.escalated,
+    } : prev);
+
     showToast(action === 'escalate' ? 'Escalated to farm manager' : 'Discrepancy resolved');
     setActionModal(null);
+
+    // Background refresh to sync with server
     fetchVerifications('DISCREPANCY_FOUND,ESCALATED,RESOLVED');
   };
 
@@ -711,13 +745,16 @@ export default function VerificationPage() {
               <EmptyState icon="✅" title="All caught up!" sub="No records awaiting verification" />
             ) : (
               <>
-                {SWIM_LANES.some(l => itemsByLane[l.type].length === 0 && !collapsed[l.type]) && (
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
-                    <button onClick={collapseAllDone} style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', background: 'none', border: '1px solid var(--border-card)', borderRadius: 7, padding: '5px 12px', cursor: 'pointer' }}>
-                      Collapse empty sections
-                    </button>
-                  </div>
-                )}
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12, gap: 8 }}>
+                  <button onClick={() => setCollapsed(Object.fromEntries(SWIM_LANES.filter(l => itemsByLane[l.type].length > 0).map(l => [l.type, false])))}
+                    style={{ fontSize: 12, fontWeight: 600, color: 'var(--purple)', background: 'none', border: '1px solid var(--border-card)', borderRadius: 7, padding: '5px 12px', cursor: 'pointer' }}>
+                    Expand all
+                  </button>
+                  <button onClick={() => setCollapsed(Object.fromEntries(SWIM_LANES.map(l => [l.type, true])))}
+                    style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', background: 'none', border: '1px solid var(--border-card)', borderRadius: 7, padding: '5px 12px', cursor: 'pointer' }}>
+                    Collapse all
+                  </button>
+                </div>
                 {SWIM_LANES.map(lane => (
                   <SwimLane key={lane.type} lane={lane} items={itemsByLane[lane.type]} userRole={user?.role} canReject={canReject} onAction={(item, action) => setActionModal({ item, action })} collapsed={!!collapsed[lane.type]} onToggle={() => toggleLane(lane.type)} />
                 ))}
@@ -759,25 +796,52 @@ export default function VerificationPage() {
         {/* ── DISCREPANCIES TAB ── Enhanced with inline detail expansion + manager escalation ── */}
         {activeTab === 'discrepancies' && (
           <div>
-            {/* Summary bar for this tab */}
-            {!tabLoading && verifications.length > 0 && (
-              <div style={{ display: 'flex', gap: 12, padding: '12px 16px', borderBottom: '1px solid var(--border-card)', flexWrap: 'wrap' }}>
-                {[
-                  { label: 'Open',      status: 'DISCREPANCY_FOUND', color: '#dc2626', bg: '#fef2f2' },
-                  { label: 'Escalated', status: 'ESCALATED',         color: '#9333ea', bg: '#fdf4ff' },
-                  { label: 'Resolved',  status: 'RESOLVED',          color: '#16a34a', bg: '#f0fdf4' },
-                ].map(({ label, status, color, bg }) => {
-                  const count = verifications.filter(v => v.status === status).length;
-                  return (
-                    <div key={status} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 14px', borderRadius: 8, background: bg, border: `1px solid ${color}30` }}>
-                      <span style={{ fontSize: 18, fontWeight: 800, color }}>{count}</span>
-                      <span style={{ fontSize: 12, fontWeight: 600, color }}>{label}</span>
-                    </div>
-                  );
-                })}
-                <div style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-muted)', alignSelf: 'center' }}>
-                  Click ▼ Details on any row to see full source record context
+            {/* Sub-filter tabs */}
+            <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid var(--border-card)', padding: '0 4px', overflowX: 'auto' }}>
+              {[
+                { key: 'all',       label: 'All',             color: '#64748b' },
+                { key: 'escalated', label: '🔺 Escalated to Me', color: '#9333ea' },
+                { key: 'open',      label: '⚠️ Open',          color: '#dc2626' },
+                { key: 'resolved',  label: '✓ Resolved',      color: '#16a34a' },
+              ].map(f => {
+                const active = discrepFilter === f.key;
+                const count = f.key === 'all'       ? verifications.length
+                            : f.key === 'escalated' ? verifications.filter(v => v.status === 'ESCALATED' && (v.escalatedToId === user?.id || !v.escalatedToId)).length
+                            : f.key === 'open'      ? verifications.filter(v => v.status === 'DISCREPANCY_FOUND').length
+                            : verifications.filter(v => v.status === 'RESOLVED').length;
+                return (
+                  <button key={f.key} onClick={() => setDiscrepFilter(f.key)} style={{
+                    padding: '11px 16px', fontSize: 13, fontWeight: active ? 700 : 600,
+                    color: active ? f.color : 'var(--text-secondary)',
+                    background: 'transparent', border: 'none', cursor: 'pointer',
+                    borderBottom: active ? `2px solid ${f.color}` : '2px solid transparent',
+                    whiteSpace: 'nowrap', fontFamily: 'inherit',
+                    marginBottom: -1,
+                  }}>
+                    {f.label}{count > 0 ? ` (${count})` : ''}
+                  </button>
+                );
+              })}
+              <div style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-muted)', alignSelf: 'center', padding: '0 12px', whiteSpace: 'nowrap' }}>
+                Click ▼ Details to see full context
+              </div>
+            </div>
+
+            {/* Escalated-to-me banner — shown when there are items escalated to the current user */}
+            {canManage && !tabLoading && verifications.some(v => v.status === 'ESCALATED') && discrepFilter !== 'resolved' && (
+              <div style={{ margin: '12px 16px 0', padding: '12px 16px', background: '#fdf4ff', border: '1px solid #e9d5ff', borderRadius: 10, display: 'flex', alignItems: 'center', gap: 12 }}>
+                <span style={{ fontSize: 22 }}>🔺</span>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: '#7c3aed' }}>
+                    {verifications.filter(v => v.status === 'ESCALATED').length} escalated discrepanc{verifications.filter(v => v.status === 'ESCALATED').length === 1 ? 'y' : 'ies'} require your attention
+                  </div>
+                  <div style={{ fontSize: 11, color: '#9333ea', marginTop: 2 }}>
+                    Review each one, expand the details, and click ✓ Resolve once addressed
+                  </div>
                 </div>
+                <button onClick={() => setDiscrepFilter('escalated')} style={{ padding: '7px 14px', borderRadius: 8, border: '1px solid #c4b5fd', background: '#ede9fe', color: '#7c3aed', fontSize: 12, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                  View Escalated
+                </button>
               </div>
             )}
 
@@ -791,10 +855,17 @@ export default function VerificationPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {tabLoading ? <LoadingRows cols={6} /> :
-                   verifications.length === 0 ? (
-                    <tr><td colSpan={6}><EmptyState icon="🎉" title="No discrepancies" sub="All records are clean" /></td></tr>
-                  ) : verifications.map(v => (
+                  {tabLoading ? <LoadingRows cols={6} /> : (() => {
+                    const filtered = verifications.filter(v => {
+                      if (discrepFilter === 'escalated') return v.status === 'ESCALATED';
+                      if (discrepFilter === 'open')      return v.status === 'DISCREPANCY_FOUND';
+                      if (discrepFilter === 'resolved')  return v.status === 'RESOLVED';
+                      return true;
+                    });
+                    if (filtered.length === 0) return (
+                      <tr><td colSpan={6}><EmptyState icon="🎉" title={discrepFilter === 'escalated' ? 'No escalated items' : discrepFilter === 'open' ? 'No open discrepancies' : 'No resolved discrepancies'} sub={discrepFilter === 'all' ? 'All records are clean' : 'Nothing in this filter'} /></td></tr>
+                    );
+                    return filtered.map(v => (
                     <DiscrepancyRow
                       key={v.id}
                       v={v}
@@ -816,7 +887,8 @@ export default function VerificationPage() {
                         verificationId: record.id,
                       })}
                     />
-                  ))}
+                  ));
+                  })()}
                 </tbody>
               </table>
             </div>

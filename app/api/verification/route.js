@@ -50,7 +50,9 @@ export async function GET(request) {
 
   const { searchParams } = new URL(request.url);
   const type        = searchParams.get('type');
-  const status      = searchParams.get('status');
+  // Support multiple status values: ?status=X&status=Y
+  const statusParam = searchParams.getAll('status');
+  const status      = statusParam.length > 0 ? statusParam : null;
   const from        = searchParams.get('from');
   const to          = searchParams.get('to');
   const pendingOnly = searchParams.get('pendingOnly') === 'true';
@@ -67,7 +69,9 @@ export async function GET(request) {
       where: {
         tenantId: user.tenantId,
         ...(type   && { verificationType: type }),
-        ...(status && { status }),
+        ...(status && {
+          status: status.length === 1 ? status[0] : { in: status },
+        }),
         ...((from || to) && {
           verificationDate: {
             ...(from && { gte: new Date(from) }),
@@ -76,8 +80,9 @@ export async function GET(request) {
         }),
       },
       include: {
-        store:      { select: { id: true, name: true } },
-        verifiedBy: { select: { id: true, firstName: true, lastName: true, role: true } },
+        store:       { select: { id: true, name: true } },
+        verifiedBy:  { select: { id: true, firstName: true, lastName: true, role: true } },
+        escalatedTo: { select: { id: true, firstName: true, lastName: true, role: true } },
       },
       orderBy: { createdAt: 'desc' },
       take: Math.min(limit, 200),
@@ -279,6 +284,12 @@ export async function GET(request) {
       pendingQueue = pendingQueue.filter(i => i.type === type);
     }
 
+    // Always fetch live discrepancy/escalated counts for summary badges
+    const [discrepancyCount, escalatedCount] = await Promise.all([
+      prisma.verification.count({ where: { tenantId: user.tenantId, status: 'DISCREPANCY_FOUND' } }),
+      prisma.verification.count({ where: { tenantId: user.tenantId, status: 'ESCALATED' } }),
+    ]);
+
     const summary = {
       totalPending:     pendingQueue.length,
       byType: {
@@ -288,8 +299,8 @@ export async function GET(request) {
         INVENTORY_COUNT:  pendingQueue.filter(i => i.type === 'INVENTORY_COUNT').length,
         FINANCIAL_RECORD: pendingQueue.filter(i => i.type === 'FINANCIAL_RECORD').length,
       },
-      discrepancies: verifications.filter(v => v.status === 'DISCREPANCY_FOUND').length,
-      escalated:     verifications.filter(v => v.status === 'ESCALATED').length,
+      discrepancies: discrepancyCount,
+      escalated:     escalatedCount,
     };
 
     return NextResponse.json({ verifications, pendingQueue, summary, viewerRole: user.role });
