@@ -9,6 +9,27 @@ const VERIFIER_ROLES = ['PEN_MANAGER', 'STORE_MANAGER', 'STORE_CLERK', 'FARM_MAN
 const MANAGER_ROLES  = ['FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
 const REJECT_ROLES   = ['PEN_MANAGER', 'STORE_MANAGER', 'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
 
+const MANAGEMENT_OVERRIDE = ['FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
+const RECORD_TYPE_VERIFIERS = {
+  EggProduction:   [...new Set(['PEN_MANAGER',                    ...MANAGEMENT_OVERRIDE])],
+  MortalityRecord: [...new Set(['PEN_MANAGER',                    ...MANAGEMENT_OVERRIDE])],
+  FeedConsumption: [...new Set(['STORE_MANAGER', 'STORE_CLERK',   ...MANAGEMENT_OVERRIDE])],
+  StoreReceipt:    [...new Set(['STORE_MANAGER',                  ...MANAGEMENT_OVERRIDE])],
+  DailyReport:     [...new Set(['PEN_MANAGER',                    ...MANAGEMENT_OVERRIDE])],
+};
+const RECORD_TYPE_OWNER = {
+  EggProduction:   'Pen Manager',
+  MortalityRecord: 'Pen Manager',
+  FeedConsumption: 'Store Manager / Store Clerk',
+  StoreReceipt:    'Store Manager',
+  DailyReport:     'Pen Manager',
+};
+function isPrimaryVerifier(role, referenceType) {
+  if (MANAGEMENT_OVERRIDE.includes(role)) return true;
+  const allowed = RECORD_TYPE_VERIFIERS[referenceType];
+  return !allowed || allowed.includes(role);
+}
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 const TABS = ['pending', 'verified', 'discrepancies'];
 
@@ -221,7 +242,10 @@ function ActionModal({ item, action, onClose, onConfirm }) {
 }
 
 // ─── Pending Item Card ────────────────────────────────────────────────────────
-function PendingCard({ item, canVerify, canReject, onAction }) {
+function PendingCard({ item, userRole, canReject, onAction }) {
+  const canVerify  = item.canVerify !== undefined ? item.canVerify : isPrimaryVerifier(userRole, item.referenceType);
+  const isOverride = MANAGEMENT_OVERRIDE.includes(userRole) && RECORD_TYPE_OWNER[item.referenceType] &&
+                     !['PEN_MANAGER','STORE_MANAGER','STORE_CLERK'].includes(userRole);
   const tm  = TYPE_META[item.type] || TYPE_META.DAILY_PRODUCTION;
   const sev = item.severity ? SEVERITY_META[item.severity] : null;
   const isHighRisk = item.severity === 'HIGH';
@@ -265,6 +289,12 @@ function PendingCard({ item, canVerify, canReject, onAction }) {
 
       {/* ── Body ── */}
       <div style={{ padding: '14px 16px' }}>
+        {isOverride && (
+          <div style={{ display:'flex', alignItems:'center', gap:8, background:'#fffbeb', border:'1px solid #fde68a', borderRadius:8, padding:'7px 11px', marginBottom:12, fontSize:11 }}>
+            <span>⚠️</span>
+            <span style={{ color:'#92400e', fontWeight:600 }}>Primary verifier: <strong>{RECORD_TYPE_OWNER[item.referenceType]}</strong>. You are verifying as a management override.</span>
+          </div>
+        )}
         {/* Summary + context */}
         <div style={{ marginBottom: 12 }}>
           <div style={{ fontSize: 14, fontWeight: 800, color: '#1e293b', lineHeight: 1.4 }}>{item.summary}</div>
@@ -596,7 +626,7 @@ export default function VerificationPage() {
                     <PendingCard
                       key={item.id}
                       item={item}
-                      canVerify={canVerify}
+                      userRole={user?.role}
                       canReject={canReject}
                       onAction={(item, action) => setActionModal({ item, action })}
                     />

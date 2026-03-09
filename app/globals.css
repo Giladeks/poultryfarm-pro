@@ -250,7 +250,7 @@ body {
   position: fixed;
   inset: 0;
   background: rgba(26,26,46,0.45);
-  backdrop-filter: blur(2px);
+
   z-index: 200;
   display: flex;
   align-items: center;
@@ -295,6 +295,7 @@ body {
 
 
 /* ═══════════════════════════════════════════════════════════════════════════
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
    MOBILE RESPONSIVENESS  (max-width: 768px)
    ═══════════════════════════════════════════════════════════════════════════ */
 
@@ -471,3 +472,6 @@ body {
   .page-content { padding: 12px; }
   .card { padding: 12px !important; }
 }
+
+
+

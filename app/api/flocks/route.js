@@ -19,6 +19,7 @@ const createFlockSchema = z.object({
 });
 
 const MANAGER_ROLES = ['FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN'];
+const PEN_MANAGER_ROLES = ['PEN_MANAGER'];
 
 export async function GET(request) {
   const user = await verifyToken(request);
@@ -30,11 +31,23 @@ export async function GET(request) {
   const operationType = searchParams.get('operationType') || searchParams.get('birdType');
 
   try {
+    // PEN_MANAGER: only see flocks in their assigned sections
+    let allowedSectionIds = null;
+    if (PEN_MANAGER_ROLES.includes(user.role)) {
+      const assignments = await prisma.penWorkerAssignment.findMany({
+        where: { userId: user.sub, isActive: true },
+        select: { penSectionId: true },
+      });
+      allowedSectionIds = assignments.map(a => a.penSectionId);
+      if (allowedSectionIds.length === 0) return NextResponse.json({ flocks: [] });
+    }
+
     const where = {
       penSection: { pen: { farm: { tenantId: user.tenantId } } },
       ...(status !== 'ALL' && { status }),
       ...(operationType && { operationType }),
       ...(penId && { penSection: { penId } }),
+      ...(allowedSectionIds && { penSectionId: { in: allowedSectionIds } }),
     };
 
     const flocks = await prisma.flock.findMany({
@@ -151,4 +164,3 @@ export async function POST(request) {
     return NextResponse.json({ error: 'Failed to create flock' }, { status: 500 });
   }
 }
-

@@ -145,7 +145,7 @@ function FlockCard({ flock, onClick }) {
         {flock.currentCount.toLocaleString()} / {flock.initialCount.toLocaleString()} birds · {survivalPct.toFixed(1)}% survival
       </div>
       <div className="progress-bar" style={{ marginBottom:12 }}>
-        <div className="progress-fill" style={{ width:`${survivalPct}%`, background:'linear-gradient(90deg,var(--purple),var(--green))' }} />
+        <div className="progress-fill" style={{ width:`${survivalPct}%`, background: survivalPct >= 90 ? 'var(--green)' : survivalPct >= 80 ? 'var(--amber)' : 'var(--red)' }} />
       </div>
       <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:4, paddingTop:10, borderTop:'1px solid var(--border)' }}>
         {[
@@ -219,7 +219,7 @@ function FlockModal({ flock, onClose }) {
           ['Pen Location',  `${flock.penSection?.pen?.name} — ${flock.penSection?.name}`],
           ['Date Placed',   new Date(flock.dateOfPlacement).toLocaleDateString('en-NG', { dateStyle:'medium' })],
           ['Source',        flock.source?.replace('_', ' ')],
-          ['Purchase Cost', flock.purchaseCost ? `$${Number(flock.purchaseCost).toFixed(2)}` : '—'],
+          ['Purchase Cost', flock.purchaseCost ? `₦${Number(flock.purchaseCost).toLocaleString('en-NG')}` : '—'],
         ].map(([l, v]) => (
           <div key={l} style={{ background:'var(--bg-elevated)', borderRadius:8, padding:'10px 12px' }}>
             <div style={{ fontSize:10, color:'var(--text-muted)', textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:3 }}>{l}</div>
@@ -330,3 +330,6 @@ function SkeletonCard() {
     </div>
   );
 }
+
+
+

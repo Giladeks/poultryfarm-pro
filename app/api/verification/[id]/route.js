@@ -9,6 +9,19 @@ const VERIFIER_ROLES = ['PEN_MANAGER', 'STORE_MANAGER', 'STORE_CLERK', 'FARM_MAN
 const MANAGER_ROLES  = ['FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
 const REJECT_ROLES   = ['PEN_MANAGER', 'STORE_MANAGER', 'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
 
+const MANAGEMENT_OVERRIDE = ['FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
+const RECORD_TYPE_VERIFIERS = {
+  EggProduction:   [...new Set(['PEN_MANAGER',                    ...MANAGEMENT_OVERRIDE])],
+  MortalityRecord: [...new Set(['PEN_MANAGER',                    ...MANAGEMENT_OVERRIDE])],
+  FeedConsumption: [...new Set(['STORE_MANAGER', 'STORE_CLERK',   ...MANAGEMENT_OVERRIDE])],
+  StoreReceipt:    [...new Set(['STORE_MANAGER',                  ...MANAGEMENT_OVERRIDE])],
+  DailyReport:     [...new Set(['PEN_MANAGER',                    ...MANAGEMENT_OVERRIDE])],
+};
+function canVerifyRecordType(role, referenceType) {
+  const allowed = RECORD_TYPE_VERIFIERS[referenceType];
+  return !allowed || allowed.includes(role);
+}
+
 // Valid status transitions
 const STATUS_TRANSITIONS = {
   PENDING:           ['VERIFIED', 'DISCREPANCY_FOUND'],
@@ -83,6 +96,14 @@ export async function PATCH(request, { params: rawParams }) {
     });
     if (!existing)
       return NextResponse.json({ error: 'Verification not found' }, { status: 404 });
+
+    // Typed verification gate
+    if (!canVerifyRecordType(user.role, existing.referenceType)) {
+      return NextResponse.json({
+        error: `Your role (${user.role}) is not authorised to act on ${existing.referenceType} records.`,
+        allowedRoles: RECORD_TYPE_VERIFIERS[existing.referenceType] || VERIFIER_ROLES,
+      }, { status: 403 });
+    }
 
     // ── Role checks for sensitive transitions ──────────────────────────────────
     if (data.status === 'ESCALATED' && !VERIFIER_ROLES.includes(user.role))

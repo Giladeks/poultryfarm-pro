@@ -7,6 +7,28 @@ import { z } from 'zod';
 const VERIFIER_ROLES  = ['PEN_MANAGER', 'STORE_MANAGER', 'STORE_CLERK', 'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
 const MANAGER_ROLES   = ['STORE_MANAGER', 'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
 
+const MANAGEMENT_OVERRIDE = ['FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
+const RECORD_TYPE_VERIFIERS = {
+  EggProduction:   [...new Set(['PEN_MANAGER',                    ...MANAGEMENT_OVERRIDE])],
+  MortalityRecord: [...new Set(['PEN_MANAGER',                    ...MANAGEMENT_OVERRIDE])],
+  FeedConsumption: [...new Set(['STORE_MANAGER', 'STORE_CLERK',   ...MANAGEMENT_OVERRIDE])],
+  StoreReceipt:    [...new Set(['STORE_MANAGER',                  ...MANAGEMENT_OVERRIDE])],
+  DailyReport:     [...new Set(['PEN_MANAGER',                    ...MANAGEMENT_OVERRIDE])],
+};
+const ROLE_VISIBLE_TYPES = {
+  PEN_MANAGER:   ['EggProduction', 'MortalityRecord', 'DailyReport'],
+  STORE_CLERK:   ['FeedConsumption'],
+  STORE_MANAGER: ['FeedConsumption', 'StoreReceipt'],
+  FARM_MANAGER:  null,
+  FARM_ADMIN:    null,
+  CHAIRPERSON:   null,
+  SUPER_ADMIN:   null,
+};
+function canVerifyRecordType(role, referenceType) {
+  const allowed = RECORD_TYPE_VERIFIERS[referenceType];
+  return !allowed || allowed.includes(role);
+}
+
 const createVerificationSchema = z.object({
   storeId:           z.string().uuid().optional().nullable(),  // optional — resolved server-side if omitted
   verificationType:  z.enum(['DAILY_PRODUCTION', 'FEED_RECEIPT', 'INVENTORY_COUNT', 'FINANCIAL_RECORD', 'MORTALITY_REPORT']),
@@ -243,6 +265,16 @@ export async function GET(request) {
       ...pendingReports,
     ].sort((a, b) => new Date(b.date) - new Date(a.date));
 
+    // Typed filtering: scope pending queue to what this role can act on
+    const visibleTypes = ROLE_VISIBLE_TYPES[user.role]; // null = see all
+    if (visibleTypes) {
+      pendingQueue = pendingQueue.filter(i => visibleTypes.includes(i.referenceType));
+    }
+    pendingQueue = pendingQueue.map(i => ({
+      ...i,
+      canVerify: canVerifyRecordType(user.role, i.referenceType),
+    }));
+
     if (type) {
       pendingQueue = pendingQueue.filter(i => i.type === type);
     }
@@ -260,7 +292,7 @@ export async function GET(request) {
       escalated:     verifications.filter(v => v.status === 'ESCALATED').length,
     };
 
-    return NextResponse.json({ verifications, pendingQueue, summary });
+    return NextResponse.json({ verifications, pendingQueue, summary, viewerRole: user.role });
   } catch (error) {
     console.error('Verification fetch error:', error);
     return NextResponse.json({ error: 'Failed to fetch verifications' }, { status: 500 });
@@ -277,6 +309,14 @@ export async function POST(request) {
   try {
     const body = await request.json();
     const data = createVerificationSchema.parse(body);
+
+    // Typed verification gate
+    if (!canVerifyRecordType(user.role, data.referenceType)) {
+      return NextResponse.json({
+        error: `Your role (${user.role}) is not authorised to verify ${data.referenceType} records.`,
+        allowedRoles: RECORD_TYPE_VERIFIERS[data.referenceType] || VERIFIER_ROLES,
+      }, { status: 403 });
+    }
 
     // ── Resolve storeId server-side if not provided ────────────────────────────
     let resolvedStoreId = data.storeId;

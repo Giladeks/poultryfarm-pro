@@ -89,7 +89,7 @@ function StatCard({ label, value, color, icon }) {
 
 // ── Create / Edit User Modal (portal) ────────────────────────────────────────
 
-function UserModal({ mode, editUser, farms, penSections, onClose, onSave }) {
+function UserModal({ mode, editUser, farms, penSections, onClose, onSave, apiFetch }) {
   const blank = {
     firstName: '', lastName: '', email: '', phone: '',
     role: 'PEN_WORKER', farmId: '', password: '', penSectionIds: [],
@@ -144,11 +144,9 @@ function UserModal({ mode, editUser, farms, penSections, onClose, onSave }) {
             phone: form.phone, penSectionIds: form.penSectionIds,
             ...(form.isActive !== undefined && { isActive: form.isActive }) };
 
-      const res = await fetch('/api/users', {
-        method:      mode === 'create' ? 'POST' : 'PATCH',
-        headers:     { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body:        JSON.stringify(payload),
+      const res = await apiFetch('/api/users', {
+        method: mode === 'create' ? 'POST' : 'PATCH',
+        body:   JSON.stringify(payload),
       });
       const data = await res.json();
       if (!res.ok) return setError(data.error || 'Failed to save');
@@ -477,7 +475,7 @@ function UserPanel({ user: u, onEdit, onToggle, onClose }) {
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function UsersPage() {
-  const { user: currentUser } = useAuth();
+  const { user: currentUser, apiFetch } = useAuth();
   const [data,         setData]         = useState(null);
   const [loading,      setLoading]      = useState(true);
   const [search,       setSearch]       = useState('');
@@ -503,7 +501,7 @@ export default function UsersPage() {
         ...(filterStatus !== 'all' && { status: filterStatus }),
         ...(search       && { search }),
       });
-      const res = await fetch(`/api/users?${params}`, { credentials: 'include' });
+      const res = await apiFetch(`/api/users?${params}`);
       if (res.ok) setData(await res.json());
     } finally { setLoading(false); }
   }, [filterRole, filterStatus, search]);
@@ -514,11 +512,9 @@ export default function UsersPage() {
     if (!selectedUser) return;
     setSaving(true);
     try {
-      const res = await fetch('/api/users', {
-        method:      'PATCH',
-        headers:     { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body:        JSON.stringify({ userId: selectedUser.id, isActive: !selectedUser.isActive }),
+      const res = await apiFetch('/api/users', {
+        method: 'PATCH',
+        body:   JSON.stringify({ userId: selectedUser.id, isActive: !selectedUser.isActive }),
       });
       if (res.ok) {
         showToast(`${selectedUser.firstName} ${selectedUser.isActive ? 'deactivated' : 'reactivated'} successfully`);
@@ -704,12 +700,14 @@ export default function UsersPage() {
       {/* ── Portal modals ── */}
       {modal === 'create' && (
         <UserModal mode="create" farms={farms} penSections={penSections}
+          apiFetch={apiFetch}
           onClose={() => setModal(null)}
           onSave={() => { setModal(null); load(); showToast('Staff member created successfully'); }}
         />
       )}
       {modal === 'edit' && selectedUser && (
         <UserModal mode="edit" editUser={selectedUser} farms={farms} penSections={penSections}
+          apiFetch={apiFetch}
           onClose={() => setModal(null)}
           onSave={() => { setModal(null); setSelectedUser(null); load(); showToast('Profile updated successfully'); }}
         />
@@ -733,3 +731,4 @@ export default function UsersPage() {
     </AppShell>
   );
 }
+

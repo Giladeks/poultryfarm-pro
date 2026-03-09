@@ -29,9 +29,24 @@ export async function GET(request) {
   const statusFilter = searchParams.get('status');
 
   try {
+    // PEN_MANAGER: scope to their assigned sections only
+    let allowedSectionIds = null;
+    if (user.role === 'PEN_MANAGER') {
+      const assignments = await prisma.penWorkerAssignment.findMany({
+        where: { userId: user.sub, isActive: true },
+        select: { penSectionId: true },
+      });
+      allowedSectionIds = assignments.map(a => a.penSectionId);
+    }
+
     const vaccinations = await prisma.vaccination.findMany({
       where: {
-        flock: { penSection: { pen: { farm: { tenantId: user.tenantId } } } },
+        flock: {
+          penSection: {
+            pen: { farm: { tenantId: user.tenantId } },
+            ...(allowedSectionIds && { id: { in: allowedSectionIds } }),
+          },
+        },
         ...(flockId && { flockId }),
         ...(statusFilter && { status: statusFilter }),
       },
@@ -75,10 +90,13 @@ export async function GET(request) {
       return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
     }).length;
 
-    // Get all active flocks for scheduling UI
+    // Get active flocks for scheduling UI — scoped to assigned sections for pen managers
     const flocks = await prisma.flock.findMany({
       where: {
-        penSection: { pen: { farm: { tenantId: user.tenantId } } },
+        penSection: {
+          pen: { farm: { tenantId: user.tenantId } },
+          ...(allowedSectionIds && { id: { in: allowedSectionIds } }),
+        },
         status: 'ACTIVE',
       },
       select: { id: true, batchCode: true, operationType: true },

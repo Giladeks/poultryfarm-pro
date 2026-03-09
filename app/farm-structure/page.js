@@ -164,8 +164,8 @@ function PenSummaryMetrics({ pen }) {
   );
 }
 
-function PenCard({ pen, canManage, onEditPen, onEditSection, onAddSection, onAssignWorkers }) {
-  const [expanded, setExpanded] = useState(true);
+function PenCard({ pen, canManage, onEditPen, onEditSection, onAddSection, onAssignWorkers, onAssignPenManager }) {
+  const [expanded, setExpanded] = useState(false);
   const color = OP_COLOR[pen.operationType];
   return (
     <div style={{ background:'#fff', border:'1.5px solid var(--border)', borderRadius:12, marginBottom:16, overflow:'hidden' }}>
@@ -203,8 +203,14 @@ function PenCard({ pen, canManage, onEditPen, onEditSection, onAddSection, onAss
                 </div>
               ))}
               {canManage && (
-                <button className="btn btn-ghost" style={{ padding:'4px 8px', fontSize:11 }}
-                  onClick={e => { e.stopPropagation(); onEditPen(pen); }}>✏️</button>
+                <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+                  <button className="btn btn-ghost" style={{ padding:'4px 8px', fontSize:11 }}
+                    onClick={e => { e.stopPropagation(); onEditPen(pen); }}>✏️</button>
+                  <button className="btn btn-ghost" style={{ padding:'4px 10px', fontSize:11, display:'inline-flex', alignItems:'center', gap:5 }}
+                    onClick={e => { e.stopPropagation(); onAssignPenManager(pen); }}>
+                    👷 Pen Manager
+                  </button>
+                </div>
               )}
               <span style={{ color:'var(--text-faint)', fontSize:14, transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)', transition:'transform 0.2s' }}>›</span>
             </div>
@@ -614,6 +620,139 @@ function AssignWorkersModal({ section, onClose, onSave, apiFetch }) {
   );
 }
 
+// ── Assign Pen Manager Modal ──────────────────────────────────────────────────
+// Assigns a single PEN_MANAGER to ALL sections of a pen at once.
+// Workers already in those sections remain untouched — they automatically
+// report to the pen manager because they share the same sections.
+function AssignPenManagerModal({ pen, apiFetch, onClose, onSave }) {
+  const [penManagers, setPenManagers] = useState([]);
+  const [selectedId,  setSelectedId]  = useState('');
+  const [loading,     setLoading]     = useState(true);
+  const [saving,      setSaving]      = useState(false);
+  const [error,       setError]       = useState('');
+
+  // Current managers already assigned to any section of this pen
+  const currentManagerIds = [...new Set(
+    pen.sections.flatMap(s => (s.managers || []).map(m => m.id))
+  )];
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await apiFetch('/api/users?role=PEN_MANAGER&status=active');
+        if (res.ok) {
+          const d = await res.json();
+          setPenManagers(d.users || []);
+          // Pre-select if only one manager is currently assigned to this pen
+          if (currentManagerIds.length === 1) setSelectedId(currentManagerIds[0]);
+        }
+      } finally { setLoading(false); }
+    })();
+  }, []);
+
+  async function handleSave() {
+    if (!selectedId && !window.confirm('Remove all pen managers from this pen?')) return;
+    setSaving(true); setError('');
+    try {
+      const sectionIds = pen.sections.map(s => s.id);
+
+      // For the newly selected manager: add all this pen's sections to their assignments
+      // For previously assigned managers who are NOT the new one: remove this pen's sections
+      const affected = penManagers.filter(pm =>
+        selectedId === pm.id || currentManagerIds.includes(pm.id)
+      );
+
+      await Promise.all(affected.map(async (pm) => {
+        // Get full current assignments for this user
+        const res = await apiFetch(`/api/users?role=PEN_MANAGER&status=active`);
+        const d   = await res.json();
+        const full = (d.users || []).find(u => u.id === pm.id);
+        const existingSections = (full?.penAssignments || []).map(a => a.penSection?.id).filter(Boolean);
+
+        let newSections;
+        if (pm.id === selectedId) {
+          // Add all pen sections (keep any other sections they already have)
+          newSections = [...new Set([...existingSections, ...sectionIds])];
+        } else {
+          // Remove this pen's sections (they're being unassigned from this pen)
+          newSections = existingSections.filter(id => !sectionIds.includes(id));
+        }
+
+        await apiFetch('/api/users', {
+          method: 'PATCH',
+          body: JSON.stringify({ userId: pm.id, penSectionIds: newSections }),
+        });
+      }));
+
+      onSave();
+    } catch {
+      setError('Failed to save pen manager assignment');
+    } finally { setSaving(false); }
+  }
+
+  const color = { LAYER:'#f59e0b', BROILER:'#3b82f6', BREEDER:'#8b5cf6', TURKEY:'#22c55e' }[pen.operationType] || 'var(--purple)';
+
+  return (
+    <PortalModal
+      title="👷 Assign Pen Manager"
+      subtitle={`${pen.name} — ${pen.sections.length} section${pen.sections.length !== 1 ? 's' : ''}`}
+      width={460}
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" onClick={handleSave} disabled={saving || loading}>
+            {saving ? 'Saving…' : 'Save Assignment'}
+          </button>
+        </>
+      }
+    >
+      {error && <div className="alert alert-red" style={{ marginBottom:12 }}>⚠ {error}</div>}
+
+      <div style={{ padding:'10px 14px', background:`${color}08`, border:`1px solid ${color}20`, borderRadius:8, marginBottom:16, fontSize:12, color:'var(--text-secondary)' }}>
+        <strong>How this works:</strong> The selected pen manager will be assigned to <strong>all {pen.sections.length} sections</strong> of this pen. Workers in those sections will automatically report to them. Removing a pen manager unassigns them from all sections of this pen.
+      </div>
+
+      {loading ? (
+        <div style={{ height:80, background:'var(--bg-elevated)', borderRadius:8 }} />
+      ) : penManagers.length === 0 ? (
+        <div style={{ textAlign:'center', padding:'20px', color:'var(--text-muted)', fontSize:13 }}>
+          No pen managers found. Add pen managers in User Admin first.
+        </div>
+      ) : (
+        <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+          {/* "None" option */}
+          <label style={{ display:'flex', alignItems:'center', gap:12, padding:'10px 14px', background: selectedId === '' ? '#fff5f5' : 'var(--bg-elevated)', border:`1px solid ${selectedId === '' ? '#fca5a5' : 'var(--border)'}`, borderRadius:8, cursor:'pointer', transition:'all 0.15s' }}>
+            <input type="radio" name="penManager" value="" checked={selectedId === ''} onChange={() => setSelectedId('')} style={{ accentColor:'var(--purple)', flexShrink:0 }} />
+            <span style={{ fontSize:13, fontWeight:600, color:'var(--text-muted)' }}>— No manager assigned —</span>
+          </label>
+
+          {penManagers.map(pm => {
+            const isCurrent = currentManagerIds.includes(pm.id);
+            const sectionCount = (pm.penAssignments || []).length;
+            return (
+              <label key={pm.id} style={{ display:'flex', alignItems:'center', gap:12, padding:'10px 14px', background: selectedId === pm.id ? 'var(--purple-light)' : 'var(--bg-elevated)', border:`1px solid ${selectedId === pm.id ? '#d4d8ff' : 'var(--border)'}`, borderRadius:8, cursor:'pointer', transition:'all 0.15s' }}>
+                <input type="radio" name="penManager" value={pm.id} checked={selectedId === pm.id} onChange={() => setSelectedId(pm.id)} style={{ accentColor:'var(--purple)', flexShrink:0 }} />
+                <div style={{ width:32, height:32, borderRadius:'50%', background:'var(--purple-light)', border:'1.5px solid #d4d8ff', display:'flex', alignItems:'center', justifyContent:'center', fontSize:12, fontWeight:800, color:'var(--purple)', flexShrink:0 }}>
+                  {pm.firstName[0]}{pm.lastName[0]}
+                </div>
+                <div style={{ flex:1 }}>
+                  <div style={{ fontSize:13, fontWeight:700 }}>{pm.firstName} {pm.lastName}</div>
+                  <div style={{ fontSize:11, color:'var(--text-muted)' }}>{pm.email}</div>
+                </div>
+                <div style={{ fontSize:10, textAlign:'right', flexShrink:0 }}>
+                  {isCurrent && <div style={{ color:'var(--purple)', fontWeight:700, marginBottom:2 }}>● Current</div>}
+                  <div style={{ color:'var(--text-muted)' }}>{sectionCount} section{sectionCount !== 1 ? 's' : ''}</div>
+                </div>
+              </label>
+            );
+          })}
+        </div>
+      )}
+    </PortalModal>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function FarmStructurePage() {
   const { user, apiFetch } = useAuth();
@@ -748,6 +887,7 @@ export default function FarmStructurePage() {
                 onEditSection={(sec, p) => setModal({ type:'section', mode:'edit',   target:sec, context:{ pen:p } })}
                 onAddSection={p => setModal({ type:'section', mode:'create',          context:{ pen:p } })}
                 onAssignWorkers={sec => setModal({ type:'assign', target:sec })}
+                onAssignPenManager={pen => setModal({ type:'assignPenManager', target:pen })}
               />
             ))}
           </div>
@@ -758,7 +898,8 @@ export default function FarmStructurePage() {
       {modal?.type === 'farm'    && <FarmModal    mode={modal.mode} farm={modal.target}    managers={managers} onClose={() => setModal(null)} onSave={() => handleSave(modal.mode==='create' ? 'Farm created' : 'Farm updated')} />}
       {modal?.type === 'pen'     && <PenModal     mode={modal.mode} pen={modal.target}     farmId={modal.context?.farmId} farmName={modal.context?.farmName} onClose={() => setModal(null)} onSave={() => handleSave(modal.mode==='create' ? 'Pen created' : 'Pen updated')} />}
       {modal?.type === 'section' && <SectionModal mode={modal.mode} section={modal.target} pen={modal.context?.pen} onClose={() => setModal(null)} onSave={() => handleSave(modal.mode==='create' ? 'Section added' : 'Section updated')} />}
-      {modal?.type === 'assign'  && <AssignWorkersModal section={modal.target} apiFetch={apiFetch} onClose={() => setModal(null)} onSave={() => handleSave('Worker assignments updated')} />}
+      {modal?.type === 'assign'           && <AssignWorkersModal    section={modal.target} apiFetch={apiFetch} onClose={() => setModal(null)} onSave={() => handleSave('Worker assignments updated')} />}
+      {modal?.type === 'assignPenManager' && <AssignPenManagerModal pen={modal.target}     apiFetch={apiFetch} onClose={() => setModal(null)} onSave={() => handleSave('Pen manager assigned')} />}
     </AppShell>
   );
 }
