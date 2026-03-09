@@ -4,6 +4,7 @@ import { prisma } from '@/lib/db/prisma';
 import { verifyToken } from '@/lib/middleware/auth';
 import { z } from 'zod';
 import { sendMortalityAlert } from '@/lib/services/sms';
+import { sendMortaltySpikeEmail, resolveEmailSettings } from '@/lib/services/notifications';
 
 const createMortalitySchema = z.object({
   flockId: z.string().min(1),
@@ -123,7 +124,8 @@ export async function POST(request) {
       }),
     ]);
 
-    checkMortalitySpike(user.tenantId, data.flockId, data.count).catch(console.error);
+    // Fire-and-forget spike check (SMS + email)
+    checkMortalitySpike(user.tenantId, data.flockId, data.count, data.causeCode).catch(console.error);
 
     return NextResponse.json({ record }, { status: 201 });
   } catch (error) {
@@ -134,7 +136,7 @@ export async function POST(request) {
   }
 }
 
-async function checkMortalitySpike(tenantId, flockId, count) {
+async function checkMortalitySpike(tenantId, flockId, count, causeCode) {
   const sevenDaysAgo = new Date();
   sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
   const weekData = await prisma.mortalityRecord.groupBy({
@@ -150,49 +152,78 @@ async function checkMortalitySpike(tenantId, flockId, count) {
   const isSpike = (avgDaily !== null && count > avgDaily * 2 && count > 10) || count >= 20;
   if (!isSpike) return;
 
-  // Check if tenant has SMS alerts enabled
-  try {
-    const tenant = await prisma.tenant.findUnique({
+  // Fetch tenant settings + flock context once for both channels
+  const [tenant, flock] = await Promise.all([
+    prisma.tenant.findUnique({
       where: { id: tenantId },
-      select: { settings: true },
-    });
-    const smsSettings = tenant?.settings?.sms;
-    if (!smsSettings?.enabled || !smsSettings?.mortalityAlert?.enabled) return;
-    if (count < (smsSettings.mortalityAlert.threshold ?? 10)) return;
-
-    // Get flock + section + pen info for the message
-    const flock = await prisma.flock.findUnique({
+      select: { farmName: true, settings: true },
+    }),
+    prisma.flock.findUnique({
       where: { id: flockId },
       include: {
         penSection: { include: { pen: { select: { name: true } } } },
       },
-    });
-    if (!flock) return;
+    }),
+  ]);
 
-    // Find Farm Manager + Pen Manager phone numbers
+  if (!flock) return;
+
+  const smsSettings   = tenant?.settings?.sms;
+  const emailSettings = resolveEmailSettings(tenant?.settings);
+  const farmName      = tenant?.farmName || 'Farm';
+  const penName       = flock.penSection?.pen?.name
+    ? `${flock.penSection.pen.name} › ${flock.penSection.name}`
+    : flock.penSection?.name || 'Unknown Pen';
+
+  // ── SMS channel ──────────────────────────────────────────────────────────
+  if (smsSettings?.enabled && smsSettings?.mortalityAlert?.enabled) {
+    if (count >= (smsSettings.mortalityAlert.threshold ?? 10)) {
+      const managers = await prisma.user.findMany({
+        where: {
+          tenantId,
+          role:     { in: ['FARM_MANAGER', 'FARM_ADMIN', 'PEN_MANAGER', 'CHAIRPERSON'] },
+          isActive: true,
+          phone:    { not: null },
+        },
+        select: { phone: true },
+      });
+      const extraPhones = (smsSettings.alertPhones || []).map(p => ({ phone: p.phone }));
+      const recipients  = [...managers, ...extraPhones].filter(r => r.phone);
+
+      await sendMortalityAlert({
+        count,
+        flockBatchCode: flock.batchCode,
+        penName,
+        sectionName:    flock.penSection?.name || '',
+        causeCode,
+        recipients,
+      }).catch(err => console.error('[SMS] Mortality spike error:', err.message));
+    }
+  }
+
+  // ── Email channel ────────────────────────────────────────────────────────
+  if (emailSettings?.enabled && emailSettings?.mortalitySpike?.enabled) {
     const managers = await prisma.user.findMany({
       where: {
         tenantId,
-        role:     { in: ['FARM_MANAGER', 'FARM_ADMIN', 'PEN_MANAGER', 'CHAIRPERSON'] },
+        role:     { in: ['FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'] },
         isActive: true,
-        phone:    { not: null },
+        email:    { not: null },
       },
-      select: { phone: true, firstName: true },
+      select: { email: true },
     });
 
-    // Also include any extra alert phones configured in settings
-    const extraPhones = (smsSettings.alertPhones || []).map(p => ({ phone: p.phone }));
-    const recipients  = [...managers, ...extraPhones].filter(r => r.phone);
+    const toEmails = managers.map(m => m.email).filter(Boolean);
+    if (toEmails.length === 0) return;
 
-    await sendMortalityAlert({
-      count,
+    await sendMortaltySpikeEmail({
+      to:             toEmails,
+      farmName,
+      penName,
       flockBatchCode: flock.batchCode,
-      penName:        flock.penSection?.pen?.name || 'Unknown Pen',
-      sectionName:    flock.penSection?.name || 'Unknown Section',
-      causeCode:      null, // not available at spike-check level
-      recipients,
-    });
-  } catch (err) {
-    console.error('[SMS] Mortality alert error:', err.message);
+      todayCount:     count,
+      sevenDayAvg:    avgDaily ?? 0,
+      causeCode,
+    }).catch(err => console.error('[EMAIL] Mortality spike error:', err.message));
   }
 }

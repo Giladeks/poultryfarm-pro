@@ -147,6 +147,7 @@ model User {
   firstName       String
   lastName        String
   phone           String?
+  profilePicUrl   String?   @db.Text
   avatarUrl       String?
   role            UserRole  @default(PEN_WORKER)
   isActive        Boolean   @default(true)

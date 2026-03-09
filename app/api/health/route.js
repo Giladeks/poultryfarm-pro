@@ -1,8 +1,10 @@
 // app/api/health/route.js — Vaccinations, medications, health events
+// Phase 5.2: sends overdue vaccination emails when status is auto-marked OVERDUE
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
 import { verifyToken } from '@/lib/middleware/auth';
 import { z } from 'zod';
+import { sendOverdueVaccinationEmail, resolveEmailSettings } from '@/lib/services/notifications';
 
 const vaccinationSchema = z.object({
   flockId: z.string().uuid(),
@@ -33,7 +35,7 @@ export async function GET(request) {
     let allowedSectionIds = null;
     if (user.role === 'PEN_MANAGER') {
       const assignments = await prisma.penWorkerAssignment.findMany({
-        where: { userId: user.sub, isActive: true },
+        where: { userId: user.sub },
         select: { penSectionId: true },
       });
       allowedSectionIds = assignments.map(a => a.penSectionId);
@@ -64,17 +66,23 @@ export async function GET(request) {
       orderBy: { scheduledDate: 'asc' },
     });
 
-    // Auto-mark overdue
+    // Auto-mark overdue + collect newly-overdue IDs for email alerts
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const overdueIds = vaccinations
-      .filter(v => v.status === 'SCHEDULED' && new Date(v.scheduledDate) < today)
-      .map(v => v.id);
+
+    const newlyOverdue = vaccinations.filter(
+      v => v.status === 'SCHEDULED' && new Date(v.scheduledDate) < today
+    );
+    const overdueIds = newlyOverdue.map(v => v.id);
+
     if (overdueIds.length > 0) {
       await prisma.vaccination.updateMany({
         where: { id: { in: overdueIds } },
-        data: { status: 'OVERDUE' },
+        data:  { status: 'OVERDUE' },
       });
+
+      // Phase 5.2: fire-and-forget email alerts for newly-overdue vaccinations
+      sendOverdueVaccinationAlerts(user.tenantId, newlyOverdue).catch(console.error);
     }
 
     const upcomingCount = vaccinations.filter(v =>
@@ -90,7 +98,7 @@ export async function GET(request) {
       return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
     }).length;
 
-    // Get active flocks for scheduling UI — scoped to assigned sections for pen managers
+    // Get active flocks for scheduling UI
     const flocks = await prisma.flock.findMany({
       where: {
         penSection: {
@@ -106,11 +114,11 @@ export async function GET(request) {
       vaccinations,
       flocks,
       summary: {
-        dueSoon: upcomingCount,
-        overdue: overdueCount,
+        dueSoon:        upcomingCount,
+        overdue:        overdueCount,
         completedMonth: completedThisMonth,
         completedTotal: vaccinations.filter(v => v.status === 'COMPLETED').length,
-        scheduled: vaccinations.filter(v => v.status === 'SCHEDULED').length,
+        scheduled:      vaccinations.filter(v => v.status === 'SCHEDULED').length,
       },
     });
   } catch (error) {
@@ -148,7 +156,7 @@ export async function POST(request) {
 
       // Auto-create tasks for assigned workers via PenWorkerAssignment
       const assignments = await prisma.penWorkerAssignment.findMany({
-        where: { penSectionId: flock.penSectionId, isActive: true },
+        where: { penSectionId: flock.penSectionId },
         include: { user: { select: { id: true, role: true, isActive: true } } },
       });
 
@@ -159,15 +167,15 @@ export async function POST(request) {
       if (workers.length > 0) {
         await prisma.task.createMany({
           data: workers.map(w => ({
-            tenantId: user.tenantId,
+            tenantId:     user.tenantId,
             assignedToId: w.id,
-            createdById: user.sub,
-            taskType: 'VACCINATION',
-            title: `Administer ${data.vaccineName}`,
+            createdById:  user.sub,
+            taskType:     'VACCINATION',
+            title:        `Administer ${data.vaccineName}`,
             penSectionId: flock.penSectionId,
-            dueDate: new Date(data.scheduledDate),
-            status: 'PENDING',
-            priority: 'HIGH',
+            dueDate:      new Date(data.scheduledDate),
+            status:       'PENDING',
+            priority:     'HIGH',
           })),
         });
       }
@@ -178,7 +186,6 @@ export async function POST(request) {
     if (action === 'complete') {
       const data = completeVaccinationSchema.parse(await request.json());
 
-      // Verify vaccination belongs to this tenant
       const existing = await prisma.vaccination.findFirst({
         where: {
           id: data.vaccinationId,
@@ -190,13 +197,13 @@ export async function POST(request) {
       const vaccination = await prisma.vaccination.update({
         where: { id: data.vaccinationId },
         data: {
-          administeredDate: new Date(),
-          administeredById: user.sub,
-          batchNumber: data.batchNumber,
-          doseMlPerBird: data.doseMlPerBird,
-          nextDueDate: data.nextDueDate ? new Date(data.nextDueDate) : null,
-          notes: data.notes,
-          status: 'COMPLETED',
+          administeredDate:  new Date(),
+          administeredById:  user.sub,
+          batchNumber:       data.batchNumber,
+          doseMlPerBird:     data.doseMlPerBird,
+          nextDueDate:       data.nextDueDate ? new Date(data.nextDueDate) : null,
+          notes:             data.notes,
+          status:            'COMPLETED',
         },
       });
 
@@ -204,10 +211,10 @@ export async function POST(request) {
       if (data.nextDueDate) {
         await prisma.vaccination.create({
           data: {
-            flockId: existing.flockId,
-            vaccineName: existing.vaccineName,
+            flockId:       existing.flockId,
+            vaccineName:   existing.vaccineName,
             scheduledDate: new Date(data.nextDueDate),
-            status: 'SCHEDULED',
+            status:        'SCHEDULED',
           },
         });
       }
@@ -222,4 +229,57 @@ export async function POST(request) {
     console.error('Health action error:', error);
     return NextResponse.json({ error: 'Health operation failed' }, { status: 500 });
   }
+}
+
+// ─── Overdue vaccination email helper ─────────────────────────────────────────
+
+/**
+ * Sends overdue vaccination emails to farm managers for a batch of newly-overdue vaccinations.
+ * Deduplicated per vaccine — groups by flockId+vaccineName so one email covers each vaccine.
+ */
+async function sendOverdueVaccinationAlerts(tenantId, overdueVaccinations) {
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: tenantId },
+    select: { farmName: true, settings: true },
+  });
+
+  const emailSettings = resolveEmailSettings(tenant?.settings);
+  if (!emailSettings?.enabled || !emailSettings?.overdueVaccination?.enabled) return;
+
+  const managers = await prisma.user.findMany({
+    where: {
+      tenantId,
+      role:     { in: ['FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN', 'PEN_MANAGER'] },
+      isActive: true,
+      email:    { not: null },
+    },
+    select: { email: true },
+  });
+
+  const toEmails = managers.map(m => m.email).filter(Boolean);
+  if (toEmails.length === 0) return;
+
+  const farmName = tenant?.farmName || 'Farm';
+  const today    = new Date();
+
+  // Send one email per overdue vaccination
+  const emailPromises = overdueVaccinations.map(v => {
+    const scheduled    = new Date(v.scheduledDate);
+    const daysOverdue  = Math.floor((today - scheduled) / 86400000);
+    const pen          = v.flock?.penSection?.pen?.name;
+    const section      = v.flock?.penSection?.name;
+    const penName      = pen ? (section ? `${pen} › ${section}` : pen) : '—';
+
+    return sendOverdueVaccinationEmail({
+      to:              toEmails,
+      farmName,
+      flockBatchCode:  v.flock?.batchCode || v.flockId,
+      vaccineName:     v.vaccineName,
+      scheduledDate:   v.scheduledDate,
+      daysOverdue,
+      penName,
+    }).catch(err => console.error('[EMAIL] Vaccination overdue error:', err.message));
+  });
+
+  await Promise.allSettled(emailPromises);
 }

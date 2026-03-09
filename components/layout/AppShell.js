@@ -7,20 +7,27 @@ import { createPortal } from 'react-dom';
 import { useAuth } from './AuthProvider';
 import { ROLE_LABELS } from '@/lib/constants/roles';
 
+// ── Role constants ─────────────────────────────────────────────────────────────
+const ADMIN_ONLY = ['FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
+
 // ── Nav definition ─────────────────────────────────────────────────────────────
-// Fixed: Feed now includes PEN_MANAGER. FARM_OWNER removed everywhere.
-const NAV = [
+// Administration items are grouped separately and shown only to ADMIN_ONLY roles.
+const NAV_MAIN = [
   { href: '/dashboard',     icon: '📊', label: 'Dashboard',     roles: ['FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','PEN_MANAGER','STORE_MANAGER','FEED_MILL_MANAGER','SUPER_ADMIN','PEN_WORKER','PRODUCTION_STAFF','STORE_CLERK','QC_TECHNICIAN'] },
   { href: '/farm-structure', icon: '🏡', label: 'Farm Structure', roles: ['FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN'] },
   { href: '/farm',          icon: '🐦', label: 'Flocks',         roles: ['FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','PEN_MANAGER','SUPER_ADMIN'] },
   { href: '/health',        icon: '💉', label: 'Health',         roles: ['FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','PEN_MANAGER','SUPER_ADMIN'] },
   { href: '/feed',          icon: '🌾', label: 'Feed',           roles: ['STORE_MANAGER','STORE_CLERK','FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN','PEN_MANAGER'] },
   { href: '/verification',  icon: '✅', label: 'Verification',   roles: ['FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','PEN_MANAGER','STORE_MANAGER','SUPER_ADMIN'] },
-  { href: '/users',         icon: '👥', label: 'User Admin',     roles: ['FARM_ADMIN','FARM_MANAGER','CHAIRPERSON','SUPER_ADMIN'] },
   { href: '/worker',        icon: '📋', label: 'My Tasks',       roles: ['PEN_WORKER','PEN_MANAGER','PRODUCTION_STAFF','STORE_CLERK','QC_TECHNICIAN'] },
   { href: '/owner',         icon: '📈', label: 'Analytics',      roles: ['CHAIRPERSON'] },
   { href: '/billing',       icon: '💳', label: 'Billing',        roles: ['CHAIRPERSON','FARM_ADMIN','SUPER_ADMIN'] },
-  { href: '/settings',      icon: '⚙️', label: 'Settings',       roles: ['FARM_ADMIN','FARM_MANAGER','CHAIRPERSON','SUPER_ADMIN'] },
+];
+
+// Administration group — only ADMIN_ONLY roles see this group at all
+const NAV_ADMIN = [
+  { href: '/users',    icon: '👥', label: 'User Admin' },
+  { href: '/settings', icon: '⚙️', label: 'Settings'   },
 ];
 
 // ── Notification type → icon / colour ─────────────────────────────────────────
@@ -35,10 +42,7 @@ const NOTIF_META = {
   MORTALITY_SPIKE: { icon: '💀', color: '#ef4444' },
   DEFAULT:         { icon: '🔔', color: '#6c63ff' },
 };
-
-function notifMeta(type) {
-  return NOTIF_META[type] || NOTIF_META.DEFAULT;
-}
+function notifMeta(type) { return NOTIF_META[type] || NOTIF_META.DEFAULT; }
 
 function timeAgo(d) {
   const mins = Math.floor((Date.now() - new Date(d)) / 60000);
@@ -48,12 +52,11 @@ function timeAgo(d) {
   return `${Math.floor(mins / 1440)}d ago`;
 }
 
-// ── Notification dropdown (portal-rendered) ───────────────────────────────────
+// ── Notification dropdown ──────────────────────────────────────────────────────
 function NotifDropdown({ notifications, unreadCount, onMarkRead, onMarkAll, onClose, anchorRef }) {
   const dropRef = useRef(null);
-
-  // Position below the bell button
   const [pos, setPos] = useState({ top: 0, right: 0 });
+
   useEffect(() => {
     if (anchorRef.current) {
       const r = anchorRef.current.getBoundingClientRect();
@@ -61,19 +64,15 @@ function NotifDropdown({ notifications, unreadCount, onMarkRead, onMarkAll, onCl
     }
   }, [anchorRef]);
 
-  // Close on outside click
   useEffect(() => {
     const handler = (e) => {
       if (dropRef.current && !dropRef.current.contains(e.target) &&
-          anchorRef.current && !anchorRef.current.contains(e.target)) {
-        onClose();
-      }
+          anchorRef.current && !anchorRef.current.contains(e.target)) onClose();
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [onClose, anchorRef]);
 
-  // Close on Escape
   useEffect(() => {
     const handler = (e) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', handler);
@@ -83,181 +82,91 @@ function NotifDropdown({ notifications, unreadCount, onMarkRead, onMarkAll, onCl
   if (typeof document === 'undefined') return null;
 
   return createPortal(
-    <div
-      ref={dropRef}
-      style={{
-        position:    'fixed',
-        top:         pos.top,
-        right:       pos.right,
-        width:       340,
-        background:  '#fff',
-        borderRadius: 14,
-        border:      '1px solid var(--border-card)',
-        boxShadow:   '0 8px 32px rgba(0,0,0,0.12)',
-        zIndex:      1000,
-        overflow:    'hidden',
-        animation:   'fadeInUp 0.18s ease',
-      }}
-    >
-      {/* Header */}
-      <div style={{
-        display:        'flex',
-        alignItems:     'center',
-        justifyContent: 'space-between',
-        padding:        '14px 16px',
-        borderBottom:   '1px solid var(--border)',
-      }}>
+    <div ref={dropRef} style={{
+      position: 'fixed', top: pos.top, right: pos.right,
+      width: 340, background: '#fff', borderRadius: 14,
+      border: '1px solid var(--border-card)',
+      boxShadow: '0 8px 32px rgba(0,0,0,0.12)', zIndex: 1000,
+      overflow: 'hidden', animation: 'fadeInUp 0.18s ease',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontFamily: "'Poppins',sans-serif", fontWeight: 700, fontSize: 14, color: 'var(--text-primary)' }}>
-            Notifications
-          </span>
+          <span style={{ fontFamily: "'Poppins',sans-serif", fontWeight: 700, fontSize: 14, color: 'var(--text-primary)' }}>Notifications</span>
           {unreadCount > 0 && (
-            <span style={{
-              background:  'var(--purple)',
-              color:       '#fff',
-              borderRadius: 10,
-              padding:     '1px 7px',
-              fontSize:    10,
-              fontWeight:  700,
-            }}>
-              {unreadCount}
-            </span>
+            <span style={{ background: 'var(--purple)', color: '#fff', borderRadius: 10, padding: '1px 7px', fontSize: 10, fontWeight: 700 }}>{unreadCount}</span>
           )}
         </div>
         {unreadCount > 0 && (
-          <button
-            onClick={onMarkAll}
-            style={{
-              background:  'transparent',
-              border:      'none',
-              cursor:      'pointer',
-              fontSize:    11,
-              fontWeight:  600,
-              color:       'var(--purple)',
-              fontFamily:  'inherit',
-              padding:     '2px 6px',
-            }}
-          >
+          <button onClick={onMarkAll} style={{ background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 11, fontWeight: 600, color: 'var(--purple)', fontFamily: 'inherit', padding: '2px 6px' }}>
             Mark all read
           </button>
         )}
       </div>
 
-      {/* List */}
       <div style={{ maxHeight: 360, overflowY: 'auto' }}>
         {notifications.length === 0 ? (
-          <div style={{
-            padding:    '36px 20px',
-            textAlign:  'center',
-            color:      'var(--text-muted)',
-            fontSize:   13,
-          }}>
+          <div style={{ padding: '36px 20px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
             <div style={{ fontSize: 32, marginBottom: 8 }}>🔔</div>
             <div style={{ fontWeight: 600 }}>You're all caught up!</div>
             <div style={{ fontSize: 12, marginTop: 4 }}>No new notifications</div>
           </div>
-        ) : (
-          notifications.map(n => {
-            const meta = notifMeta(n.type);
-            return (
-              <div
-                key={n.id}
-                onClick={() => !n.isRead && onMarkRead(n.id)}
-                style={{
-                  display:    'flex',
-                  gap:        12,
-                  padding:    '12px 16px',
-                  background: n.isRead ? '#fff' : 'var(--purple-light)',
-                  borderBottom: '1px solid var(--border)',
-                  cursor:     n.isRead ? 'default' : 'pointer',
-                  transition: 'background 0.15s',
-                }}
-                onMouseEnter={e => { if (!n.isRead) e.currentTarget.style.background = '#e8e6ff'; }}
-                onMouseLeave={e => { if (!n.isRead) e.currentTarget.style.background = 'var(--purple-light)'; }}
-              >
-                {/* Icon */}
-                <div style={{
-                  width:          34,
-                  height:         34,
-                  borderRadius:   9,
-                  background:     `${meta.color}15`,
-                  border:         `1px solid ${meta.color}30`,
-                  display:        'flex',
-                  alignItems:     'center',
-                  justifyContent: 'center',
-                  fontSize:       16,
-                  flexShrink:     0,
-                  marginTop:      2,
-                }}>
-                  {meta.icon}
-                </div>
-
-                {/* Content */}
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{
-                    fontSize:   12,
-                    fontWeight: n.isRead ? 600 : 700,
-                    color:      'var(--text-primary)',
-                    lineHeight: 1.4,
-                    marginBottom: 2,
-                  }}>
-                    {n.title}
-                  </div>
-                  <div style={{
-                    fontSize:   11,
-                    color:      'var(--text-secondary)',
-                    lineHeight: 1.4,
-                    marginBottom: 4,
-                    overflow:   'hidden',
-                    display:    '-webkit-box',
-                    WebkitLineClamp: 2,
-                    WebkitBoxOrient: 'vertical',
-                  }}>
-                    {n.message}
-                  </div>
-                  <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
-                    {timeAgo(n.createdAt)}
-                  </div>
-                </div>
-
-                {/* Unread dot */}
-                {!n.isRead && (
-                  <div style={{
-                    width:        8,
-                    height:       8,
-                    borderRadius: '50%',
-                    background:   'var(--purple)',
-                    flexShrink:   0,
-                    marginTop:    6,
-                  }} />
-                )}
+        ) : notifications.map(n => {
+          const meta = notifMeta(n.type);
+          return (
+            <div key={n.id} onClick={() => !n.isRead && onMarkRead(n.id)} style={{
+              display: 'flex', gap: 12, padding: '12px 16px',
+              background: n.isRead ? '#fff' : 'var(--purple-light)',
+              borderBottom: '1px solid var(--border)',
+              cursor: n.isRead ? 'default' : 'pointer', transition: 'background 0.15s',
+            }}
+              onMouseEnter={e => { if (!n.isRead) e.currentTarget.style.background = '#e8e6ff'; }}
+              onMouseLeave={e => { if (!n.isRead) e.currentTarget.style.background = 'var(--purple-light)'; }}
+            >
+              <div style={{ width: 34, height: 34, borderRadius: 9, background: `${meta.color}15`, border: `1px solid ${meta.color}30`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, flexShrink: 0, marginTop: 2 }}>
+                {meta.icon}
               </div>
-            );
-          })
-        )}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12, fontWeight: n.isRead ? 600 : 700, color: 'var(--text-primary)', lineHeight: 1.4, marginBottom: 2 }}>{n.title}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.4, marginBottom: 4, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{n.message}</div>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{timeAgo(n.createdAt)}</div>
+              </div>
+              {!n.isRead && <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--purple)', flexShrink: 0, marginTop: 6 }} />}
+            </div>
+          );
+        })}
       </div>
 
-      {/* Footer */}
-      <div style={{
-        padding:        '10px 16px',
-        borderTop:      '1px solid var(--border)',
-        textAlign:      'center',
-      }}>
-        <Link
-          href="/notifications"
-          onClick={onClose}
-          style={{
-            fontSize:       12,
-            fontWeight:     600,
-            color:          'var(--purple)',
-            textDecoration: 'none',
-          }}
-        >
+      <div style={{ padding: '10px 16px', borderTop: '1px solid var(--border)', textAlign: 'center' }}>
+        <Link href="/notifications" onClick={onClose} style={{ fontSize: 12, fontWeight: 600, color: 'var(--purple)', textDecoration: 'none' }}>
           View all notifications →
         </Link>
       </div>
     </div>,
     document.body,
+  );
+}
+
+// ── Single nav link ────────────────────────────────────────────────────────────
+function NavLink({ href, icon, label, collapsed, pathname }) {
+  const active = pathname === href || pathname.startsWith(href + '/');
+  return (
+    <Link href={href} style={{
+      display: 'flex', alignItems: 'center', gap: 10,
+      padding: collapsed ? '10px 0' : '10px 12px',
+      borderRadius: 9, marginBottom: 3,
+      justifyContent: collapsed ? 'center' : 'flex-start',
+      background: active ? 'var(--purple-light)' : 'transparent',
+      color: active ? 'var(--purple)' : 'var(--text-secondary)',
+      fontWeight: active ? 700 : 600,
+      fontSize: 13, textDecoration: 'none', transition: 'all 0.15s',
+      borderLeft: active ? '3px solid var(--purple)' : '3px solid transparent',
+    }}
+      onMouseEnter={e => { if (!active) { e.currentTarget.style.background = 'var(--bg-hover)'; e.currentTarget.style.color = 'var(--text-primary)'; }}}
+      onMouseLeave={e => { if (!active) { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-secondary)'; }}}
+    >
+      <span style={{ fontSize: 17, flexShrink: 0 }}>{icon}</span>
+      {!collapsed && <span>{label}</span>}
+    </Link>
   );
 }
 
@@ -267,20 +176,33 @@ export default function AppShell({ children }) {
   const pathname = usePathname();
   const router   = useRouter();
 
-  const [collapsed,      setCollapsed]      = useState(false);
-  const [notifOpen,      setNotifOpen]      = useState(false);
-  const [notifications,  setNotifications]  = useState([]);
-  const [unreadCount,    setUnreadCount]    = useState(0);
-  const [notifLoading,   setNotifLoading]   = useState(false);
+  const [collapsed,     setCollapsed]     = useState(false);
+  const [notifOpen,     setNotifOpen]     = useState(false);
+  const [notifications, setNotifications] = useState([]);
+  const [unreadCount,   setUnreadCount]   = useState(0);
+  const [notifLoading,  setNotifLoading]  = useState(false);
+  // Administration group expanded/collapsed in sidebar
+  const [adminExpanded, setAdminExpanded] = useState(
+    // Auto-expand if currently on an admin page
+    false
+  );
   const bellRef = useRef(null);
 
-  const visibleNav = NAV.filter(n => !user || n.roles.includes(user.role));
-  const sideW      = collapsed ? 64 : 220;
-
+  const isAdmin   = ADMIN_ONLY.includes(user?.role);
+  const sideW     = collapsed ? 64 : 220;
   const initials  = user ? `${user.firstName?.[0] || ''}${user.lastName?.[0] || ''}`.toUpperCase() : '?';
   const roleLabel = ROLE_LABELS[user?.role] || user?.role || '';
 
-  // ── Fetch unread count (lightweight — runs every 60s) ───────────────────────
+  // Auto-expand admin group when on admin pages
+  useEffect(() => {
+    if (pathname.startsWith('/users') || pathname.startsWith('/settings')) {
+      setAdminExpanded(true);
+    }
+  }, [pathname]);
+
+  const visibleMain = NAV_MAIN.filter(n => !user || n.roles.includes(user.role));
+
+  // ── Fetch unread count ──────────────────────────────────────────────────────
   const fetchUnreadCount = useCallback(async () => {
     if (!user) return;
     try {
@@ -292,7 +214,7 @@ export default function AppShell({ children }) {
         const data = await res.json();
         setUnreadCount(data.unreadCount ?? 0);
       }
-    } catch { /* silent — don't disrupt the UI */ }
+    } catch { /* silent */ }
   }, [user]);
 
   useEffect(() => {
@@ -301,16 +223,14 @@ export default function AppShell({ children }) {
     return () => clearInterval(interval);
   }, [fetchUnreadCount]);
 
-  // ── Fetch full notification list when dropdown opens ────────────────────────
+  // ── Open notifications dropdown ─────────────────────────────────────────────
   const openNotifications = async () => {
     if (notifOpen) { setNotifOpen(false); return; }
     setNotifOpen(true);
     setNotifLoading(true);
     try {
       const token = localStorage.getItem('pfp_token');
-      const res   = await fetch('/api/notifications?limit=20', {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res   = await fetch('/api/notifications?limit=20', { headers: { Authorization: `Bearer ${token}` } });
       if (res.ok) {
         const data = await res.json();
         setNotifications(data.notifications || []);
@@ -320,168 +240,158 @@ export default function AppShell({ children }) {
     finally { setNotifLoading(false); }
   };
 
-  // ── Mark single notification as read ───────────────────────────────────────
   const markRead = async (id) => {
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
     setUnreadCount(prev => Math.max(0, prev - 1));
     try {
       const token = localStorage.getItem('pfp_token');
       await fetch('/api/notifications', {
-        method:  'PATCH',
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body:    JSON.stringify({ id }),
+        body: JSON.stringify({ id }),
       });
     } catch { /* silent */ }
   };
 
-  // ── Mark all notifications as read ─────────────────────────────────────────
   const markAllRead = async () => {
     setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
     setUnreadCount(0);
     try {
       const token = localStorage.getItem('pfp_token');
       await fetch('/api/notifications', {
-        method:  'PATCH',
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body:    JSON.stringify({ markAllRead: true }),
+        body: JSON.stringify({ markAllRead: true }),
       });
     } catch { /* silent */ }
   };
 
-  const handleLogout = async () => {
-    await logout();
-  };
+  // Avatar: use profilePicUrl from user object if available, else initials
+  const avatarContent = user?.profilePicUrl
+    ? <img src={user.profilePicUrl} alt={initials} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} />
+    : <span>{initials}</span>;
+
+  const avatarStyle = (size) => ({
+    width: size, height: size,
+    background: user?.profilePicUrl ? 'transparent' : 'linear-gradient(135deg,#6c63ff,#a78bfa)',
+    borderRadius: '50%',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    color: '#fff', fontSize: size * 0.35, fontWeight: 700, flexShrink: 0,
+    overflow: 'hidden',
+  });
+
+  const isAdminPage = pathname.startsWith('/users') || pathname.startsWith('/settings');
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh', background: 'var(--bg-base)', fontFamily: "'Nunito', sans-serif" }}>
 
       {/* ── Sidebar ─────────────────────────────────────────────────────────── */}
       <aside style={{
-        width:        sideW,
-        flexShrink:   0,
-        background:   '#fff',
-        borderRight:  '1px solid var(--border-card)',
-        display:      'flex',
-        flexDirection:'column',
-        transition:   'width 0.2s ease',
-        position:     'sticky',
-        top:          0,
-        height:       '100vh',
-        boxShadow:    '2px 0 8px rgba(0,0,0,0.04)',
-        overflow:     'hidden',
+        width: sideW, flexShrink: 0, background: '#fff',
+        borderRight: '1px solid var(--border-card)',
+        display: 'flex', flexDirection: 'column',
+        transition: 'width 0.2s ease',
+        position: 'sticky', top: 0, height: '100vh',
+        boxShadow: '2px 0 8px rgba(0,0,0,0.04)', overflow: 'hidden',
       }}>
 
         {/* Logo */}
         <div style={{
-          padding:        collapsed ? '18px 0' : '18px 20px',
-          display:        'flex',
-          alignItems:     'center',
-          gap:            10,
-          borderBottom:   '1px solid var(--border-card)',
+          padding: collapsed ? '18px 0' : '18px 20px',
+          display: 'flex', alignItems: 'center', gap: 10,
+          borderBottom: '1px solid var(--border-card)',
           justifyContent: collapsed ? 'center' : 'flex-start',
         }}>
           <div style={{
-            width:          34,
-            height:         34,
-            background:     'linear-gradient(135deg,#6c63ff,#48c774)',
-            borderRadius:   9,
-            display:        'flex',
-            alignItems:     'center',
-            justifyContent: 'center',
-            fontSize:       18,
-            flexShrink:     0,
-          }}>
-            🐔
-          </div>
+            width: 34, height: 34,
+            background: 'linear-gradient(135deg,#6c63ff,#48c774)',
+            borderRadius: 9, display: 'flex', alignItems: 'center',
+            justifyContent: 'center', fontSize: 18, flexShrink: 0,
+          }}>🐔</div>
           {!collapsed && (
             <div>
               <div style={{ fontFamily: "'Poppins',sans-serif", fontWeight: 700, fontSize: 14, color: 'var(--text-primary)', lineHeight: 1.2 }}>PoultryFarm</div>
-              <div style={{ fontFamily: "'Poppins',sans-serif", fontWeight: 700, fontSize: 14, color: 'var(--purple)',       lineHeight: 1.2 }}>Pro</div>
+              <div style={{ fontFamily: "'Poppins',sans-serif", fontWeight: 700, fontSize: 14, color: 'var(--purple)', lineHeight: 1.2 }}>Pro</div>
             </div>
           )}
         </div>
 
         {/* Nav */}
         <nav style={{ flex: 1, padding: '12px 8px', overflowY: 'auto' }}>
-          {visibleNav.map(item => {
-            const active = pathname === item.href || pathname.startsWith(item.href + '/');
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                style={{
-                  display:        'flex',
-                  alignItems:     'center',
-                  gap:            10,
-                  padding:        collapsed ? '10px 0' : '10px 12px',
-                  borderRadius:   9,
-                  marginBottom:   3,
-                  justifyContent: collapsed ? 'center' : 'flex-start',
-                  background:     active ? 'var(--purple-light)' : 'transparent',
-                  color:          active ? 'var(--purple)'       : 'var(--text-secondary)',
-                  fontWeight:     active ? 700 : 600,
-                  fontSize:       13,
-                  textDecoration: 'none',
-                  transition:     'all 0.15s',
-                  borderLeft:     active ? '3px solid var(--purple)' : '3px solid transparent',
-                }}
-                onMouseEnter={e => { if (!active) { e.currentTarget.style.background = 'var(--bg-hover)'; e.currentTarget.style.color = 'var(--text-primary)'; }}}
-                onMouseLeave={e => { if (!active) { e.currentTarget.style.background = 'transparent';     e.currentTarget.style.color = 'var(--text-secondary)'; }}}
-              >
-                <span style={{ fontSize: 17, flexShrink: 0 }}>{item.icon}</span>
-                {!collapsed && <span>{item.label}</span>}
-              </Link>
-            );
-          })}
+          {/* Main nav items */}
+          {visibleMain.map(item => (
+            <NavLink key={item.href} href={item.href} icon={item.icon} label={item.label} collapsed={collapsed} pathname={pathname} />
+          ))}
+
+          {/* Administration group — only for ADMIN_ONLY roles */}
+          {isAdmin && (
+            <div style={{ marginTop: 8 }}>
+              {/* Group header */}
+              {!collapsed ? (
+                <button
+                  onClick={() => setAdminExpanded(p => !p)}
+                  style={{
+                    width: '100%', display: 'flex', alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '7px 12px', borderRadius: 8,
+                    background: isAdminPage ? 'var(--purple-light)' : 'transparent',
+                    border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                    marginBottom: 2,
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em', color: isAdminPage ? 'var(--purple)' : 'var(--text-muted)' }}>
+                      Administration
+                    </span>
+                  </div>
+                  <span style={{
+                    fontSize: 11, color: isAdminPage ? 'var(--purple)' : 'var(--text-muted)',
+                    transform: adminExpanded ? 'rotate(0deg)' : 'rotate(-90deg)',
+                    transition: 'transform 0.2s',
+                    lineHeight: 1,
+                  }}>▾</span>
+                </button>
+              ) : (
+                // Collapsed: show a divider line
+                <div style={{ height: 1, background: 'var(--border-card)', margin: '8px 0' }} />
+              )}
+
+              {/* Admin nav links — shown when expanded OR when sidebar is collapsed (icons only) */}
+              {(adminExpanded || collapsed) && NAV_ADMIN.map(item => (
+                <NavLink key={item.href} href={item.href} icon={item.icon} label={item.label} collapsed={collapsed} pathname={pathname} />
+              ))}
+            </div>
+          )}
         </nav>
 
-        {/* Bottom: collapse + user + sign out */}
+        {/* Bottom: collapse + user card */}
         <div style={{ borderTop: '1px solid var(--border-card)', padding: '12px 8px' }}>
           <button
             onClick={() => setCollapsed(p => !p)}
             style={{
-              width:          '100%',
-              background:     'transparent',
-              border:         'none',
-              cursor:         'pointer',
-              display:        'flex',
-              alignItems:     'center',
+              width: '100%', background: 'transparent', border: 'none',
+              cursor: 'pointer', display: 'flex', alignItems: 'center',
               justifyContent: collapsed ? 'center' : 'flex-start',
-              gap:            10,
-              padding:        '8px 12px',
-              borderRadius:   8,
-              color:          'var(--text-muted)',
-              fontSize:       13,
-              fontFamily:     'inherit',
-              marginBottom:   6,
+              gap: 10, padding: '8px 12px', borderRadius: 8,
+              color: 'var(--text-muted)', fontSize: 13, fontFamily: 'inherit', marginBottom: 6,
             }}
           >
             <span style={{ fontSize: 16 }}>{collapsed ? '→' : '←'}</span>
             {!collapsed && <span>Collapse</span>}
           </button>
 
-          <div style={{
-            display:        'flex',
-            alignItems:     'center',
-            gap:            10,
-            padding:        collapsed ? '8px 0' : '8px 12px',
+          {/* User card — clicking navigates to /profile */}
+          <Link href="/profile" style={{
+            display: 'flex', alignItems: 'center', gap: 10,
+            padding: collapsed ? '8px 0' : '8px 12px',
             justifyContent: collapsed ? 'center' : 'flex-start',
-          }}>
-            <div style={{
-              width:          32,
-              height:         32,
-              background:     'linear-gradient(135deg,#6c63ff,#a78bfa)',
-              borderRadius:   '50%',
-              display:        'flex',
-              alignItems:     'center',
-              justifyContent: 'center',
-              color:          '#fff',
-              fontSize:       11,
-              fontWeight:     700,
-              flexShrink:     0,
-            }}>
-              {initials}
-            </div>
+            textDecoration: 'none', borderRadius: 9,
+            transition: 'background 0.15s',
+          }}
+            onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-hover)'}
+            onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+          >
+            <div style={avatarStyle(32)}>{avatarContent}</div>
             {!collapsed && (
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -490,28 +400,18 @@ export default function AppShell({ children }) {
                 <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{roleLabel}</div>
               </div>
             )}
-          </div>
+            {!collapsed && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>✏️</span>}
+          </Link>
 
           {!collapsed && (
             <button
-              onClick={handleLogout}
+              onClick={() => logout()}
               style={{
-                width:          '100%',
-                background:     'transparent',
-                border:         '1px solid var(--border)',
-                borderRadius:   8,
-                padding:        '7px 12px',
-                color:          'var(--text-muted)',
-                fontSize:       12,
-                cursor:         'pointer',
-                fontFamily:     'inherit',
-                fontWeight:     600,
-                marginTop:      4,
-                display:        'flex',
-                alignItems:     'center',
-                justifyContent: 'center',
-                gap:            6,
-                transition:     'all 0.15s',
+                width: '100%', background: 'transparent', border: '1px solid var(--border)',
+                borderRadius: 8, padding: '7px 12px', color: 'var(--text-muted)',
+                fontSize: 12, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600,
+                marginTop: 4, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                gap: 6, transition: 'all 0.15s',
               }}
               onMouseEnter={e => { e.currentTarget.style.background = 'var(--red-bg)'; e.currentTarget.style.color = 'var(--red)'; e.currentTarget.style.borderColor = 'var(--red-border)'; }}
               onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.borderColor = 'var(--border)'; }}
@@ -527,17 +427,10 @@ export default function AppShell({ children }) {
 
         {/* Topbar */}
         <header style={{
-          height:       60,
-          background:   '#fff',
-          borderBottom: '1px solid var(--border-card)',
-          display:      'flex',
-          alignItems:   'center',
-          justifyContent: 'space-between',
-          padding:      '0 24px',
-          position:     'sticky',
-          top:          0,
-          zIndex:       100,
-          boxShadow:    '0 1px 4px rgba(0,0,0,0.05)',
+          height: 60, background: '#fff', borderBottom: '1px solid var(--border-card)',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '0 24px', position: 'sticky', top: 0, zIndex: 100,
+          boxShadow: '0 1px 4px rgba(0,0,0,0.05)',
         }}>
           <div>
             <div style={{ fontFamily: "'Poppins',sans-serif", fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>
@@ -549,52 +442,27 @@ export default function AppShell({ children }) {
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-
-            {/* ── Notification bell ───────────────────────────────────────── */}
-            <button
-              ref={bellRef}
-              onClick={openNotifications}
-              style={{
-                position:       'relative',
-                background:     notifOpen ? 'var(--purple-light)' : 'var(--bg-elevated)',
-                border:         `1px solid ${notifOpen ? '#d4d8ff' : 'var(--border)'}`,
-                borderRadius:   9,
-                width:          36,
-                height:         36,
-                display:        'flex',
-                alignItems:     'center',
-                justifyContent: 'center',
-                cursor:         'pointer',
-                fontSize:       16,
-                transition:     'all 0.15s',
-              }}
-            >
+            {/* Bell */}
+            <button ref={bellRef} onClick={openNotifications} style={{
+              position: 'relative',
+              background: notifOpen ? 'var(--purple-light)' : 'var(--bg-elevated)',
+              border: `1px solid ${notifOpen ? '#d4d8ff' : 'var(--border)'}`,
+              borderRadius: 9, width: 36, height: 36,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              cursor: 'pointer', fontSize: 16, transition: 'all 0.15s',
+            }}>
               🔔
-              {/* Live unread badge — only shown when count > 0 */}
               {unreadCount > 0 && (
                 <span style={{
-                  position:       'absolute',
-                  top:            -4,
-                  right:          -4,
-                  minWidth:       16,
-                  height:         16,
-                  background:     'var(--red)',
-                  borderRadius:   '50%',
-                  fontSize:       9,
-                  color:          '#fff',
-                  display:        'flex',
-                  alignItems:     'center',
-                  justifyContent: 'center',
-                  fontWeight:     700,
-                  border:         '2px solid #fff',
-                  padding:        '0 3px',
-                }}>
-                  {unreadCount > 99 ? '99+' : unreadCount}
-                </span>
+                  position: 'absolute', top: -4, right: -4,
+                  minWidth: 16, height: 16, background: 'var(--red)',
+                  borderRadius: '50%', fontSize: 9, color: '#fff',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontWeight: 700, border: '2px solid #fff', padding: '0 3px',
+                }}>{unreadCount > 99 ? '99+' : unreadCount}</span>
               )}
             </button>
 
-            {/* Notification dropdown */}
             {notifOpen && (
               <NotifDropdown
                 notifications={notifLoading ? [] : notifications}
@@ -606,35 +474,22 @@ export default function AppShell({ children }) {
               />
             )}
 
-            {/* ── User avatar chip ────────────────────────────────────────── */}
-            <div style={{
-              display:    'flex',
-              alignItems: 'center',
-              gap:        8,
-              padding:    '5px 12px',
-              background: 'var(--purple-light)',
-              border:     '1px solid #d4d8ff',
-              borderRadius: 9,
-              cursor:     'default',
-            }}>
-              <div style={{
-                width:          26,
-                height:         26,
-                background:     'linear-gradient(135deg,#6c63ff,#a78bfa)',
-                borderRadius:   '50%',
-                display:        'flex',
-                alignItems:     'center',
-                justifyContent: 'center',
-                color:          '#fff',
-                fontSize:       10,
-                fontWeight:     700,
-              }}>
-                {initials}
-              </div>
+            {/* Avatar chip — links to /profile */}
+            <Link href="/profile" style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              padding: '5px 12px',
+              background: 'var(--purple-light)', border: '1px solid #d4d8ff',
+              borderRadius: 9, cursor: 'pointer', textDecoration: 'none',
+              transition: 'background 0.15s',
+            }}
+              onMouseEnter={e => e.currentTarget.style.background = '#e4e2ff'}
+              onMouseLeave={e => e.currentTarget.style.background = 'var(--purple-light)'}
+            >
+              <div style={avatarStyle(26)}>{avatarContent}</div>
               <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--purple)' }}>
                 {user?.firstName}
               </div>
-            </div>
+            </Link>
           </div>
         </header>
 

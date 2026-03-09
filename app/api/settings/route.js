@@ -1,9 +1,8 @@
-// app/api/settings/route.js — Tenant-level settings (SMS config, alert preferences)
+// app/api/settings/route.js — Tenant-level settings (SMS + Email config, alert preferences)
 // GET  — returns current settings for this tenant
 // PATCH — updates settings (FARM_ADMIN / FARM_MANAGER / CHAIRPERSON / SUPER_ADMIN only)
 //
 // Requires `settings Json? @default("{}")` on the Tenant model in schema.prisma
-// and npx prisma generate to have been run after adding it.
 
 import { NextResponse } from 'next/server';
 import { prisma }       from '@/lib/db/prisma';
@@ -18,6 +17,14 @@ const DEFAULT_SETTINGS = {
     mortalityAlert: { enabled: true, threshold: 10 },
     lowFeedAlert:   { enabled: true },
     rejectionAlert: { enabled: true },
+  },
+  // Phase 5.2: email alert preferences
+  email: {
+    enabled:              true,   // true as long as SMTP_HOST is configured
+    lowFeedAlert:         { enabled: true,  daysRemainingThreshold: 14 },
+    overdueVaccination:   { enabled: true },
+    mortalitySpike:       { enabled: true },
+    verificationRejected: { enabled: true },
   },
 };
 
