@@ -208,6 +208,8 @@ model User {
   supplierInvoicesApproved SupplierInvoice[] @relation("SupplierInvoiceApprovedBy")
   supplierInvoicesReconciled SupplierInvoice[] @relation("SupplierInvoiceReconciledBy")
   paymentRemindersSent     PaymentReminder[]
+  bankTransactionsCreated  BankTransaction[] @relation("BankTxCreatedBy")
+  bankTransactionsMatched  BankTransaction[] @relation("BankTxMatchedBy")
 
   @@unique([tenantId, email])
   @@map("users")
@@ -2069,6 +2071,7 @@ model SalesInvoice {
   reconciledBy User?   @relation("SalesInvoiceReconciledBy",  fields: [reconciledById], references: [id])
 
   reminders PaymentReminder[]
+  bankTransactions BankTransaction[] @relation("BankTxSalesInvoice")
 
   @@unique([tenantId, invoiceNumber])
   @@index([tenantId])
@@ -2117,6 +2120,7 @@ model SupplierInvoice {
   reconciledBy  User?    @relation("SupplierInvoiceReconciledBy",   fields: [reconciledById], references: [id])
 
   reminders PaymentReminder[]
+  bankTransactions BankTransaction[] @relation("BankTxSupplierInvoice")
 
   @@unique([tenantId, invoiceNumber])
   @@index([tenantId])
@@ -2144,4 +2148,36 @@ model PaymentReminder {
   @@index([invoiceType, salesInvoiceId])
   @@index([invoiceType, supplierInvoiceId])
   @@map("payment_reminders")
+}
+
+model BankTransaction {
+  id                       String    @id @default(uuid())
+  tenantId                 String
+  txDate                   DateTime  @db.Date
+  description              String
+  reference                String?
+  amount                   Decimal   @db.Decimal(14,2)  // positive = credit, negative = debit
+  currency                 Currency  @default(NGN)
+  bankAccount              String?
+  source                   String    @default("MANUAL")  // MANUAL | CSV
+
+  // Match
+  matchedAt                DateTime?
+  matchedById              String?
+  matchedSalesInvoiceId    String?
+  matchedSupplierInvoiceId String?
+
+  // Metadata
+  createdById  String
+  createdAt    DateTime  @default(now())
+
+  matchedBy              User?            @relation("BankTxMatchedBy",    fields: [matchedById],              references: [id])
+  createdBy              User             @relation("BankTxCreatedBy",     fields: [createdById],              references: [id])
+  matchedSalesInvoice    SalesInvoice?    @relation("BankTxSalesInvoice",  fields: [matchedSalesInvoiceId],    references: [id])
+  matchedSupplierInvoice SupplierInvoice? @relation("BankTxSupplierInvoice", fields: [matchedSupplierInvoiceId], references: [id])
+
+  @@index([tenantId])
+  @@index([txDate])
+  @@index([matchedAt])
+  @@map("bank_transactions")
 }

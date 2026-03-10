@@ -523,7 +523,21 @@ export async function GET(request) {
     });
 
     // ── Generate PDF buffer ───────────────────────────────────
-    const PdfPrinter = (await import('pdfmake/src/printer.js')).default;
+    let PdfPrinter;
+    try {
+      const mod = await import('pdfmake/build/pdfmake.server.js');
+      PdfPrinter = mod.default ?? mod;
+    } catch {
+      try {
+        const mod = await import('pdfmake/src/printer.js');
+        PdfPrinter = mod.default ?? mod;
+      } catch {
+        PdfPrinter = null;
+      }
+    }
+    if (!PdfPrinter) {
+      return NextResponse.json({ error: 'PDF generation unavailable. Run: npm install pdfmake --legacy-peer-deps' }, { status: 503 });
+    }
     const fonts = {
       Helvetica: {
         normal:      'Helvetica',
@@ -568,3 +582,18 @@ export async function GET(request) {
     return NextResponse.json({ error: 'Failed to generate PDF' }, { status: 500 });
   }
 }
+
+
+
+================================================
+FILE: app/api/search/route.js
+================================================
+// app/api/search/route.js — Global cross-entity search
+import { NextResponse } from 'next/server';
+import { prisma }       from '@/lib/db/prisma';
+import { verifyToken }  from '@/lib/middleware/auth';
+
+const MANAGER_ROLES = ['FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN', 'PEN_MANAGER'];
+const STORE_ROLES   = ['STORE_MANAGER', 'STORE_CLERK'];
+
+// Map entity type → the page href to navigate to
