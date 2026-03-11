@@ -1,5 +1,6 @@
 'use client';
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import { createPortal } from 'react-dom';
 import AppShell from '@/components/layout/AppShell';
 import { useAuth } from '@/components/layout/AuthProvider';
@@ -1530,8 +1531,274 @@ function IcDashboard({ user, apiFetch }) {
 }
 
 // ── Main ───────────────────────────────────────────────────────────────────────
+
+// ── Accountant Dashboard ──────────────────────────────────────────────────────
+function AccountantDashboard({ user, apiFetch }) {
+  const [arSummary,  setArSummary]  = useState(null);
+  const [apSummary,  setApSummary]  = useState(null);
+  const [arInvoices, setArInvoices] = useState([]);
+  const [apInvoices, setApInvoices] = useState([]);
+  const [pl,         setPl]         = useState(null);
+  const [loading,    setLoading]    = useState(true);
+  const [error,      setError]      = useState('');
+
+  function fmtAmt(n, currency = 'NGN') {
+    const num = parseFloat(n || 0);
+    if (num >= 1_000_000) return `${currency} ${(num / 1_000_000).toFixed(1)}M`;
+    if (num >= 1_000)     return `${currency} ${(num / 1_000).toFixed(0)}K`;
+    return `${currency} ${num.toLocaleString('en-NG', { minimumFractionDigits: 0 })}`;
+  }
+
+  function fmtFull(n, currency = 'NGN') {
+    return `${currency} ${parseFloat(n || 0).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  }
+
+  function fmtDate(d) {
+    if (!d) return '—';
+    return new Date(d).toLocaleDateString('en-NG', { day: '2-digit', month: 'short', year: 'numeric' });
+  }
+
+  function daysUntil(d) {
+    if (!d) return null;
+    return Math.floor((new Date(d) - new Date()) / (1000 * 60 * 60 * 24));
+  }
+
+  const STATUS_META = {
+    DRAFT:          { bg: '#f3f4f6', color: '#6b7280', label: 'Draft' },
+    SENT:           { bg: '#eff6ff', color: '#3b82f6', label: 'Sent' },
+    APPROVED:       { bg: '#f0fdf4', color: '#16a34a', label: 'Approved' },
+    PARTIALLY_PAID: { bg: '#faf5ff', color: '#9333ea', label: 'Part. Paid' },
+    PAID:           { bg: '#f0fdf4', color: '#16a34a', label: 'Paid' },
+    OVERDUE:        { bg: '#fef2f2', color: '#dc2626', label: 'Overdue' },
+    VOID:           { bg: '#f9fafb', color: '#9ca3af', label: 'Void' },
+    DISPUTED:       { bg: '#fffbeb', color: '#d97706', label: 'Disputed' },
+  };
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const now  = new Date();
+      const from = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+      const to   = now.toISOString().split('T')[0];
+
+      const [arRes, apRes, plRes] = await Promise.all([
+        apiFetch('/api/finance/sales-invoices?limit=50'),
+        apiFetch('/api/finance/supplier-invoices?limit=50'),
+        apiFetch(`/api/finance/pl?from=${from}&to=${to}`),
+      ]);
+
+      const [arData, apData, plData] = await Promise.all([
+        arRes.json(), apRes.json(), plRes.json(),
+      ]);
+
+      const arAll     = arData.invoices || [];
+      const arUnpaid  = arAll.filter(i => ['SENT','OVERDUE','PARTIALLY_PAID'].includes(i.status));
+      const arOverdue = arAll.filter(i => i.status === 'OVERDUE');
+      setArSummary({
+        outstanding: arUnpaid.reduce((s, i) => s + parseFloat(i.totalAmount) - parseFloat(i.amountPaid||0), 0),
+        overdueAmt:  arOverdue.reduce((s, i) => s + parseFloat(i.totalAmount) - parseFloat(i.amountPaid||0), 0),
+        overdueCount: arOverdue.length,
+      });
+      setArInvoices(arUnpaid.sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate)).slice(0, 8));
+
+      const apAll     = apData.invoices || [];
+      const apUnpaid  = apAll.filter(i => ['APPROVED','OVERDUE','PARTIALLY_PAID'].includes(i.status));
+      const apOverdue = apAll.filter(i => i.status === 'OVERDUE');
+      setApSummary({
+        outstanding: apUnpaid.reduce((s, i) => s + parseFloat(i.totalAmount) - parseFloat(i.amountPaid||0), 0),
+        overdueAmt:  apOverdue.reduce((s, i) => s + parseFloat(i.totalAmount) - parseFloat(i.amountPaid||0), 0),
+        overdueCount: apOverdue.length,
+      });
+      setApInvoices(apUnpaid.sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate)).slice(0, 8));
+
+      setPl(plData.summary || null);
+    } catch (e) {
+      setError('Failed to load dashboard data');
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  }, [apiFetch]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const now      = new Date();
+  const monthStr = now.toLocaleDateString('en-NG', { month: 'long', year: 'numeric' });
+
+  function KpiCard({ label, value, sub, icon, color, alert }) {
+    return (
+      <div style={{ background:'#fff', border:`1px solid ${alert?'#fecaca':'#e5e7eb'}`, borderRadius:14, padding:'18px 20px', position:'relative', overflow:'hidden' }}>
+        {alert && <div style={{ position:'absolute', top:0, left:0, right:0, height:3, background:'#dc2626', borderRadius:'14px 14px 0 0' }} />}
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:12 }}>
+          <span style={{ fontSize:11, fontWeight:700, textTransform:'uppercase', letterSpacing:'0.07em', color:'var(--text-muted)' }}>{label}</span>
+          <div style={{ width:34, height:34, borderRadius:9, background:`${color}18`, display:'flex', alignItems:'center', justifyContent:'center', fontSize:17 }}>{icon}</div>
+        </div>
+        {loading
+          ? <div style={{ height:30, background:'#f3f4f6', borderRadius:6, marginBottom:8 }} />
+          : <div style={{ fontFamily:"'Poppins',sans-serif", fontSize:22, fontWeight:700, color, marginBottom:4, lineHeight:1.2 }}>{value}</div>
+        }
+        {sub && <div style={{ fontSize:11, color:'var(--text-muted)' }}>{sub}</div>}
+      </div>
+    );
+  }
+
+  function StatusPill({ status }) {
+    const s = STATUS_META[status] || { bg:'#f3f4f6', color:'#6b7280', label: status };
+    return <span style={{ background:s.bg, color:s.color, fontSize:11, fontWeight:700, padding:'3px 9px', borderRadius:20, whiteSpace:'nowrap' }}>{s.label}</span>;
+  }
+
+  function InvoiceTable({ invoices, type, total, totalColor }) {
+    if (loading) return (
+      <div style={{ padding:16 }}>
+        {[1,2,3].map(i => <div key={i} style={{ height:36, background:'#f3f4f6', borderRadius:6, marginBottom:8 }} />)}
+      </div>
+    );
+    if (invoices.length === 0) return (
+      <div style={{ padding:'32px 16px', textAlign:'center', color:'var(--text-muted)', fontSize:13 }}>
+        ✅ All clear
+      </div>
+    );
+    return (
+      <>
+        <div style={{ overflowX:'auto' }}>
+          <table style={{ width:'100%', borderCollapse:'collapse' }}>
+            <thead>
+              <tr style={{ background:'#f9fafb' }}>
+                {['Invoice','Party','Balance','Due','Status'].map(h => (
+                  <th key={h} style={{ padding:'8px 12px', fontSize:10, fontWeight:700, textTransform:'uppercase', letterSpacing:'0.06em', color:'var(--text-muted)', textAlign:'left', whiteSpace:'nowrap' }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {invoices.map(inv => {
+                const balance   = parseFloat(inv.totalAmount) - parseFloat(inv.amountPaid||0);
+                const days      = daysUntil(inv.dueDate);
+                const isOverdue = days !== null && days < 0;
+                const isDueSoon = days !== null && days >= 0 && days <= 3;
+                return (
+                  <tr key={inv.id} style={{ borderBottom:'1px solid #f3f4f6', cursor:'pointer' }}
+                    onClick={() => window.location.href='/finance'}
+                    onMouseEnter={e => e.currentTarget.style.background='#f9fafb'}
+                    onMouseLeave={e => e.currentTarget.style.background='transparent'}>
+                    <td style={{ padding:'10px 12px', fontSize:12, fontWeight:700, color:'#6c63ff', whiteSpace:'nowrap' }}>{inv.invoiceNumber}</td>
+                    <td style={{ padding:'10px 12px', fontSize:12, color:'#374151', maxWidth:150, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                      {type==='ar' ? inv.customer?.name : inv.supplier?.name}
+                    </td>
+                    <td style={{ padding:'10px 12px', fontSize:12, color:'#374151', whiteSpace:'nowrap' }}>{fmtFull(balance, inv.currency)}</td>
+                    <td style={{ padding:'10px 12px', fontSize:11, fontWeight:700, whiteSpace:'nowrap', color: isOverdue?'#dc2626': isDueSoon?'#d97706':'#6b7280' }}>
+                      {isOverdue ? `${Math.abs(days)}d overdue` : days===0 ? 'Due today' : isDueSoon ? `Due in ${days}d` : fmtDate(inv.dueDate)}
+                    </td>
+                    <td style={{ padding:'10px 12px' }}><StatusPill status={inv.status} /></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div style={{ padding:'10px 16px', borderTop:'1px solid #f3f4f6', display:'flex', justifyContent:'space-between', fontSize:12 }}>
+          <span style={{ color:'var(--text-muted)' }}>Total Outstanding</span>
+          <span style={{ fontWeight:700, color:totalColor }}>{fmtFull(total)}</span>
+        </div>
+      </>
+    );
+  }
+
+  return (
+    <div style={{ padding:'24px 28px', maxWidth:1200, margin:'0 auto' }}>
+
+      {/* Header */}
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:28 }}>
+        <div>
+          <h1 style={{ fontFamily:"'Poppins',sans-serif", fontSize:24, fontWeight:700, margin:'0 0 4px', color:'#111827' }}>
+            Finance Overview
+          </h1>
+          <p style={{ fontSize:13, color:'var(--text-muted)', margin:0 }}>
+            {now.toLocaleDateString('en-NG', { weekday:'long', day:'numeric', month:'long', year:'numeric' })} · {monthStr} P&L
+          </p>
+        </div>
+        <div style={{ display:'flex', gap:10 }}>
+          <a href="/finance" style={{ background:'#6c63ff', color:'#fff', padding:'9px 18px', borderRadius:9, fontSize:13, fontWeight:600, textDecoration:'none' }}>
+            💰 Open Finance
+          </a>
+          <button onClick={load} style={{ background:'#fff', border:'1px solid #e5e7eb', color:'#374151', padding:'9px 14px', borderRadius:9, fontSize:13, fontWeight:600, cursor:'pointer' }}>
+            ↻ Refresh
+          </button>
+        </div>
+      </div>
+
+      {error && (
+        <div style={{ background:'#fef2f2', border:'1px solid #fecaca', borderRadius:10, padding:'12px 16px', marginBottom:20, color:'#dc2626', fontSize:13 }}>
+          ⚠ {error}
+        </div>
+      )}
+
+      {/* KPI Cards */}
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:14, marginBottom:28 }}>
+        <KpiCard label="Revenue MTD"     value={fmtAmt(pl?.totalRevenue)}    sub={`${pl?.revenueInvoiceCount||0} invoices`}         icon="📈" color="#6c63ff" />
+        <KpiCard label="Outstanding AR"  value={fmtAmt(arSummary?.outstanding)} sub={`${arSummary?.overdueCount||0} overdue`}        icon="🧾" color="#3b82f6" alert={arSummary?.overdueCount>0} />
+        <KpiCard label="Payables Due"    value={fmtAmt(apSummary?.outstanding)} sub={`${apSummary?.overdueCount||0} overdue`}        icon="📤" color="#f59e0b" alert={apSummary?.overdueCount>0} />
+        <KpiCard label="Net Profit MTD"  value={fmtAmt(pl?.netProfit)}       sub={pl?`${pl.netMarginPct?.toFixed(1)}% margin`:'—'} icon="💹" color={pl?.netProfit>=0?'#16a34a':'#dc2626'} />
+      </div>
+
+      {/* Invoice Tables */}
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:20, marginBottom:24 }}>
+        <div style={{ background:'#fff', border:'1px solid #e5e7eb', borderRadius:14, overflow:'hidden' }}>
+          <div style={{ padding:'14px 16px', borderBottom:'1px solid #f3f4f6', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+            <div>
+              <p style={{ margin:0, fontFamily:"'Poppins',sans-serif", fontSize:14, fontWeight:700, color:'#111827' }}>Receivables</p>
+              <p style={{ margin:0, fontSize:11, color:'var(--text-muted)' }}>Unpaid sales invoices</p>
+            </div>
+            <a href="/finance" style={{ fontSize:11, color:'#6c63ff', fontWeight:600, textDecoration:'none' }}>View all →</a>
+          </div>
+          <InvoiceTable invoices={arInvoices} type="ar" total={arSummary?.outstanding} totalColor="#3b82f6" />
+        </div>
+
+        <div style={{ background:'#fff', border:'1px solid #e5e7eb', borderRadius:14, overflow:'hidden' }}>
+          <div style={{ padding:'14px 16px', borderBottom:'1px solid #f3f4f6', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+            <div>
+              <p style={{ margin:0, fontFamily:"'Poppins',sans-serif", fontSize:14, fontWeight:700, color:'#111827' }}>Payables</p>
+              <p style={{ margin:0, fontSize:11, color:'var(--text-muted)' }}>Approved supplier invoices due</p>
+            </div>
+            <a href="/finance" style={{ fontSize:11, color:'#6c63ff', fontWeight:600, textDecoration:'none' }}>View all →</a>
+          </div>
+          <InvoiceTable invoices={apInvoices} type="ap" total={apSummary?.outstanding} totalColor="#f59e0b" />
+        </div>
+      </div>
+
+      {/* P&L Strip */}
+      {pl && !loading && (
+        <div style={{ background:'#fff', border:'1px solid #e5e7eb', borderRadius:14, padding:'16px 20px' }}>
+          <p style={{ margin:'0 0 14px', fontFamily:"'Poppins',sans-serif", fontSize:14, fontWeight:700, color:'#111827' }}>
+            P&L Summary — {monthStr}
+          </p>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(6,1fr)', gap:10 }}>
+            {[
+              { label:'Revenue',      value:fmtAmt(pl.totalRevenue),  color:'#6c63ff' },
+              { label:'COGS',         value:fmtAmt(pl.totalCOGS),     color:'#f59e0b' },
+              { label:'Gross Profit', value:fmtAmt(pl.grossProfit),   color:pl.grossProfit>=0?'#16a34a':'#dc2626' },
+              { label:'OpEx',         value:fmtAmt(pl.totalOpEx),     color:'#f59e0b' },
+              { label:'Net Profit',   value:fmtAmt(pl.netProfit),     color:pl.netProfit>=0?'#16a34a':'#dc2626' },
+              { label:'Net Margin',   value:`${pl.netMarginPct?.toFixed(1)}%`, color:pl.netMarginPct>=0?'#16a34a':'#dc2626' },
+            ].map(({ label, value, color }) => (
+              <div key={label} style={{ textAlign:'center', background:'#f9fafb', borderRadius:10, padding:'10px 8px' }}>
+                <p style={{ margin:'0 0 4px', fontSize:10, fontWeight:700, textTransform:'uppercase', letterSpacing:'0.06em', color:'var(--text-muted)' }}>{label}</p>
+                <p style={{ margin:0, fontFamily:"'Poppins',sans-serif", fontSize:15, fontWeight:700, color }}>{value}</p>
+              </div>
+            ))}
+          </div>
+          <div style={{ marginTop:12, textAlign:'right' }}>
+            <a href="/finance" style={{ fontSize:12, color:'#6c63ff', fontWeight:600, textDecoration:'none' }}>View full P&L report →</a>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function DashboardPage() {
   const { user, apiFetch } = useAuth();
+  const router = useRouter();
   const [data,    setData]    = useState(null);
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState(null);
@@ -1574,6 +1841,17 @@ export default function DashboardPage() {
       </div>
     </AppShell>
   );
+
+  // ── Accountant ───────────────────────────────────────────────────────────────
+  if (role === 'ACCOUNTANT') {
+    return (
+      <AppShell>
+        <div className="animate-in">
+          <AccountantDashboard user={user} apiFetch={apiFetch} />
+        </div>
+      </AppShell>
+    );
+  }
 
   // ── Internal Control Officer ──────────────────────────────────────────────
   if (role === 'INTERNAL_CONTROL') {

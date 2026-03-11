@@ -31,12 +31,12 @@ const AP_STATUS_META = {
 
 // ─── AR status meta ───────────────────────────────────────────────────────────
 const AR_STATUS_META = {
-  DRAFT:          { label: 'Draft',       cls: 'status-grey'   },
-  SENT:           { label: 'Sent',        cls: 'status-blue'   },
-  PARTIALLY_PAID: { label: 'Part. Paid',  cls: 'status-purple' },
-  PAID:           { label: 'Paid',        cls: 'status-green'  },
-  OVERDUE:        { label: 'Overdue',     cls: 'status-red'    },
-  VOID:           { label: 'Void',        cls: 'status-grey'   },
+  DRAFT:          { label: 'Draft',           cls: 'status-grey'   },
+  SENT:           { label: 'Sent',            cls: 'status-blue'   },
+  PARTIALLY_PAID: { label: 'Part. Received',  cls: 'status-purple' },
+  PAID:           { label: 'Received',        cls: 'status-green'  },
+  OVERDUE:        { label: 'Overdue',         cls: 'status-red'    },
+  VOID:           { label: 'Void',            cls: 'status-grey'   },
 };
 
 function StatusBadge({ status, meta }) {
@@ -132,7 +132,8 @@ function TotalsRow({ subtotal, taxAmount, totalAmount, currency, onTaxChange, re
 }
 
 // ─── Shared: Pay Modal ────────────────────────────────────────────────────────
-function PayModal({ invoice, onClose, onSave, saving }) {
+function PayModal({ invoice, onClose, onSave, saving, context = 'payment' }) {
+  const isReceipt = context === 'receipt';
   const balance = parseFloat(invoice.totalAmount) - parseFloat(invoice.amountPaid);
   const [form, setForm] = useState({ amountPaid: balance, paymentMethod: 'BANK_TRANSFER', paymentRef: '', paidAt: new Date().toISOString().split('T')[0] });
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
@@ -141,7 +142,7 @@ function PayModal({ invoice, onClose, onSave, saving }) {
     <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="modal animate-in" style={{ width: '100%', maxWidth: 460 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-          <h2 style={{ fontFamily: 'Poppins, sans-serif', fontSize: 17 }}>Record Payment</h2>
+          <h2 style={{ fontFamily: 'Poppins, sans-serif', fontSize: 17 }}>{isReceipt ? 'Record Receipt' : 'Record Payment'}</h2>
           <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: 'var(--text-muted)' }}>×</button>
         </div>
         <div className="alert alert-blue" style={{ marginBottom: 18 }}>
@@ -151,7 +152,7 @@ function PayModal({ invoice, onClose, onSave, saving }) {
         </div>
         <div style={{ display: 'grid', gap: 14 }}>
           <div>
-            <label className="label">Amount Paid ({invoice.currency}) *</label>
+            <label className="label">{isReceipt ? 'Amount Received' : 'Amount Paid'} ({invoice.currency}) *</label>
             <input className="input" type="number" min="0.01" max={balance} step="any" value={form.amountPaid} onChange={e => set('amountPaid', parseFloat(e.target.value) || 0)} />
             <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>Max: {fmt(balance, invoice.currency)}</p>
           </div>
@@ -177,7 +178,7 @@ function PayModal({ invoice, onClose, onSave, saving }) {
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 24 }}>
           <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
           <button className="btn btn-primary" onClick={() => onSave({ ...form, action: 'pay' })} disabled={!form.amountPaid || saving}>
-            {saving ? 'Saving…' : 'Record Payment'}
+            {saving ? 'Saving…' : isReceipt ? 'Record Receipt' : 'Record Payment'}
           </button>
         </div>
       </div>
@@ -484,7 +485,7 @@ function ApTab({ apiFetch, role }) {
       </div>
 
       {showCreate && <ApCreateModal suppliers={suppliers} receipts={receipts} apiFetch={apiFetch} onClose={() => setShowCreate(false)} onSave={handleCreate} saving={saving} />}
-      {detailInv && <ApDetailModal invoice={detailInv} role={role} actionLoading={actionLoading} onClose={() => setDetailInv(null)} onApprove={() => patch(detailInv.id, { action: 'approve' }, `${detailInv.invoiceNumber} approved`)} onPay={() => { setPayInv(detailInv); setDetailInv(null); }} onDispute={() => { const r = window.prompt('Reason for dispute:'); if (r) patch(detailInv.id, { action: 'dispute', reason: r }, 'Marked as disputed'); }} onVoid={() => { const r = window.prompt('Reason for voiding:'); if (r) patch(detailInv.id, { action: 'void', reason: r }, 'Invoice voided'); }} onReminder={() => patch(detailInv.id, { action: 'reminder', channel: 'IN_APP' }, 'Reminder sent')} onDownloadPdf={() => downloadPdf(detailInv)} />}
+      {detailInv && <ApDetailModal invoice={detailInv} role={role} actionLoading={actionLoading} onClose={() => setDetailInv(null)} onApprove={() => patch(detailInv.id, { action: 'approve' }, `${detailInv.invoiceNumber} approved`)} onPay={() => { setPayInv(detailInv); setDetailInv(null); }} onDispute={() => { const r = window.prompt('Reason for dispute:'); if (r) patch(detailInv.id, { action: 'dispute', reason: r }, 'Marked as disputed'); }} onVoid={() => { const r = window.prompt('Reason for voiding:'); if (r) patch(detailInv.id, { action: 'void', reason: r }, 'Invoice voided'); }} onReminder={() => patch(detailInv.id, { action: 'reminder', channel: 'EMAIL' }, 'Reminder sent')} onDownloadPdf={() => downloadPdf(detailInv)} />}
       {payInv && <PayModal invoice={payInv} onClose={() => setPayInv(null)} onSave={form => patch(payInv.id, form, `Payment recorded for ${payInv.invoiceNumber}`)} saving={saving} />}
     </div>
   );
@@ -612,7 +613,18 @@ function CustomerModal({ customer, onClose, onSave, saving }) {
         </div>
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 22 }}>
           <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" onClick={() => onSave(form)} disabled={!canSave || saving}>{saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Create Customer'}</button>
+          <button className="btn btn-primary" onClick={() => onSave({
+            ...form,
+            creditLimit:  form.creditLimit !== '' ? parseFloat(form.creditLimit) : null,
+            taxId:        form.taxId        || null,
+            contactName:  form.contactName  || null,
+            phone:        form.phone        || null,
+            email:        form.email        || null,
+            address:      form.address      || null,
+            companyName:  form.companyName  || null,
+            paymentTerms: form.paymentTerms || null,
+            notes:        form.notes        || null,
+          })} disabled={!canSave || saving}>{saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Create Customer'}</button>
         </div>
       </div>
     </div>
@@ -724,7 +736,7 @@ function ArDetailModal({ invoice, onClose, onSend, onPay, onVoid, onReminder, on
         {!isReadOnly && (
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             {canSend     && <button className="btn btn-primary"  onClick={onSend}     disabled={actionLoading} style={{ fontSize: 13 }}>📤 Mark as Sent</button>}
-            {canPay      && <button className="btn btn-outline"  onClick={onPay}      disabled={actionLoading} style={{ fontSize: 13 }}>💳 Record Payment</button>}
+            {canPay      && <button className="btn btn-outline"  onClick={onPay}      disabled={actionLoading} style={{ fontSize: 13 }}>💳 Record Receipt</button>}
             {canReminder && <button className="btn btn-ghost"    onClick={onReminder} disabled={actionLoading} style={{ fontSize: 13 }}>🔔 Send Reminder</button>}
             {canVoid     && <button className="btn btn-danger"   onClick={onVoid}     disabled={actionLoading} style={{ fontSize: 13 }}>✕ Void</button>}
           </div>
@@ -1011,7 +1023,7 @@ function ArTab({ apiFetch, role }) {
                         <td onClick={e => e.stopPropagation()}>
                           <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
                             {FINANCE_ROLES.includes(role) && inv.status === 'DRAFT' && <button className="btn btn-outline" onClick={() => patch(inv.id, { action: 'send' }, `${inv.invoiceNumber} marked as sent`)} style={{ fontSize: 11, padding: '4px 10px' }}>Send</button>}
-                            {FINANCE_ROLES.includes(role) && ['SENT','OVERDUE','PARTIALLY_PAID'].includes(inv.status) && <button className="btn btn-primary" onClick={() => setPayInv(inv)} style={{ fontSize: 11, padding: '4px 10px' }}>Pay</button>}
+                            {FINANCE_ROLES.includes(role) && ['SENT','OVERDUE','PARTIALLY_PAID'].includes(inv.status) && <button className="btn btn-primary" onClick={() => setPayInv(inv)} style={{ fontSize: 11, padding: '4px 10px' }}>Received</button>}
                             <button onClick={() => downloadPdf(inv)} title="Download PDF" style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 8px', cursor: 'pointer', fontSize: 12, color: 'var(--text-muted)' }}>⬇</button>
                           </div>
                         </td>
@@ -1026,8 +1038,8 @@ function ArTab({ apiFetch, role }) {
       )}
 
       {showCreate && <ArCreateModal customers={createModalCustomers} flocks={flocks} apiFetch={apiFetch} onClose={() => { setShowCreate(false); setPreselectedCustomer(null); }} onSave={handleCreate} saving={saving} />}
-      {detailInv && <ArDetailModal invoice={detailInv} role={role} actionLoading={actionLoading} onClose={() => setDetailInv(null)} onSend={() => patch(detailInv.id, { action: 'send' }, `${detailInv.invoiceNumber} marked as sent`)} onPay={() => { setPayInv(detailInv); setDetailInv(null); }} onVoid={() => { const r = window.prompt('Reason for voiding:'); if (r) patch(detailInv.id, { action: 'void', reason: r }, 'Invoice voided'); }} onReminder={() => patch(detailInv.id, { action: 'reminder', channel: 'IN_APP' }, 'Reminder sent')} onDownloadPdf={() => downloadPdf(detailInv)} />}
-      {payInv && <PayModal invoice={payInv} onClose={() => setPayInv(null)} onSave={form => patch(payInv.id, form, `Payment recorded for ${payInv.invoiceNumber}`)} saving={saving} />}
+      {detailInv && <ArDetailModal invoice={detailInv} role={role} actionLoading={actionLoading} onClose={() => setDetailInv(null)} onSend={() => patch(detailInv.id, { action: 'send' }, `${detailInv.invoiceNumber} marked as sent`)} onPay={() => { setPayInv(detailInv); setDetailInv(null); }} onVoid={() => { const r = window.prompt('Reason for voiding:'); if (r) patch(detailInv.id, { action: 'void', reason: r }, 'Invoice voided'); }} onReminder={() => patch(detailInv.id, { action: 'reminder', channel: 'EMAIL' }, 'Reminder sent')} onDownloadPdf={() => downloadPdf(detailInv)} />}
+      {payInv && <PayModal invoice={payInv} onClose={() => setPayInv(null)} onSave={form => patch(payInv.id, form, `Payment received for ${payInv.invoiceNumber}`)} saving={saving} context="receipt" />}
     </div>
   );
 }

@@ -2,6 +2,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
 import { verifyToken } from '@/lib/middleware/auth';
+import bcrypt from 'bcryptjs';
 
 const ADMIN_ROLES = ['FARM_ADMIN', 'FARM_MANAGER', 'CHAIRPERSON', 'SUPER_ADMIN'];
 
@@ -185,7 +186,7 @@ export async function PATCH(request) {
 
   try {
     const body = await request.json();
-    const { userId, isActive, role, farmId, phone, penSectionIds } = body;
+    const { userId, isActive, role, farmId, phone, penSectionIds, firstName, lastName, email, newPassword } = body;
 
     if (!userId)
       return NextResponse.json({ error: 'userId is required' }, { status: 400 });
@@ -199,6 +200,11 @@ export async function PATCH(request) {
     if (userId === user.sub && isActive === false)
       return NextResponse.json({ error: 'Cannot deactivate your own account' }, { status: 400 });
 
+    if (newPassword && userId === user.sub)
+      return NextResponse.json({ error: 'Use your profile settings to change your own password' }, { status: 400 });
+    if (newPassword && newPassword.length < 8)
+      return NextResponse.json({ error: 'New password must be at least 8 characters' }, { status: 400 });
+
     // Only CHAIRPERSON / FARM_ADMIN can change roles
     if (role && !['CHAIRPERSON', 'FARM_ADMIN', 'SUPER_ADMIN'].includes(user.role))
       return NextResponse.json({ error: 'Insufficient permissions to change roles' }, { status: 403 });
@@ -206,10 +212,14 @@ export async function PATCH(request) {
     const updated = await prisma.user.update({
       where: { id: userId },
       data: {
-        ...(isActive !== undefined && { isActive }),
-        ...(role     !== undefined && { role }),
-        ...(farmId   !== undefined && { farmId }),
-        ...(phone    !== undefined && { phone }),
+        ...(isActive  !== undefined && { isActive }),
+        ...(role      !== undefined && { role }),
+        ...(farmId    !== undefined && { farmId }),
+        ...(phone     !== undefined && { phone }),
+        ...(firstName                && { firstName: firstName.trim() }),
+        ...(lastName                 && { lastName: lastName.trim() }),
+        ...(email                    && { email: email.toLowerCase().trim() }),
+        ...(newPassword              && { passwordHash: await bcrypt.hash(newPassword, 10) }),
       },
     });
 

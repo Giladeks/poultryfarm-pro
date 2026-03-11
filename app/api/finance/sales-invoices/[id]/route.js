@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
 import { verifyToken } from '@/lib/middleware/auth';
 import { z } from 'zod';
+import { sendInvoiceEmail, sendArReminderEmail } from '@/lib/services/invoiceEmail';
 
 const FINANCE_VIEW_ROLES = ['SUPER_ADMIN','CHAIRPERSON','FARM_ADMIN','ACCOUNTANT','INTERNAL_CONTROL'];
 const FINANCE_ROLES      = ['SUPER_ADMIN','CHAIRPERSON','FARM_ADMIN','ACCOUNTANT'];
@@ -100,6 +101,14 @@ export async function PATCH(request, { params: rawParams }) {
       auditAction  = 'UPDATE';
       auditChanges = { from: 'DRAFT', to: 'SENT' };
 
+      // ── Email invoice to customer ──────────────────────────────────────────
+      if (invoice.customer?.email) {
+        try {
+          const tenant = await prisma.tenant.findUnique({ where: { id: user.tenantId }, select: { farmName: true } });
+          sendInvoiceEmail(invoice, tenant || {}).catch(e => console.error('[AR SEND EMAIL]', e));
+        } catch (e) { console.error('[AR SEND EMAIL]', e); }
+      }
+
     // ── PAY ───────────────────────────────────────────────────────────────────
     } else if (data.action === 'pay') {
       if (!FINANCE_ROLES.includes(user.role))
@@ -186,7 +195,17 @@ export async function PATCH(request, { params: rawParams }) {
         },
       });
 
-      return NextResponse.json({ success: true, message: `Reminder sent to ${notifyUsers.length} team member(s)` });
+      // ── Email reminder to customer if channel is EMAIL ───────────────────
+      let emailResult = null;
+      if (data.channel === 'EMAIL' && invoice.customer?.email) {
+        try {
+          const tenant = await prisma.tenant.findUnique({ where: { id: user.tenantId }, select: { farmName: true } });
+          emailResult = await sendArReminderEmail(invoice, tenant || {});
+        } catch (e) { console.error('[AR REMINDER EMAIL]', e); }
+      }
+
+      const emailNote = emailResult?.skipped ? '' : emailResult?.success ? ' Email sent to customer.' : '';
+      return NextResponse.json({ success: true, message: `Reminder sent to ${notifyUsers.length} team member(s).${emailNote}` });
     }
 
     const updated = await prisma.salesInvoice.update({
@@ -214,3 +233,6 @@ export async function PATCH(request, { params: rawParams }) {
     return NextResponse.json({ error: 'Failed to update sales invoice' }, { status: 500 });
   }
 }
+
+
+

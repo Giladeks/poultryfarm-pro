@@ -20,7 +20,8 @@ const BORDER = '#e2e8f0';
 
 const fmtDate = d => d ? new Date(d).toLocaleDateString('en-NG', { day: 'numeric', month: 'long', year: 'numeric' }) : '—';
 const fmtCur  = (n, ccy = 'NGN') => {
-  const sym = { NGN: '₦', USD: '$', EUR: '€', GBP: '£', GHS: '₵', KES: 'KSh', ZAR: 'R' };
+  // Helvetica only covers basic Latin — use ASCII-safe symbols for all currencies
+  const sym = { NGN: 'NGN ', USD: '$', EUR: 'EUR ', GBP: 'GBP ', GHS: 'GHS ', KES: 'KSh ', ZAR: 'R' };
   return `${sym[ccy] || ccy} ${Number(n || 0).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
 
@@ -34,20 +35,7 @@ const STATUS_COLOR = {
   VOID:           MUTED,
 };
 
-function buildQrDataUri(text) {
-  const cells = [
-    [0,0],[1,0],[2,0],[3,0],[4,0],[5,0],[6,0],
-    [0,1],[6,1],[0,2],[2,2],[3,2],[4,2],[6,2],
-    [0,3],[2,3],[4,3],[6,3],[0,4],[2,4],[3,4],[4,4],[6,4],
-    [0,5],[6,5],[0,6],[1,6],[2,6],[3,6],[4,6],[5,6],[6,6],
-  ];
-  const size = 4, dim = 7 * size;
-  const rects = cells.map(([x,y]) => `<rect x="${x*size}" y="${y*size}" width="${size}" height="${size}" fill="#1e293b"/>`).join('');
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${dim}" height="${dim}" viewBox="0 0 ${dim} ${dim}"><rect width="${dim}" height="${dim}" fill="white"/>${rects}</svg>`;
-  return `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
-}
-
-function buildDocDef({ invoice, tenant }) {
+async function buildDocDef({ invoice, tenant, qrDataUri }) {
   const appUrl     = process.env.NEXT_PUBLIC_APP_URL || 'https://app.poultryfarm.pro';
   const invoiceUrl = `${appUrl}/finance?inv=${invoice.id}`;
   const now        = new Date().toLocaleString('en-NG', { dateStyle: 'medium', timeStyle: 'short' });
@@ -120,7 +108,7 @@ function buildDocDef({ invoice, tenant }) {
     layout: 'noBorders',
   } : null;
 
-  const qrDataUri   = buildQrDataUri(invoiceUrl);
+
   const farmName    = tenant.farmName || 'PoultryFarm Pro';
   const supplierName = invoice.supplier?.name    || '—';
   const supplierType = invoice.supplier?.supplierType || '';
@@ -131,6 +119,8 @@ function buildDocDef({ invoice, tenant }) {
     pageSize:        'A4',
     pageOrientation: 'portrait',
     pageMargins:     [40, 60, 40, 50],
+
+    defaultStyle: { font: 'Helvetica', fontSize: 9, color: DARK, lineHeight: 1.3 },
 
     header: () => ({
       margin: [40, 14, 40, 0],
@@ -325,7 +315,20 @@ export async function GET(request, { params: rawParams }) {
     };
 
     const printer = new PdfPrinter(fonts);
-    const docDef  = buildDocDef({ invoice, tenant: tenant || {} });
+
+    // Generate QR code as PNG data URI (requires: npm install qrcode)
+    const appUrl     = process.env.NEXT_PUBLIC_APP_URL || 'https://app.poultryfarm.pro';
+    const invoiceUrl = `${appUrl}/finance?inv=${invoice.id}`;
+    let qrDataUri;
+    try {
+      const QRCode = (await import('qrcode')).default;
+      qrDataUri = await QRCode.toDataURL(invoiceUrl, { width: 104, margin: 1, color: { dark: '#1e293b', light: '#ffffff' } });
+    } catch {
+      // qrcode not installed — fall back to a blank white PNG
+      qrDataUri = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwADhQGAWjR9awAAAABJRU5ErkJggg==';
+    }
+
+    const docDef  = await buildDocDef({ invoice, tenant: tenant || {}, qrDataUri });
     const pdfDoc  = printer.createPdfKitDocument(docDef);
 
     const chunks = [];
@@ -352,3 +355,6 @@ export async function GET(request, { params: rawParams }) {
     return NextResponse.json({ error: err.message || 'Failed to generate PDF' }, { status: 500 });
   }
 }
+
+
+

@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
 import { verifyToken } from '@/lib/middleware/auth';
 import { z } from 'zod';
+import { sendApReminderEmail } from '@/lib/services/invoiceEmail';
 
 const FINANCE_VIEW_ROLES     = ['SUPER_ADMIN','CHAIRPERSON','FARM_ADMIN','ACCOUNTANT','INTERNAL_CONTROL'];
 const FINANCE_ROLES          = ['SUPER_ADMIN','CHAIRPERSON','FARM_ADMIN','ACCOUNTANT'];
@@ -223,9 +224,26 @@ export async function PATCH(request, { params: rawParams }) {
         },
       });
 
+      // ── Email reminder to finance team if channel is EMAIL ───────────────
+      let emailResult = null;
+      if (data.channel === 'EMAIL' && notifyUsers.length > 0) {
+        try {
+          const [tenant, teamWithEmails] = await Promise.all([
+            prisma.tenant.findUnique({ where: { id: user.tenantId }, select: { farmName: true } }),
+            prisma.user.findMany({
+              where:  { tenantId: user.tenantId, role: { in: FINANCE_NOTIFY_ROLES }, isActive: true, email: { not: undefined } },
+              select: { email: true },
+            }),
+          ]);
+          const emails = teamWithEmails.map(u => u.email).filter(Boolean);
+          if (emails.length) emailResult = await sendApReminderEmail(invoice, tenant || {}, emails);
+        } catch (e) { console.error('[AP REMINDER EMAIL]', e); }
+      }
+
+      const emailNote = emailResult?.skipped ? '' : emailResult?.success ? ' Email sent to finance team.' : '';
       return NextResponse.json({
         success: true,
-        message: `Payment reminder sent to ${notifyUsers.length} team member(s)`,
+        message: `Payment reminder sent to ${notifyUsers.length} team member(s).${emailNote}`,
       });
     }
 
@@ -257,3 +275,6 @@ export async function PATCH(request, { params: rawParams }) {
     return NextResponse.json({ error: 'Failed to update supplier invoice' }, { status: 500 });
   }
 }
+
+
+

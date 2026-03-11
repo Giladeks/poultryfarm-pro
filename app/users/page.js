@@ -17,11 +17,13 @@ const ROLES = [
   { value: 'QC_TECHNICIAN',     label: 'QC Technician',     group: 'Staff',       color: '#22c55e' },
   { value: 'PRODUCTION_STAFF',  label: 'Production Staff',  group: 'Staff',       color: '#22c55e' },
   { value: 'PEN_WORKER',        label: 'Pen Worker',        group: 'Field',       color: '#9ca3af' },
+  { value: 'INTERNAL_CONTROL',  label: 'Internal Control',  group: 'Finance',     color: '#0891b2' },
+  { value: 'ACCOUNTANT',        label: 'Accountant',        group: 'Finance',     color: '#059669' },
 ];
 
-const CREATABLE_ROLES = ROLES.filter(r =>
-  !['CHAIRPERSON', 'FARM_ADMIN', 'SUPER_ADMIN'].includes(r.value)
-);
+const CREATABLE_ROLES = ROLES
+  .filter(r => !['CHAIRPERSON', 'FARM_ADMIN', 'SUPER_ADMIN'].includes(r.value))
+  .sort((a, b) => a.label.localeCompare(b.label));
 
 const ROLE_MAP = Object.fromEntries(ROLES.map(r => [r.value, r]));
 
@@ -36,6 +38,8 @@ const PERMISSIONS = {
   QC_TECHNICIAN:     { label: 'Performs quality tests, certifies batches' },
   PRODUCTION_STAFF:  { label: 'Operates feed mill equipment, logs production' },
   PEN_WORKER:        { label: 'Records mortality, feed, eggs, weight daily' },
+  INTERNAL_CONTROL:  { label: 'Audit and compliance — read-only access to all modules' },
+  ACCOUNTANT:        { label: 'Finance access — invoices, payments, P&L, reconciliation' },
 };
 
 function roleColor(role) { return ROLE_MAP[role]?.color || '#9ca3af'; }
@@ -106,8 +110,11 @@ function UserModal({ mode, editUser, farms, penSections, onClose, onSave, apiFet
     penSectionIds: editUser.penAssignments?.map(a => a.penSection.id) || [],
   } : blank);
 
-  const [saving, setSaving] = useState(false);
-  const [error,  setError]  = useState('');
+  const [saving,        setSaving]        = useState(false);
+  const [error,         setError]         = useState('');
+  const [showPwChange,  setShowPwChange]  = useState(false);
+  const [newPassword,   setNewPassword]   = useState('');
+  const [confirmPw,     setConfirmPw]     = useState('');
 
   const up = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
@@ -135,14 +142,19 @@ function UserModal({ mode, editUser, farms, penSections, onClose, onSave, apiFet
       return setError('First name, last name, email and role are required.');
     if (mode === 'create' && form.password.length < 8)
       return setError('Password must be at least 8 characters.');
+    if (mode === 'edit' && showPwChange) {
+      if (newPassword.length < 8) return setError('New password must be at least 8 characters.');
+      if (newPassword !== confirmPw) return setError('Passwords do not match.');
+    }
 
     setSaving(true);
     try {
       const payload = mode === 'create'
         ? { ...form, farmId: form.farmId || null }
         : { userId: editUser.id, role: form.role, farmId: form.farmId || null, firstName: form.firstName, lastName: form.lastName, email: form.email, phone: form.phone || null,
-            phone: form.phone, penSectionIds: form.penSectionIds,
-            ...(form.isActive !== undefined && { isActive: form.isActive }) };
+            penSectionIds: form.penSectionIds,
+            ...(form.isActive !== undefined && { isActive: form.isActive }),
+            ...(showPwChange && newPassword && { newPassword }) };
 
       const res = await apiFetch('/api/users', {
         method: mode === 'create' ? 'POST' : 'PATCH',
@@ -270,11 +282,34 @@ function UserModal({ mode, editUser, farms, penSections, onClose, onSave, apiFet
           </div>
         )}
 
-        {/* Password — create only */}
+        {/* Password — required on create, optional change on edit */}
         {mode === 'create' && (
           <div>
             <label className="label">Password *</label>
-            <input className="input" type="password" value={form.password} onChange={e => up('password', e.target.value)} placeholder="Min. 8 characters" />
+            <input className="input" type="password" autoComplete="new-password" value={form.password} onChange={e => up('password', e.target.value)} placeholder="Min. 8 characters" />
+          </div>
+        )}
+        {mode === 'edit' && (
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 14 }}>
+            <button
+              type="button"
+              onClick={() => { setShowPwChange(v => !v); setNewPassword(''); setConfirmPw(''); }}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, color: showPwChange ? 'var(--red)' : 'var(--purple)', padding: 0, display: 'flex', alignItems: 'center', gap: 6 }}
+            >
+              {showPwChange ? '✕ Cancel password change' : '🔑 Change password'}
+            </button>
+            {showPwChange && (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 12 }}>
+                <div>
+                  <label className="label">New Password *</label>
+                  <input className="input" type="password" autoComplete="new-password" value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder="Min. 8 characters" />
+                </div>
+                <div>
+                  <label className="label">Confirm Password *</label>
+                  <input className="input" type="password" autoComplete="new-password" value={confirmPw} onChange={e => setConfirmPw(e.target.value)} placeholder="Repeat new password" />
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -597,6 +632,7 @@ export default function UsersPage() {
               className="input"
               style={{ maxWidth: 260, padding: '7px 12px' }}
               placeholder="🔍  Search by name or email…"
+              autoComplete="off"
               value={search}
               onChange={e => setSearch(e.target.value)}
             />
@@ -702,7 +738,7 @@ export default function UsersPage() {
         <UserModal mode="create" farms={farms} penSections={penSections}
           apiFetch={apiFetch}
           onClose={() => setModal(null)}
-          onSave={() => { setModal(null); load(); showToast('Staff member created successfully'); }}
+          onSave={() => { setModal(null); setSearch(''); setFilterRole(''); load(); showToast('Staff member created successfully'); }}
         />
       )}
       {modal === 'edit' && selectedUser && (

@@ -9,6 +9,7 @@ import { z } from 'zod';
 const CREATABLE_ROLES = [
   'FARM_MANAGER','STORE_MANAGER','FEED_MILL_MANAGER',
   'PEN_MANAGER','STORE_CLERK','QC_TECHNICIAN','PRODUCTION_STAFF','PEN_WORKER',
+  'INTERNAL_CONTROL','ACCOUNTANT',
 ];
 
 const createUserSchema = z.object({
@@ -144,7 +145,7 @@ export async function PATCH(request) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
   try {
-    const { userId, isActive, role, farmId, firstName, lastName, email, phone } = await request.json();
+    const { userId, isActive, role, farmId, firstName, lastName, email, phone, newPassword } = await request.json();
 
     const target = await prisma.user.findFirst({
       where: { id: userId, tenantId: user.tenantId },
@@ -153,6 +154,13 @@ export async function PATCH(request) {
 
     if (userId === user.sub && isActive === false)
       return NextResponse.json({ error: 'Cannot deactivate your own account' }, { status: 400 });
+
+    // Prevent changing own password via this admin route
+    if (newPassword && userId === user.sub)
+      return NextResponse.json({ error: 'Use your profile settings to change your own password' }, { status: 400 });
+
+    if (newPassword && newPassword.length < 8)
+      return NextResponse.json({ error: 'New password must be at least 8 characters' }, { status: 400 });
 
     // Only CHAIRPERSON / FARM_ADMIN / SUPER_ADMIN can change roles
     if (role && !['CHAIRPERSON','FARM_ADMIN','SUPER_ADMIN'].includes(user.role))
@@ -172,6 +180,7 @@ export async function PATCH(request) {
         ...(lastName                  && { lastName: lastName.trim() }),
         ...(phone       !== undefined && { phone: phone?.trim() || null }),
         ...(email && EMAIL_CHANGE_ROLES.includes(user.role) && { email: email.toLowerCase().trim() }),
+        ...(newPassword && { passwordHash: await bcrypt.hash(newPassword, 10) }),
       },
       select: {
         id: true, email: true, firstName: true, lastName: true,
@@ -193,6 +202,7 @@ export async function PATCH(request) {
           ...(lastName  && { lastName }),
           ...(email     && { email }),
           ...(phone     !== undefined && { phone }),
+          ...(newPassword               && { passwordChanged: true }),
         },
       },
     }).catch(() => {});
