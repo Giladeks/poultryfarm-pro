@@ -1,48 +1,174 @@
 'use client';
 // components/layout/AppShell.js
-import { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import ReactDOM from 'react-dom';
 import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { createPortal } from 'react-dom';
 import { useAuth } from './AuthProvider';
 import { ROLE_LABELS } from '@/lib/constants/roles';
+import {
+  // Nav items
+  LayoutDashboard, Building2, Egg, ClipboardList, Bird,
+  TrendingUp, Scale, Factory, Syringe, Wheat, Cog,
+  CheckSquare, DollarSign, Search, Drumstick, ChevronDown,
+  // Group header icons
+  Sun, BeefIcon,
+  // Notification icons
+  Package, CornerDownLeft, AlertTriangle, Clock, Bell,
+  CheckCircle, XCircle, Skull, ShieldAlert,
+  // Profile popover icons
+  User, Settings, BookOpen, LifeBuoy, Sparkles,
+  Users, CreditCard, LogOut, ChevronRight,
+  // Sidebar UI
+  PanelLeftClose, PanelLeftOpen, MapPin,
+} from 'lucide-react';
 
-// ── Role constants ─────────────────────────────────────────────────────────────
-const ADMIN_ONLY = ['FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
+// Map icon name strings (from NAV_ITEMS) to Lucide components
+const ICON_MAP = {
+  LayoutDashboard, Building2, Egg, ClipboardList, Bird,
+  TrendingUp, Scale, Factory, Syringe, Wheat, Cog,
+  CheckSquare, DollarSign, Search, Drumstick,
+};
+// Group header icons (not from string map — referenced directly)
+const LayersIcon    = Sun;       // Layer group
+const DrumstickIcon = Drumstick; // Broiler group
+// Render a Lucide icon by name string with consistent sizing
+function NavIcon({ name, size = 16, color }) {
+  const Comp = ICON_MAP[name];
+  if (!Comp) return null;
+  return <Comp size={size} strokeWidth={1.8} color={color || 'currentColor'} style={{ flexShrink: 0 }} />;
+}
 
-// ── Nav definition ─────────────────────────────────────────────────────────────
-// Administration items are grouped separately and shown only to ADMIN_ONLY roles.
-const NAV_MAIN = [
-  { href: '/dashboard',     icon: '📊', label: 'Dashboard',     roles: ['FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','PEN_MANAGER','STORE_MANAGER','FEED_MILL_MANAGER','SUPER_ADMIN','PEN_WORKER','PRODUCTION_STAFF','STORE_CLERK','QC_TECHNICIAN','INTERNAL_CONTROL','ACCOUNTANT'] },
-  { href: '/farm-structure', icon: '🏡', label: 'Farm Structure', roles: ['FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN'] },
-  { href: '/farm',          icon: '🐦', label: 'Flocks',         roles: ['FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','PEN_MANAGER','SUPER_ADMIN'] },
-  { href: '/health',        icon: '💉', label: 'Health',         roles: ['FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','PEN_MANAGER','SUPER_ADMIN'] },
-  { href: '/feed',          icon: '🌾', label: 'Feed',           roles: ['STORE_MANAGER','STORE_CLERK','FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN','PEN_MANAGER'] },
-  { href: '/verification',  icon: '✅', label: 'Verification',   roles: ['FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','PEN_MANAGER','STORE_MANAGER','SUPER_ADMIN'] },
-  { href: '/audit',         icon: '🔍', label: 'Audit',           roles: ['FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN','INTERNAL_CONTROL'] },
-  { href: '/finance',       icon: '💰', label: 'Finance',          roles: ['FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN','ACCOUNTANT','INTERNAL_CONTROL'] },
-  { href: '/worker',        icon: '📋', label: 'My Tasks',       roles: ['PEN_WORKER','PEN_MANAGER','PRODUCTION_STAFF','STORE_CLERK','QC_TECHNICIAN'] },
-  { href: '/owner',         icon: '📈', label: 'Analytics',      roles: ['CHAIRPERSON'] },
-  { href: '/billing',       icon: '💳', label: 'Billing',        roles: ['CHAIRPERSON','FARM_ADMIN','SUPER_ADMIN'] },
+// ── Role buckets ───────────────────────────────────────────────────────────────
+const FARM_ADMIN_ROLES  = ['FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
+const MANAGER_UP_ROLES  = ['FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
+const PEN_SCOPED_ROLES  = ['PEN_WORKER', 'PEN_MANAGER'];
+
+// ── Nav catalogue ──────────────────────────────────────────────────────────────
+// section:
+//   'top'     — always above section headers, no colour accent
+//   'layer'   — shown under 🥚 Layer Production header in BOTH mode
+//   'broiler' — shown under 🍗 Broiler Production header in BOTH mode
+//   'shared'  — shown under Shared header (or plain, in single-op mode)
+//
+// opModes: optional — only visible when tenant is in one of these modes
+// requiresFeedMill / requiresProcessing: add-on module gates
+//
+// PEN_SCOPED_ROLES get further filtered by their live userOpType ('LAYER' | 'BROILER').
+
+const NAV_ITEMS = [
+  // ── Top ──
+  {
+    href: '/dashboard', icon: 'LayoutDashboard', label: 'Dashboard', section: 'top',
+    roles: ['FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','PEN_MANAGER','STORE_MANAGER',
+            'FEED_MILL_MANAGER','SUPER_ADMIN','PEN_WORKER','PRODUCTION_STAFF',
+            'STORE_CLERK','QC_TECHNICIAN','INTERNAL_CONTROL','ACCOUNTANT'],
+  },
+  {
+    href: '/farm-structure', icon: 'Building2', label: 'Farm Structure', section: 'top',
+    roles: MANAGER_UP_ROLES,
+  },
+  {
+    href: '/brooding', icon: 'Egg', label: 'Brooding', section: 'top',
+    roles: ['FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','PEN_MANAGER','SUPER_ADMIN'],
+  },
+  {
+    href: '/worker', icon: 'ClipboardList', label: 'My Tasks', section: 'top',
+    roles: ['PEN_WORKER','PEN_MANAGER','PRODUCTION_STAFF','STORE_CLERK','QC_TECHNICIAN'],
+  },
+
+  // ── Layer section ──
+  {
+    href: '/farm?op=layer', icon: 'Bird', label: 'Layer Flocks', section: 'layer',
+    roles: ['FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','PEN_MANAGER','SUPER_ADMIN'],
+    opModes: ['LAYER_ONLY', 'BOTH'],
+  },
+  {
+    href: '/performance', icon: 'Egg', label: 'Performance', section: 'layer',
+    roles: ['FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','PEN_MANAGER','PRODUCTION_STAFF','SUPER_ADMIN','PEN_WORKER'],
+    opModes: ['LAYER_ONLY', 'BOTH'],
+  },
+  {
+    href: '/production/layers', icon: 'TrendingUp', label: 'Layer Analytics', section: 'layer',
+    roles: MANAGER_UP_ROLES,
+    opModes: ['LAYER_ONLY', 'BOTH'],
+  },
+
+  // ── Broiler section ──
+  {
+    href: '/farm?op=broiler', icon: 'Drumstick', label: 'Broiler Flocks', section: 'broiler',
+    roles: ['FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','PEN_MANAGER','SUPER_ADMIN'],
+    opModes: ['BROILER_ONLY', 'BOTH'],
+  },
+  {
+    href: '/broiler-performance', icon: 'Scale', label: 'Performance', section: 'broiler',
+    roles: ['FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','PEN_MANAGER','PRODUCTION_STAFF','SUPER_ADMIN','PEN_WORKER'],
+    opModes: ['BROILER_ONLY', 'BOTH'],
+  },
+  {
+    href: '/processing', icon: 'Factory', label: 'Processing', section: 'broiler',
+    roles: ['FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','PRODUCTION_STAFF','SUPER_ADMIN','QC_TECHNICIAN'],
+    opModes: ['BROILER_ONLY', 'BOTH'],
+    requiresProcessing: true,
+  },
+
+  // ── Shared section ──
+  {
+    href: '/health', icon: 'Syringe', label: 'Health', section: 'shared',
+    roles: ['FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','PEN_MANAGER','SUPER_ADMIN'],
+  },
+  {
+    href: '/feed', icon: 'Wheat', label: 'Feed', section: 'shared',
+    roles: ['STORE_MANAGER','STORE_CLERK','FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN','PEN_MANAGER'],
+  },
+  {
+    href: '/feed-mill', icon: 'Cog', label: 'Feed Mill', section: 'shared',
+    roles: ['FEED_MILL_MANAGER','FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN','QC_TECHNICIAN'],
+    requiresFeedMill: true,
+  },
+  {
+    href: '/verification', icon: 'CheckSquare', label: 'Verification', section: 'shared',
+    roles: ['FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','PEN_MANAGER','STORE_MANAGER','SUPER_ADMIN'],
+  },
+  {
+    href: '/finance', icon: 'DollarSign', label: 'Finance', section: 'shared',
+    roles: ['FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN','ACCOUNTANT','INTERNAL_CONTROL'],
+  },
+  {
+    href: '/audit', icon: 'Search', label: 'Audit', section: 'shared',
+    roles: ['FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN','INTERNAL_CONTROL'],
+  },
+  {
+    href: '/owner', icon: 'TrendingUp', label: 'Analytics', section: 'shared',
+    roles: ['CHAIRPERSON'],
+  },
 ];
 
-// Administration group — only ADMIN_ONLY roles see this group at all
-const NAV_ADMIN = [
-  { href: '/users',    icon: '👥', label: 'User Admin' },
-  { href: '/settings', icon: '⚙️', label: 'Settings'   },
-];
+// Plain "Flocks" item used in single-operation modes (not BOTH)
+const FLOCKS_SINGLE = {
+  href: '/farm', icon: 'Bird', label: 'Flocks', section: 'layer',
+  roles: ['FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','PEN_MANAGER','SUPER_ADMIN','PEN_WORKER'],
+};
 
-// ── Notification type → icon / colour ─────────────────────────────────────────
+// ── Section visual metadata ───────────────────────────────────────────────────
+const SECTION_META = {
+  layer:   { label: 'Layers',   color: '#6c63ff', Icon: LayersIcon   },
+  broiler: { label: 'Broilers', color: '#6c63ff', Icon: DrumstickIcon },
+  shared:  { label: 'Shared',   color: '#6c63ff', Icon: null          },
+};
+
+// ── Notification helpers ──────────────────────────────────────────────────────
 const NOTIF_META = {
-  LOW_STOCK:       { icon: '📦', color: '#f59e0b' },
-  REPORT_REJECTED: { icon: '↩️',  color: '#ef4444' },
-  ALERT:           { icon: '⚠️',  color: '#ef4444' },
-  TASK_OVERDUE:    { icon: '⏰', color: '#ef4444' },
-  VACCINATION_DUE: { icon: '💉', color: '#3b82f6' },
-  PO_APPROVED:     { icon: '✅', color: '#22c55e' },
-  PO_REJECTED:     { icon: '❌', color: '#ef4444' },
-  MORTALITY_SPIKE: { icon: '💀', color: '#ef4444' },
-  DEFAULT:         { icon: '🔔', color: '#6c63ff' },
+  LOW_STOCK:       { Icon: Package,         color: '#f59e0b' },
+  REPORT_REJECTED: { Icon: CornerDownLeft,  color: '#ef4444' },
+  ALERT:           { Icon: AlertTriangle,   color: '#ef4444' },
+  TASK_OVERDUE:    { Icon: Clock,           color: '#ef4444' },
+  VACCINATION_DUE: { Icon: Syringe,         color: '#3b82f6' },
+  PO_APPROVED:     { Icon: CheckCircle,     color: '#22c55e' },
+  PO_REJECTED:     { Icon: XCircle,         color: '#ef4444' },
+  MORTALITY_SPIKE: { Icon: ShieldAlert,     color: '#ef4444' },
+  DEFAULT:         { Icon: Bell,            color: '#6c63ff' },
 };
 function notifMeta(type) { return NOTIF_META[type] || NOTIF_META.DEFAULT; }
 
@@ -54,7 +180,7 @@ function timeAgo(d) {
   return `${Math.floor(mins / 1440)}d ago`;
 }
 
-// ── Notification dropdown ──────────────────────────────────────────────────────
+// ── Notification dropdown ─────────────────────────────────────────────────────
 function NotifDropdown({ notifications, unreadCount, onMarkRead, onMarkAll, onClose, anchorRef }) {
   const dropRef = useRef(null);
   const [pos, setPos] = useState({ top: 0, right: 0 });
@@ -108,7 +234,7 @@ function NotifDropdown({ notifications, unreadCount, onMarkRead, onMarkAll, onCl
       <div style={{ maxHeight: 360, overflowY: 'auto' }}>
         {notifications.length === 0 ? (
           <div style={{ padding: '36px 20px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
-            <div style={{ fontSize: 32, marginBottom: 8 }}>🔔</div>
+            <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'center' }}><Bell size={32} strokeWidth={1.2} color="#d1d5db" /></div>
             <div style={{ fontWeight: 600 }}>You're all caught up!</div>
             <div style={{ fontSize: 12, marginTop: 4 }}>No new notifications</div>
           </div>
@@ -124,8 +250,8 @@ function NotifDropdown({ notifications, unreadCount, onMarkRead, onMarkAll, onCl
               onMouseEnter={e => { if (!n.isRead) e.currentTarget.style.background = '#e8e6ff'; }}
               onMouseLeave={e => { if (!n.isRead) e.currentTarget.style.background = 'var(--purple-light)'; }}
             >
-              <div style={{ width: 34, height: 34, borderRadius: 9, background: `${meta.color}15`, border: `1px solid ${meta.color}30`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, flexShrink: 0, marginTop: 2 }}>
-                {meta.icon}
+              <div style={{ width: 34, height: 34, borderRadius: 9, background: `${meta.color}15`, border: `1px solid ${meta.color}30`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 2 }}>
+                {meta.Icon && <meta.Icon size={16} strokeWidth={1.8} color={meta.color} />}
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 12, fontWeight: n.isRead ? 600 : 700, color: 'var(--text-primary)', lineHeight: 1.4, marginBottom: 2 }}>{n.title}</div>
@@ -148,63 +274,486 @@ function NotifDropdown({ notifications, unreadCount, onMarkRead, onMarkAll, onCl
   );
 }
 
-// ── Single nav link ────────────────────────────────────────────────────────────
-function NavLink({ href, icon, label, collapsed, pathname }) {
-  const active = pathname === href || pathname.startsWith(href + '/');
+// ── Profile popover ───────────────────────────────────────────────────────────
+function ProfilePopover({ user, logout, onClose, anchorRef }) {
+  const popRef   = useRef(null);
+  const [pos, setPos] = useState({ bottom: 0, left: 0 });
+  const isAdmin  = FARM_ADMIN_ROLES.includes(user?.role);
+  const initials = user ? `${user.firstName?.[0] || ''}${user.lastName?.[0] || ''}`.toUpperCase() : '?';
+
+  useEffect(() => {
+    if (anchorRef.current) {
+      const r   = anchorRef.current.getBoundingClientRect();
+      const POP_WIDTH = 264;
+      setPos({
+        bottom: window.innerHeight - r.top + 6,
+        left: Math.max(8, Math.min(r.left, window.innerWidth - POP_WIDTH - 8)),
+      });
+    }
+  }, [anchorRef]);
+
+  useEffect(() => {
+    const handler = (e) => {
+      if (popRef.current && !popRef.current.contains(e.target) &&
+          anchorRef.current && !anchorRef.current.contains(e.target)) onClose();
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [onClose, anchorRef]);
+
+  useEffect(() => {
+    const handler = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [onClose]);
+
+  if (typeof document === 'undefined') return null;
+
+  const MenuItem = ({ href, Icon: ItemIcon, label, danger, onClick, badge }) => {
+    const iconColor = danger ? '#dc2626' : '#94a3b8';
+    const inner = (
+      <div
+        style={{
+          display: 'flex', alignItems: 'center', gap: 10,
+          padding: '8px 10px', borderRadius: 8, cursor: 'pointer',
+          fontFamily: "'Poppins', sans-serif",
+          fontSize: 13, fontWeight: 500,
+          color: danger ? '#dc2626' : '#475569',
+          transition: 'background 0.12s, color 0.12s',
+        }}
+        onMouseEnter={e => {
+          e.currentTarget.style.background = danger ? '#fef2f2' : '#f1f5f9';
+          e.currentTarget.style.color = danger ? '#dc2626' : '#1e293b';
+        }}
+        onMouseLeave={e => {
+          e.currentTarget.style.background = 'transparent';
+          e.currentTarget.style.color = danger ? '#dc2626' : '#475569';
+        }}
+        onClick={onClick}
+      >
+        {ItemIcon && (
+          <span style={{ display: 'flex', alignItems: 'center', width: 18, flexShrink: 0, color: iconColor }}>
+            <ItemIcon size={14} strokeWidth={1.8} />
+          </span>
+        )}
+        <span style={{ flex: 1 }}>{label}</span>
+        {badge && (
+          <span style={{ fontSize: 9, fontWeight: 700, background: '#6c63ff', color: '#fff', borderRadius: 4, padding: '2px 7px', letterSpacing: '0.04em' }}>
+            {badge}
+          </span>
+        )}
+      </div>
+    );
+
+    if (href) {
+      return (
+        <Link href={href} onClick={onClose} style={{ textDecoration: 'none', display: 'block' }}>
+          {inner}
+        </Link>
+      );
+    }
+    return inner;
+  };
+
+  const Divider = () => <div style={{ height: 1, background: 'var(--border-card)', margin: '4px 0' }} />;
+
+  const GroupLabel = ({ label }) => (
+    <div style={{ padding: '6px 12px 2px', fontSize: 9, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-muted)' }}>
+      {label}
+    </div>
+  );
+
+  return createPortal(
+    <div ref={popRef} style={{
+      position: 'fixed',
+      bottom: pos.bottom,
+      left: pos.left,
+      width: 264,
+      background: '#fff',
+      borderRadius: 14,
+      border: '1px solid var(--border-card)',
+      boxShadow: '0 -4px 24px rgba(0,0,0,0.10), 0 8px 32px rgba(0,0,0,0.08)',
+      zIndex: 1001,
+      overflow: 'hidden',
+      animation: 'fadeInUp 0.16s ease',
+    }}>
+
+      {/* Identity header */}
+      <div style={{ padding: '14px 16px 12px', borderBottom: '1px solid var(--border-card)', display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{
+          width: 40, height: 40, borderRadius: '50%', flexShrink: 0,
+          background: user?.profilePicUrl ? 'transparent' : 'linear-gradient(135deg,#6c63ff,#a78bfa)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          overflow: 'hidden',
+        }}>
+          {user?.profilePicUrl
+            ? <img src={user.profilePicUrl} alt={initials} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} />
+            : <span style={{ color: '#fff', fontSize: 15, fontWeight: 700 }}>{initials}</span>
+          }
+        </div>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {user?.firstName} {user?.lastName}
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 1 }}>
+            {user?.email}
+          </div>
+        </div>
+      </div>
+
+      {/* Menu body */}
+      <div style={{ padding: '6px' }}>
+        <MenuItem href="/profile"  Icon={User}     label="Profile"  />
+        <MenuItem href="/settings" Icon={Settings} label="Settings" />
+
+        {/* User Admin + Billing — Farm Admin and above only, no label */}
+        {isAdmin && (
+          <>
+            <Divider />
+            <MenuItem href="/users"   Icon={Users}       label="User Admin" />
+            <MenuItem href="/billing" Icon={CreditCard}  label="Billing"    />
+          </>
+        )}
+
+        <Divider />
+        <MenuItem href="/docs"      Icon={BookOpen} label="Documentation" />
+        <MenuItem href="/support"   Icon={LifeBuoy} label="Support"       />
+        <MenuItem href="/whats-new" Icon={Sparkles} label="What's New"    badge="New" />
+
+        <Divider />
+        <MenuItem Icon={LogOut} label="Sign out" danger onClick={() => { onClose(); logout(); }} />
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+// ── Single nav link ───────────────────────────────────────────────────────────
+function NavLink({ href, icon, label, collapsed, pathname, search, accentColor }) {
+  const [hrefPath, hrefQuery] = href.split('?');
+  const active  = hrefQuery
+    ? pathname === hrefPath && search === `?${hrefQuery}`
+    : pathname === hrefPath || pathname.startsWith(hrefPath + '/');
+  const color   = accentColor || '#6c63ff';
+  const bg      = active ? (accentColor ? `${accentColor}14` : '#eeecff') : 'transparent';
+  const iconCol = active ? color : '#94a3b8';
+  const txtCol  = active ? color : '#64748b';
+
   return (
     <Link href={href} style={{
-      display: 'flex', alignItems: 'center', gap: 10,
-      padding: collapsed ? '10px 0' : '10px 12px',
-      borderRadius: 9, marginBottom: 3,
+      display: 'flex', alignItems: 'center',
+      gap: collapsed ? 0 : 9,
+      padding: collapsed ? '9px 0' : '7px 10px',
+      borderRadius: 8, marginBottom: 1,
       justifyContent: collapsed ? 'center' : 'flex-start',
-      background: active ? 'var(--purple-light)' : 'transparent',
-      color: active ? 'var(--purple)' : 'var(--text-secondary)',
-      fontWeight: active ? 700 : 600,
-      fontSize: 13, textDecoration: 'none', transition: 'all 0.15s',
-      borderLeft: active ? '3px solid var(--purple)' : '3px solid transparent',
+      background: bg,
+      color: txtCol,
+      fontFamily: "'Poppins', sans-serif",
+      fontWeight: active ? 600 : 500,
+      fontSize: 13,
+      textDecoration: 'none',
+      transition: 'background 0.14s, color 0.14s',
+      border: 'none',
     }}
-      onMouseEnter={e => { if (!active) { e.currentTarget.style.background = 'var(--bg-hover)'; e.currentTarget.style.color = 'var(--text-primary)'; }}}
-      onMouseLeave={e => { if (!active) { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-secondary)'; }}}
+      onMouseEnter={e => {
+        if (!active) {
+          e.currentTarget.style.background = '#f1f5f9';
+          e.currentTarget.style.color = '#1e293b';
+          e.currentTarget.querySelector?.('.nav-icon')?.setAttribute('color', '#475569');
+        }
+      }}
+      onMouseLeave={e => {
+        if (!active) {
+          e.currentTarget.style.background = 'transparent';
+          e.currentTarget.style.color = txtCol;
+        }
+      }}
     >
-      <span style={{ fontSize: 17, flexShrink: 0 }}>{icon}</span>
-      {!collapsed && <span>{label}</span>}
+      <span className="nav-icon" style={{ display: 'flex', alignItems: 'center', color: iconCol, transition: 'color 0.14s' }}>
+        <NavIcon name={icon} size={15} color={iconCol} />
+      </span>
+      {!collapsed && <span style={{ lineHeight: 1.2 }}>{label}</span>}
     </Link>
+  );
+}
+
+// ── Collapsible nav group ─────────────────────────────────────────────────────
+// Used for Layer Production and Broiler Production sections.
+// - In expanded sidebar: shows a clickable header row + animated child list
+// - In collapsed sidebar: shows just the group icon; hover reveals a flyout panel
+function CollapsibleGroup({ section, items, isOpen, onToggle, collapsed, pathname, search }) {
+  const meta        = SECTION_META[section];
+  const hasActive   = items.some(item => {
+    const [hrefPath, hrefQuery] = item.href.split('?');
+    return hrefQuery
+      ? pathname === hrefPath && search === `?${hrefQuery}`
+      : pathname === hrefPath || pathname.startsWith(hrefPath + '/');
+  });
+  const flyoutRef   = React.useRef(null);
+  const anchorRef   = React.useRef(null);
+  const [flyoutPos, setFlyoutPos] = React.useState({ top: 0 });
+  const [flyoutOpen, setFlyoutOpen] = React.useState(false);
+
+  if (!meta || items.length === 0) return null;
+
+  // ── Collapsed sidebar: icon-only with hover flyout ─────────────────────────
+  if (collapsed) {
+    return (
+      <div style={{ position: 'relative', marginBottom: 2 }}
+        onMouseEnter={() => {
+          if (anchorRef.current) {
+            const r = anchorRef.current.getBoundingClientRect();
+            setFlyoutPos({ top: r.top });
+          }
+          setFlyoutOpen(true);
+        }}
+        onMouseLeave={() => setFlyoutOpen(false)}
+      >
+        {/* Icon anchor */}
+        <div ref={anchorRef} style={{
+          width: 34, height: 34, borderRadius: 8, margin: '0 auto 2px',
+          background: hasActive ? '#eeecff' : 'transparent',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          cursor: 'pointer', transition: 'all 0.15s',
+          color: hasActive ? '#6c63ff' : '#94a3b8',
+        }}>
+          {meta.Icon && <meta.Icon size={16} strokeWidth={1.8} />}
+        </div>
+
+        {/* Flyout panel */}
+        {flyoutOpen && typeof document !== 'undefined' && ReactDOM.createPortal(
+          <div ref={flyoutRef} style={{
+            position: 'fixed', top: flyoutPos.top, left: 72,
+            background: '#fff', borderRadius: 10,
+            border: '1px solid var(--border-card)',
+            boxShadow: '0 4px 20px rgba(0,0,0,0.12)',
+            padding: '8px 6px', zIndex: 500, minWidth: 180,
+            animation: 'fadeInLeft 0.15s ease',
+          }}>
+            <div style={{ fontSize: 12, fontWeight: 600, fontFamily: "'Poppins',sans-serif", color: meta.color, padding: '6px 10px 8px', letterSpacing: 0 }}>
+              {meta.label}
+            </div>
+            {items.map(item => (
+              <NavLink key={item.href} href={item.href} icon={item.icon} label={item.label}
+                collapsed={false} pathname={pathname} search={search}
+              />
+            ))}
+          </div>,
+          document.body
+        )}
+      </div>
+    );
+  }
+
+  // ── Expanded sidebar: clickable header + animated children ────────────────
+  // Styled identically to NavLink — same colours, same padding, same font weight.
+  // The only addition is the ChevronDown on the right.
+  const GroupIcon = meta.Icon;
+  const iconCol   = hasActive ? '#6c63ff' : '#94a3b8';
+  const txtCol    = hasActive ? '#6c63ff' : '#64748b';
+  const bgActive  = '#eeecff';
+  return (
+    <div style={{ marginBottom: 2 }}>
+      {/* Group header button — mirrors NavLink styling exactly */}
+      <button
+        onClick={onToggle}
+        style={{
+          width: '100%',
+          background: hasActive && !isOpen ? bgActive : 'transparent',
+          border: 'none', borderRadius: 8, cursor: 'pointer',
+          display: 'flex', alignItems: 'center', gap: 9,
+          padding: '7px 10px',
+          fontFamily: "'Poppins', sans-serif",
+          marginBottom: 1, transition: 'background 0.14s',
+        }}
+        onMouseEnter={e => { if (!hasActive || isOpen) e.currentTarget.style.background = '#f1f5f9'; }}
+        onMouseLeave={e => { e.currentTarget.style.background = hasActive && !isOpen ? bgActive : 'transparent'; }}
+      >
+        {GroupIcon && (
+          <span style={{ display: 'flex', alignItems: 'center', color: iconCol, flexShrink: 0, transition: 'color 0.14s' }}>
+            <GroupIcon size={15} strokeWidth={1.8} />
+          </span>
+        )}
+        <span style={{ flex: 1, textAlign: 'left', fontSize: 13, fontWeight: hasActive ? 600 : 500, color: txtCol, letterSpacing: 0 }}>
+          {meta.label}
+        </span>
+        {/* Active dot when closed but has active child */}
+        {hasActive && !isOpen && (
+          <div style={{ width: 5, height: 5, borderRadius: '50%', background: '#6c63ff', flexShrink: 0 }} />
+        )}
+        <span style={{
+          display: 'flex', alignItems: 'center',
+          color: '#94a3b8', flexShrink: 0,
+          transform: isOpen ? 'rotate(180deg)' : 'none',
+          transition: 'transform 0.2s ease',
+        }}>
+          <ChevronDown size={13} strokeWidth={2} />
+        </span>
+      </button>
+
+      {/* Animated children */}
+      <div style={{
+        overflow: 'hidden',
+        maxHeight: isOpen ? `${items.length * 36}px` : '0px',
+        transition: 'max-height 0.25s ease',
+        paddingLeft: 6,
+      }}>
+        {items.map(item => (
+          <NavLink key={item.href} href={item.href} icon={item.icon} label={item.label}
+            collapsed={false} pathname={pathname} search={search}
+          />
+        ))}
+      </div>
+    </div>
   );
 }
 
 // ── AppShell ──────────────────────────────────────────────────────────────────
 export default function AppShell({ children }) {
   const { user, logout } = useAuth();
-  const pathname = usePathname();
-  const router   = useRouter();
+  const pathname         = usePathname();
+  const searchParams     = useSearchParams();
+  const search           = searchParams.toString() ? `?${searchParams.toString()}` : '';
 
   const [collapsed,     setCollapsed]     = useState(false);
   const [notifOpen,     setNotifOpen]     = useState(false);
+  const [profileOpen,   setProfileOpen]   = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [unreadCount,   setUnreadCount]   = useState(0);
   const [notifLoading,  setNotifLoading]  = useState(false);
-  // Administration group expanded/collapsed in sidebar
-  const [adminExpanded, setAdminExpanded] = useState(
-    // Auto-expand if currently on an admin page
-    false
-  );
-  const bellRef = useRef(null);
 
-  const isAdmin   = ADMIN_ONLY.includes(user?.role);
-  const sideW     = collapsed ? 64 : 220;
-  const initials  = user ? `${user.firstName?.[0] || ''}${user.lastName?.[0] || ''}`.toUpperCase() : '?';
-  const roleLabel = ROLE_LABELS[user?.role] || user?.role || '';
+  // Tenant operation mode
+  const [opMode,        setOpMode]        = useState('LAYER_ONLY');
+  const [hasFeedMill,   setHasFeedMill]   = useState(false);
+  const [hasProcessing, setHasProcessing] = useState(false);
 
-  // Auto-expand admin group when on admin pages
+  // Per-user operation type: null = unrestricted; 'LAYER' | 'BROILER' = pen-scoped
+  const [userOpType,    setUserOpType]    = useState(null);
+
+  const bellRef    = useRef(null);
+  const profileRef = useRef(null);
+
+  const isPenScoped = PEN_SCOPED_ROLES.includes(user?.role);
+  const sideW       = collapsed ? 64 : 220;
+  const initials    = user ? `${user.firstName?.[0] || ''}${user.lastName?.[0] || ''}`.toUpperCase() : '?';
+  const roleLabel   = ROLE_LABELS[user?.role] || user?.role || '';
+
+  // ── Load tenant settings (operation mode, add-on flags) ─────────────────────
   useEffect(() => {
-    if (pathname.startsWith('/users') || pathname.startsWith('/settings')) {
-      setAdminExpanded(true);
+    if (!user) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = localStorage.getItem('pfp_token');
+        const res   = await fetch('/api/settings', { headers: { Authorization: `Bearer ${token}` } });
+        if (!res.ok || cancelled) return;
+        const data  = await res.json();
+        if (cancelled) return;
+        setOpMode(data.settings?.operationMode   || 'LAYER_ONLY');
+        setHasFeedMill(!!data.settings?.hasFeedMillModule);
+        setHasProcessing(!!data.settings?.hasProcessingModule);
+      } catch { /* fall back to LAYER_ONLY defaults */ }
+    })();
+    return () => { cancelled = true; };
+  }, [user]);
+
+  // ── Load + poll user operation type (pen-scoped roles only) ─────────────────
+  // Polled every 30 s so reassignments are reflected without a logout.
+  const fetchUserOpType = useCallback(async () => {
+    if (!user) return;
+    try {
+      const token = localStorage.getItem('pfp_token');
+      const res   = await fetch('/api/me/operation', { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) return;
+      const data  = await res.json();
+      setUserOpType(data.operationType ?? null);
+    } catch { /* silent */ }
+  }, [user]);
+
+  useEffect(() => {
+    fetchUserOpType();
+    if (!isPenScoped) return; // only poll for roles that can be reassigned
+    const interval = setInterval(fetchUserOpType, 30_000);
+    return () => clearInterval(interval);
+  }, [fetchUserOpType, isPenScoped]);
+
+  // ── Build visible nav items ──────────────────────────────────────────────────
+  const visibleItems = (() => {
+    if (!user) return [];
+
+    const isBothMode = opMode === 'BOTH';
+
+    // In single-op modes replace the split layer/broiler flocks entries with one plain Flocks item
+    const catalogue = isBothMode
+      ? NAV_ITEMS
+      : [
+          ...NAV_ITEMS.filter(i => i.href !== '/farm?op=layer' && i.href !== '/farm?op=broiler'),
+          FLOCKS_SINGLE,
+        ];
+
+    return catalogue.filter(item => {
+      if (!item.roles.includes(user.role))                          return false;
+      if (item.opModes && !item.opModes.includes(opMode))           return false;
+      if (item.requiresFeedMill   && !hasFeedMill)                  return false;
+      if (item.requiresProcessing && !hasProcessing)                return false;
+      // Pen-scoped users: hide the other operation's section items
+      if (isPenScoped && userOpType) {
+        if (item.section === 'layer'   && userOpType !== 'LAYER')   return false;
+        if (item.section === 'broiler' && userOpType !== 'BROILER') return false;
+      }
+      return true;
+    });
+  })();
+
+  // Bucket by section
+  const topItems     = visibleItems.filter(i => i.section === 'top');
+  const layerItems   = visibleItems.filter(i => i.section === 'layer');
+  const broilerItems = visibleItems.filter(i => i.section === 'broiler');
+  const sharedItems  = visibleItems.filter(i => i.section === 'shared');
+
+  // Collapsible groups only apply for manager-and-above in BOTH mode
+  const showSections = MANAGER_UP_ROLES.includes(user?.role) && opMode === 'BOTH';
+
+  // ── Collapsible group open/closed state ──────────────────────────────────────
+  // Persisted in localStorage so it survives page navigation.
+  // Auto-expands the group that contains the current route on mount.
+  const [groupOpen, setGroupOpen] = useState(() => {
+    if (typeof window === 'undefined') return { layer: true, broiler: false };
+    try {
+      const saved = JSON.parse(localStorage.getItem('pfp_nav_groups') || '{}');
+      return { layer: saved.layer ?? true, broiler: saved.broiler ?? false };
+    } catch { return { layer: true, broiler: false }; }
+  });
+
+  // Auto-expand the group containing the active route
+  useEffect(() => {
+    const activeLayer   = layerItems.some(i => {
+      const [p, q] = i.href.split('?');
+      return q ? pathname === p && search === `?${q}` : pathname === p || pathname.startsWith(p + '/');
+    });
+    const activeBroiler = broilerItems.some(i => {
+      const [p, q] = i.href.split('?');
+      return q ? pathname === p && search === `?${q}` : pathname === p || pathname.startsWith(p + '/');
+    });
+    if (activeLayer || activeBroiler) {
+      setGroupOpen(prev => {
+        const next = { ...prev, ...(activeLayer ? { layer: true } : {}), ...(activeBroiler ? { broiler: true } : {}) };
+        try { localStorage.setItem('pfp_nav_groups', JSON.stringify(next)); } catch {}
+        return next;
+      });
     }
-  }, [pathname]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathname, search]);
 
-  const visibleMain = NAV_MAIN.filter(n => !user || n.roles.includes(user.role));
+  const toggleGroup = (key) => {
+    setGroupOpen(prev => {
+      const next = { ...prev, [key]: !prev[key] };
+      try { localStorage.setItem('pfp_nav_groups', JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
 
-  // ── Fetch unread count ──────────────────────────────────────────────────────
+  // ── Notifications ────────────────────────────────────────────────────────────
   const fetchUnreadCount = useCallback(async () => {
     if (!user) return;
     try {
@@ -225,7 +774,6 @@ export default function AppShell({ children }) {
     return () => clearInterval(interval);
   }, [fetchUnreadCount]);
 
-  // ── Open notifications dropdown ─────────────────────────────────────────────
   const openNotifications = async () => {
     if (notifOpen) { setNotifOpen(false); return; }
     setNotifOpen(true);
@@ -268,7 +816,7 @@ export default function AppShell({ children }) {
     } catch { /* silent */ }
   };
 
-  // Avatar: use profilePicUrl from user object if available, else initials
+  // ── Avatar helpers ───────────────────────────────────────────────────────────
   const avatarContent = user?.profilePicUrl
     ? <img src={user.profilePicUrl} alt={initials} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} />
     : <span>{initials}</span>;
@@ -282,12 +830,14 @@ export default function AppShell({ children }) {
     overflow: 'hidden',
   });
 
-  const isAdminPage = pathname.startsWith('/users') || pathname.startsWith('/settings');
-
   return (
     <div style={{ display: 'flex', minHeight: '100vh', background: 'var(--bg-base)', fontFamily: "'Nunito', sans-serif" }}>
+      <style>{`
+        @keyframes fadeInUp   { from { opacity:0; transform:translateY(6px)  } to { opacity:1; transform:none } }
+        @keyframes fadeInLeft { from { opacity:0; transform:translateX(-6px) } to { opacity:1; transform:none } }
+      `}</style>
 
-      {/* ── Sidebar ─────────────────────────────────────────────────────────── */}
+      {/* ── Sidebar ──────────────────────────────────────────────────────────── */}
       <aside style={{
         width: sideW, flexShrink: 0, background: '#fff',
         borderRight: '1px solid var(--border-card)',
@@ -303,13 +853,14 @@ export default function AppShell({ children }) {
           display: 'flex', alignItems: 'center', gap: 10,
           borderBottom: '1px solid var(--border-card)',
           justifyContent: collapsed ? 'center' : 'flex-start',
+          flexShrink: 0,
         }}>
           <div style={{
             width: 34, height: 34,
             background: 'linear-gradient(135deg,#6c63ff,#48c774)',
             borderRadius: 9, display: 'flex', alignItems: 'center',
             justifyContent: 'center', fontSize: 18, flexShrink: 0,
-          }}>🐔</div>
+          }}><Bird size={18} strokeWidth={1.8} color="#fff" /></div>
           {!collapsed && (
             <div>
               <div style={{ fontFamily: "'Poppins',sans-serif", fontWeight: 700, fontSize: 14, color: 'var(--text-primary)', lineHeight: 1.2 }}>PoultryFarm</div>
@@ -319,112 +870,123 @@ export default function AppShell({ children }) {
         </div>
 
         {/* Nav */}
-        <nav style={{ flex: 1, padding: '12px 8px', overflowY: 'auto' }}>
-          {/* Main nav items */}
-          {visibleMain.map(item => (
-            <NavLink key={item.href} href={item.href} icon={item.icon} label={item.label} collapsed={collapsed} pathname={pathname} />
+        <nav style={{ flex: 1, padding: '10px 8px', overflowY: 'auto' }}>
+
+          {/* Top items — always visible, no grouping */}
+          {topItems.map(item => (
+            <NavLink key={item.href} href={item.href} icon={item.icon} label={item.label}
+              collapsed={collapsed} pathname={pathname} search={search} />
           ))}
 
-          {/* Administration group — only for ADMIN_ONLY roles */}
-          {isAdmin && (
-            <div style={{ marginTop: 8 }}>
-              {/* Group header */}
-              {!collapsed ? (
-                <button
-                  onClick={() => setAdminExpanded(p => !p)}
-                  style={{
-                    width: '100%', display: 'flex', alignItems: 'center',
-                    justifyContent: 'space-between',
-                    padding: '7px 12px', borderRadius: 8,
-                    background: isAdminPage ? 'var(--purple-light)' : 'transparent',
-                    border: 'none', cursor: 'pointer', fontFamily: 'inherit',
-                    marginBottom: 2,
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em', color: isAdminPage ? 'var(--purple)' : 'var(--text-muted)' }}>
-                      Administration
-                    </span>
-                  </div>
-                  <span style={{
-                    fontSize: 11, color: isAdminPage ? 'var(--purple)' : 'var(--text-muted)',
-                    transform: adminExpanded ? 'rotate(0deg)' : 'rotate(-90deg)',
-                    transition: 'transform 0.2s',
-                    lineHeight: 1,
-                  }}>▾</span>
-                </button>
-              ) : (
-                // Collapsed: show a divider line
-                <div style={{ height: 1, background: 'var(--border-card)', margin: '8px 0' }} />
-              )}
+          {/* Layer Production — collapsible group (BOTH mode + manager+) */}
+          {layerItems.length > 0 && showSections ? (
+            <CollapsibleGroup
+              section="layer"
+              items={layerItems}
+              isOpen={groupOpen.layer}
+              onToggle={() => toggleGroup('layer')}
+              collapsed={collapsed}
+              pathname={pathname}
+              search={search}
+            />
+          ) : layerItems.length > 0 ? (
+            /* Single-op or pen-scoped: flat list, no group header */
+            layerItems.map(item => (
+              <NavLink key={item.href} href={item.href} icon={item.icon} label={item.label}
+                collapsed={collapsed} pathname={pathname} search={search} />
+            ))
+          ) : null}
 
-              {/* Admin nav links — shown when expanded OR when sidebar is collapsed (icons only) */}
-              {(adminExpanded || collapsed) && NAV_ADMIN.map(item => (
-                <NavLink key={item.href} href={item.href} icon={item.icon} label={item.label} collapsed={collapsed} pathname={pathname} />
-              ))}
-            </div>
-          )}
+          {/* Broiler Production — collapsible group (BOTH mode + manager+) */}
+          {broilerItems.length > 0 && showSections ? (
+            <CollapsibleGroup
+              section="broiler"
+              items={broilerItems}
+              isOpen={groupOpen.broiler}
+              onToggle={() => toggleGroup('broiler')}
+              collapsed={collapsed}
+              pathname={pathname}
+              search={search}
+            />
+          ) : broilerItems.length > 0 ? (
+            broilerItems.map(item => (
+              <NavLink key={item.href} href={item.href} icon={item.icon} label={item.label}
+                collapsed={collapsed} pathname={pathname} search={search} />
+            ))
+          ) : null}
+
+          {/* Shared items — no header, just flow after the groups */}
+          {sharedItems.map(item => (
+            <NavLink key={item.href} href={item.href} icon={item.icon} label={item.label}
+              collapsed={collapsed} pathname={pathname} search={search} />
+          ))}
         </nav>
 
-        {/* Bottom: collapse + user card */}
-        <div style={{ borderTop: '1px solid var(--border-card)', padding: '12px 8px' }}>
+        {/* ── Bottom: collapse + profile ──────────────────────────────────────── */}
+        <div style={{ borderTop: '1px solid var(--border-card)', padding: '10px 8px', flexShrink: 0 }}>
+          {/* Collapse toggle */}
           <button
             onClick={() => setCollapsed(p => !p)}
             style={{
               width: '100%', background: 'transparent', border: 'none',
               cursor: 'pointer', display: 'flex', alignItems: 'center',
               justifyContent: collapsed ? 'center' : 'flex-start',
-              gap: 10, padding: '8px 12px', borderRadius: 8,
-              color: 'var(--text-muted)', fontSize: 13, fontFamily: 'inherit', marginBottom: 6,
+              gap: 10, padding: '7px 12px', borderRadius: 8,
+              color: 'var(--text-muted)', fontSize: 13, fontFamily: 'inherit', marginBottom: 4,
             }}
           >
-            <span style={{ fontSize: 16 }}>{collapsed ? '→' : '←'}</span>
-            {!collapsed && <span>Collapse</span>}
+            <span style={{ display: 'flex', alignItems: 'center' }}>
+              {collapsed ? <PanelLeftOpen size={15} strokeWidth={1.8} /> : <PanelLeftClose size={15} strokeWidth={1.8} />}
+            </span>
+            {!collapsed && <span style={{ fontFamily: "'Poppins',sans-serif", fontSize: 12, fontWeight: 500 }}>Collapse</span>}
           </button>
 
-          {/* User card — clicking navigates to /profile */}
-          <Link href="/profile" style={{
-            display: 'flex', alignItems: 'center', gap: 10,
-            padding: collapsed ? '8px 0' : '8px 12px',
-            justifyContent: collapsed ? 'center' : 'flex-start',
-            textDecoration: 'none', borderRadius: 9,
-            transition: 'background 0.15s',
-          }}
-            onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-hover)'}
-            onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+          {/* Profile card → opens popover */}
+          <button
+            ref={profileRef}
+            onClick={() => setProfileOpen(p => !p)}
+            style={{
+              width: '100%', border: 'none', borderRadius: 9,
+              background: profileOpen ? 'var(--purple-light)' : 'transparent',
+              cursor: 'pointer', fontFamily: 'inherit',
+              display: 'flex', alignItems: 'center',
+              justifyContent: collapsed ? 'center' : 'flex-start',
+              gap: 10, padding: collapsed ? '8px 0' : '8px 10px',
+              transition: 'background 0.15s',
+              outline: profileOpen ? '2px solid #d4d8ff' : 'none',
+            }}
+            onMouseEnter={e => { if (!profileOpen) e.currentTarget.style.background = 'var(--bg-hover)'; }}
+            onMouseLeave={e => { if (!profileOpen) e.currentTarget.style.background = profileOpen ? 'var(--purple-light)' : 'transparent'; }}
           >
             <div style={avatarStyle(32)}>{avatarContent}</div>
             {!collapsed && (
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {user?.firstName} {user?.lastName}
+              <>
+                <div style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {user?.firstName} {user?.lastName}
+                  </div>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{roleLabel}</div>
                 </div>
-                <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{roleLabel}</div>
-              </div>
+                <span style={{ display: 'flex', alignItems: 'center', color: profileOpen ? '#6c63ff' : '#94a3b8', transition: 'color 0.15s, transform 0.2s', transform: profileOpen ? 'rotate(180deg)' : 'none', flexShrink: 0 }}>
+                  <ChevronDown size={13} strokeWidth={2.5} />
+                </span>
+              </>
             )}
-            {!collapsed && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>✏️</span>}
-          </Link>
-
-          {!collapsed && (
-            <button
-              onClick={() => logout()}
-              style={{
-                width: '100%', background: 'transparent', border: '1px solid var(--border)',
-                borderRadius: 8, padding: '7px 12px', color: 'var(--text-muted)',
-                fontSize: 12, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600,
-                marginTop: 4, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                gap: 6, transition: 'all 0.15s',
-              }}
-              onMouseEnter={e => { e.currentTarget.style.background = 'var(--red-bg)'; e.currentTarget.style.color = 'var(--red)'; e.currentTarget.style.borderColor = 'var(--red-border)'; }}
-              onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.borderColor = 'var(--border)'; }}
-            >
-              🚪 Sign out
-            </button>
-          )}
+          </button>
         </div>
       </aside>
 
-      {/* ── Main ────────────────────────────────────────────────────────────── */}
+      {/* Profile popover — rendered via portal */}
+      {profileOpen && (
+        <ProfilePopover
+          user={user}
+          logout={logout}
+          onClose={() => setProfileOpen(false)}
+          anchorRef={profileRef}
+        />
+      )}
+
+      {/* ── Main ─────────────────────────────────────────────────────────────── */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
 
         {/* Topbar */}
@@ -436,7 +998,7 @@ export default function AppShell({ children }) {
         }}>
           <div>
             <div style={{ fontFamily: "'Poppins',sans-serif", fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>
-              {user?.farmName || 'Green Acres Poultry Farm'}
+              {user?.farmName || 'PoultryFarm Pro'}
             </div>
             <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
               {new Date().toLocaleDateString('en-NG', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
@@ -453,7 +1015,7 @@ export default function AppShell({ children }) {
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               cursor: 'pointer', fontSize: 16, transition: 'all 0.15s',
             }}>
-              🔔
+              <Bell size={16} strokeWidth={1.8} color={notifOpen ? "#6c63ff" : "#64748b"} />
               {unreadCount > 0 && (
                 <span style={{
                   position: 'absolute', top: -4, right: -4,
@@ -476,22 +1038,23 @@ export default function AppShell({ children }) {
               />
             )}
 
-            {/* Avatar chip — links to /profile */}
-            <Link href="/profile" style={{
-              display: 'flex', alignItems: 'center', gap: 8,
-              padding: '5px 12px',
-              background: 'var(--purple-light)', border: '1px solid #d4d8ff',
-              borderRadius: 9, cursor: 'pointer', textDecoration: 'none',
-              transition: 'background 0.15s',
-            }}
+            {/* Avatar chip — also opens profile popover */}
+            <button
+              onClick={() => setProfileOpen(p => !p)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                padding: '5px 12px',
+                background: profileOpen ? '#e4e2ff' : 'var(--purple-light)',
+                border: '1px solid #d4d8ff', borderRadius: 9,
+                cursor: 'pointer', transition: 'background 0.15s', fontFamily: 'inherit',
+              }}
               onMouseEnter={e => e.currentTarget.style.background = '#e4e2ff'}
-              onMouseLeave={e => e.currentTarget.style.background = 'var(--purple-light)'}
+              onMouseLeave={e => { if (!profileOpen) e.currentTarget.style.background = 'var(--purple-light)'; }}
             >
               <div style={avatarStyle(26)}>{avatarContent}</div>
-              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--purple)' }}>
-                {user?.firstName}
-              </div>
-            </Link>
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--purple)' }}>{user?.firstName}</div>
+              <ChevronDown size={12} strokeWidth={2.5} color="#6c63ff" style={{ opacity: 0.7 }} />
+            </button>
           </div>
         </header>
 

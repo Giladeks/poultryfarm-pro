@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { createPortal } from 'react-dom';
 import AppShell from '@/components/layout/AppShell';
 import { useAuth } from '@/components/layout/AuthProvider';
+import KpiCard from '@/components/ui/KpiCard';
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ResponsiveContainer, ReferenceLine, Area, ComposedChart,
@@ -19,24 +20,45 @@ function fcrColor(f)  { return f>2.5?'#ef4444':f>2.0?'#f59e0b':'#22c55e'; }
 function rateColor(r) { return r>=85?'#16a34a':r>=70?'#f59e0b':'#ef4444'; }
 function fmt(n)       { return n!=null ? parseFloat(n).toLocaleString(undefined,{maximumFractionDigits:0}) : '—'; }
 
+// ── KPI status helpers ────────────────────────────────────────────────────────
+function layRateStatus(r)       { if (r==null) return 'neutral'; return r>=82?'good':r>=70?'warn':'critical'; }
+function mortalityStatus(r7d)   { if (r7d==null) return 'neutral'; return r7d<=0.05?'good':r7d<=0.15?'warn':'critical'; }
+function fcrStatus(f, broiler)  { if (!f) return 'neutral'; const hi=broiler?2.0:2.2; return f<=(broiler?1.9:2.0)?'good':f<=hi?'warn':'critical'; }
+function uniformityStatus(p)    { if (p==null) return 'neutral'; return p>=80?'good':p>=70?'warn':'critical'; }
+function gradeAStatus(p)        { if (p==null) return 'neutral'; return p>=85?'good':p>=75?'warn':'critical'; }
+
+function layerWaterBenchmark(ageInDays) {
+  if (!ageInDays) return 0.30;
+  if (ageInDays < 28)  return 0.08;
+  if (ageInDays < 119) return 0.18;
+  return 0.30;
+}
+function broilerWaterBenchmark(ageInDays) {
+  if (!ageInDays) return 0.25;
+  if (ageInDays <= 7)  return 0.04;
+  if (ageInDays <= 21) return 0.12;
+  if (ageInDays <= 35) return 0.22;
+  return 0.30;
+}
+function waterStatus(actual, benchmark) {
+  if (actual == null || !benchmark) return 'neutral';
+  const pct = actual / benchmark;
+  if (pct >= 0.85) return 'good';
+  if (pct >= 0.65) return 'warn';
+  return 'critical';
+}
+function waterDelta(actual, benchmark) {
+  if (actual == null) return 'Not tracked yet';
+  if (!benchmark) return actual.toFixed(2) + ' L/bird';
+  const pct = Math.round((actual / benchmark) * 100);
+  return pct + '% of age benchmark';
+}
+function mortCountStatus(n,thr) { if (n==null) return 'neutral'; return n===0?'good':n<=thr?'warn':'critical'; }
+
 function OccBar({ pct, h=5 }) {
   return (
     <div style={{height:h,background:'var(--border)',borderRadius:2,overflow:'hidden'}}>
       <div style={{height:'100%',width:`${Math.min(pct||0,100)}%`,background:occColor(pct||0),borderRadius:2,transition:'width .5s ease'}}/>
-    </div>
-  );
-}
-
-// ── Shared KPI card ───────────────────────────────────────────────────────────
-function KpiCard({ icon, value, label, sub, color='var(--purple)', warn=false }) {
-  return (
-    <div className="card" style={{padding:'18px 20px',display:'flex',alignItems:'center',gap:14,borderLeft:`4px solid ${warn?'#ef4444':color}`}}>
-      <div style={{width:44,height:44,borderRadius:12,background:`${warn?'#ef4444':color}18`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:22,flexShrink:0}}>{icon}</div>
-      <div style={{flex:1}}>
-        <div style={{fontFamily:"'Poppins',sans-serif",fontSize:24,fontWeight:700,color:warn?'#ef4444':color,lineHeight:1}}>{value??'—'}</div>
-        <div style={{fontSize:11,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em',marginTop:4}}>{label}</div>
-        {sub && <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>{sub}</div>}
-      </div>
     </div>
   );
 }
@@ -289,230 +311,186 @@ function Spinner() {
   return <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 12 }}>Loading…</div>;
 }
 
-// ── Section card (pen worker) ─────────────────────────────────────────────────
-function WorkerSectionCard({ sec }) {
-  const [expanded, setExpanded] = useState(false);
+// ── Section card (pen worker) — mockup style ─────────────────────────────────
+function WorkerSectionCard({ sec, defaultExpanded = false }) {
+  const [expanded, setExpanded] = useState(defaultExpanded);
   const [modal,    setModal]    = useState(false);
   const mx    = sec.metrics;
-  const isL   = mx.type === 'LAYER';
-  const color = OP_COLOR[sec.penOperationType];
-  const flag  = sec.flags[0];
-  const alertBorder = flag?.type==='critical'?'#ef4444':flag?.type==='warn'?'#f59e0b':color;
+  const isL   = sec.penOperationType === 'LAYER';
+  const flag  = (sec.flags||[])[0];
+  const isCrit = flag?.type === 'critical';
+  const isWarn = flag?.type === 'warn';
 
-  const core = isL ? [
-    { icon:'🥚', val:fmt(mx.todayEggs),          label:'Eggs Today',   color:'#f59e0b' },
-    { icon:'📊', val:`${mx.todayLayingRate??0}%`, label:'Laying Rate',  color:rateColor(mx.todayLayingRate) },
-    { icon:'💀', val:fmt(mx.todayMortality),      label:'Deaths Today', color:mx.todayMortality>5?'#ef4444':'var(--text-primary)', warn:mx.todayMortality>5 },
-    { icon:'🐦', val:fmt(sec.currentBirds),       label:'Live Birds',   color:'var(--purple)' },
-  ] : [
-    { icon:'⚖',  val:mx.latestWeightG?`${fmt(mx.latestWeightG)}g`:'—', label:'Avg Weight',  color:'#3b82f6' },
-    { icon:'🔄', val:mx.estimatedFCR??'—',                              label:'Est. FCR',    color:fcrColor(mx.estimatedFCR||0) },
-    { icon:'💀', val:fmt(mx.todayMortality),                             label:'Deaths Today',color:mx.todayMortality>5?'#ef4444':'var(--text-primary)', warn:mx.todayMortality>5 },
-    { icon:'📅', val:mx.daysToHarvest!=null?`${mx.daysToHarvest}d`:'—',label:'To Harvest',  color:'#8b5cf6' },
-  ];
+  // Primary metric for collapsed row
+  const layRate      = mx.todayLayingRate > 0 ? mx.todayLayingRate : null;
+  const primaryVal   = isL
+    ? (layRate != null ? `${layRate}%` : '—')
+    : (mx.latestWeightG != null ? `${(mx.latestWeightG/1000).toFixed(2)} kg` : '—');
+  const primaryColor = isL
+    ? (layRate == null ? 'var(--text-muted)' : layRate < 70 ? '#ef4444' : layRate < 80 ? '#d97706' : '#16a34a')
+    : 'var(--text-primary)';
 
   return (
-    <div className="card" style={{padding:0,overflow:'hidden',borderLeft:`4px solid ${alertBorder}`}}>
-      {/* ── Clickable header row — always visible ── */}
-      <div
-        onClick={()=>setExpanded(e=>!e)}
-        style={{padding:'14px 18px',cursor:'pointer',userSelect:'none',display:'flex',justifyContent:'space-between',alignItems:'center'}}
-      >
+    <div style={{background:'#fff',border:`1px solid ${isCrit?'#fecaca':isWarn?'#fde68a':'#e2e8f0'}`,borderRadius:12,overflow:'hidden',boxShadow:isCrit?'0 0 0 2px rgba(239,68,68,0.07)':'none',marginBottom:8}}>
+
+      {/* ── Collapsed header row ── */}
+      <div onClick={()=>setExpanded(e=>!e)} style={{padding:'12px 15px',cursor:'pointer',display:'flex',alignItems:'center',gap:10,borderBottom:expanded?'1px solid #f1f5f9':'none',background:expanded?'#f8fafc':'#fff'}}>
+        <div style={{width:8,height:8,borderRadius:'50%',background:isCrit?'#ef4444':isWarn?'#f59e0b':'#16a34a',flexShrink:0}}/>
         <div style={{flex:1,minWidth:0}}>
-          <div style={{fontWeight:700,fontSize:14}}>{sec.penName} — {sec.name}</div>
+          <div style={{fontFamily:"'Poppins',sans-serif",fontSize:13,fontWeight:600,color:'var(--text-primary)'}}>{sec.penName} — {sec.name}</div>
           {sec.flock
-            ? <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>{sec.flock.batchCode} · {sec.flock.breed} · {sec.ageInDays} days old</div>
-            : <div style={{fontSize:11,color:'var(--text-faint)',marginTop:2}}>No active flock</div>}
+            ? <div style={{fontSize:11,color:'var(--text-muted)',marginTop:1}}>{sec.flock.batchCode} · {sec.flock.breed} · {sec.ageInDays}d old</div>
+            : <div style={{fontSize:11,color:'var(--text-faint)',marginTop:1}}>No active flock</div>}
         </div>
-        <div style={{display:'flex',alignItems:'center',gap:12,flexShrink:0,marginLeft:12}}>
+        {/* Inline stats */}
+        <div style={{display:'flex',alignItems:'center',gap:16,flexShrink:0}}>
           <div style={{textAlign:'right'}}>
-            <div style={{fontFamily:"'Poppins',sans-serif",fontSize:17,fontWeight:700,color:occColor(sec.occupancyPct)}}>{sec.occupancyPct}%</div>
-            <div style={{fontSize:10,color:'var(--text-muted)'}}>{fmt(sec.currentBirds)} / {fmt(sec.capacity)}</div>
+            <div style={{fontFamily:"'Poppins',sans-serif",fontSize:15,fontWeight:700,color:primaryColor}}>{primaryVal}</div>
+            <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.04em'}}>{isL?'Lay rate':'Avg weight'}</div>
           </div>
-          <span style={{fontSize:20,color:'var(--text-muted)',transform:expanded?'rotate(90deg)':'rotate(0deg)',transition:'transform 0.2s ease',display:'inline-block',lineHeight:1}}>›</span>
+          <div style={{textAlign:'right'}}>
+            <div style={{fontFamily:"'Poppins',sans-serif",fontSize:15,fontWeight:700,color:occColor(sec.occupancyPct)}}>{sec.occupancyPct}%</div>
+            <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.04em'}}>{fmt(sec.currentBirds)}/{fmt(sec.capacity)}</div>
+          </div>
         </div>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+          style={{transform:expanded?'rotate(180deg)':'none',transition:'transform 0.2s',flexShrink:0}}>
+          <polyline points="6 9 12 15 18 9"/>
+        </svg>
       </div>
 
-      {/* ── Expanded content ── */}
+      {/* ── Expanded: detailed stats + flag + trends button ── */}
       {expanded && (
-        <div style={{borderTop:'1px solid var(--border)',padding:'14px 18px',background:'var(--bg-page)'}}>
-          <OccBar pct={sec.occupancyPct} />
-
-          {flag && <div style={{marginTop:8,marginBottom:10,fontSize:11,fontWeight:700,color:flag.type==='critical'?'#ef4444':'#d97706',background:flag.type==='critical'?'#fff5f5':'#fffbeb',border:`1px solid ${flag.type==='critical'?'#fecaca':'#fde68a'}`,borderRadius:6,padding:'4px 10px',display:'inline-block'}}>⚠ {flag.msg}</div>}
-
-          {/* Core 4 KPIs */}
-          <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10,marginTop:flag?0:8}}>
-            {core.map(k => (
-              <div key={k.label} style={{textAlign:'center',padding:'10px 8px',background:k.warn?'#fff5f5':'var(--bg-elevated)',border:`1px solid ${k.warn?'#fecaca':'var(--border)'}`,borderRadius:8}}>
-                <div style={{fontSize:18,marginBottom:4}}>{k.icon}</div>
-                <div style={{fontFamily:"'Poppins',sans-serif",fontSize:16,fontWeight:700,color:k.color}}>{k.val}</div>
-                <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.04em',marginTop:2}}>{k.label}</div>
-              </div>
-            ))}
+        <div style={{padding:'12px 15px',background:'#f8fafc'}}>
+          {flag && <div style={{marginBottom:10,fontSize:11,fontWeight:700,color:isCrit?'#ef4444':'#d97706',background:isCrit?'#fef2f2':'#fffbeb',border:`1px solid ${isCrit?'#fecaca':'#fde68a'}`,borderRadius:6,padding:'5px 10px',display:'inline-block'}}>⚠ {flag.msg}</div>}
+          <div style={{display:'flex',gap:10,marginBottom:sec.flock?10:0,flexWrap:'wrap'}}>
+            {isL ? <>
+              <StatChip label="Eggs Today"   value={fmt(mx.todayEggs)} color="#f59e0b"/>
+              <StatChip label="Lay Rate"     value={`${mx.todayLayingRate??0}%`} color={rateColor(mx.todayLayingRate)}/>
+              <StatChip label="Deaths"       value={fmt(mx.todayMortality)} color={mx.todayMortality>5?'#ef4444':'var(--text-secondary)'}/>
+              <StatChip label="7d Deaths"    value={fmt(mx.weekMortality)} color="var(--text-secondary)"/>
+            </> : <>
+              <StatChip label="Avg Weight"   value={mx.latestWeightG?`${fmt(mx.latestWeightG)}g`:'—'} color="#3b82f6"/>
+              <StatChip label="Est. FCR"     value={mx.estimatedFCR??'—'} color={fcrColor(mx.estimatedFCR||0)}/>
+              <StatChip label="Deaths"       value={fmt(mx.todayMortality)} color={mx.todayMortality>5?'#ef4444':'var(--text-secondary)'}/>
+              <StatChip label="To Harvest"   value={mx.daysToHarvest!=null?`${mx.daysToHarvest}d`:'—'} color="#8b5cf6"/>
+            </>}
           </div>
-
-          {/* Charts — click button inside expanded panel */}
           {sec.flock && (
-            <button
-              onClick={e=>{ e.stopPropagation(); setModal(true); }}
-              style={{marginTop:12,width:'100%',padding:'8px',background:'var(--bg-elevated)',border:'1px solid var(--border)',borderRadius:8,cursor:'pointer',fontSize:12,fontWeight:600,color:'var(--text-secondary)',display:'flex',alignItems:'center',justifyContent:'center',gap:6}}
-            >
-              📈 View Trends & Charts
+            <button onClick={e=>{e.stopPropagation();setModal(true);}} style={{width:'100%',padding:'7px',background:'#eeecff',border:'none',borderRadius:8,cursor:'pointer',fontSize:11,fontWeight:600,color:'#6c63ff',display:'flex',alignItems:'center',justifyContent:'center',gap:5}}>
+              📈 View Trends →
             </button>
           )}
         </div>
       )}
 
-      {modal && (
-        <ChartModal
-          sectionId={sec.id}
-          sectionName={sec.name}
-          penName={sec.penName}
-          opType={sec.penOperationType}
-          onClose={()=>setModal(false)}
-        />
-      )}
+      {modal && <ChartModal sectionId={sec.id} sectionName={sec.name} penName={sec.penName} opType={sec.penOperationType} onClose={()=>setModal(false)}/>}
     </div>
   );
 }
 
-// ── Pen card (pen manager + farm manager) ─────────────────────────────────────
-function PenCard({ pen }) {
-  const [sectionsOpen, setSectionsOpen] = useState(false);
-  const [modalSec,     setModalSec]     = useState(null); // { id, name }
-  const isL   = pen.operationType === 'LAYER';
-  const color = OP_COLOR[pen.operationType];
-  const mx    = pen.metrics;
-  const alertBorder = pen.alertLevel==='critical'?'#ef4444':pen.alertLevel==='warn'?'#f59e0b':color;
+function StatChip({ label, value, color }) {
+  return (
+    <div style={{background:'#fff',border:'1px solid #e2e8f0',borderRadius:8,padding:'7px 12px',textAlign:'center',minWidth:70}}>
+      <div style={{fontFamily:"'Poppins',sans-serif",fontSize:14,fontWeight:700,color:color||'var(--text-primary)',lineHeight:1}}>{value}</div>
+      <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.04em',marginTop:3}}>{label}</div>
+    </div>
+  );
+}
+// ── Pen card (pen manager + farm manager) — mockup style ─────────────────────
+function PenCard({ pen, autoOpen = false, highlightSection = null }) {
+  const [open,     setOpen]    = useState(autoOpen);
+  const [modalSec, setModalSec]= useState(null);
+  const cardRef = useRef(null);
+  const [breathSection, setBreathSection] = useState(null);
+  const [cardBreath,    setCardBreath]    = useState(false);
 
-  const core = isL ? [
-    { icon:'🥚', val:fmt(mx.todayEggs),        label:'Eggs Today',     color:'#f59e0b' },
-    { icon:'📊', val:`${mx.avgLayingRate??0}%`, label:'Avg Laying Rate',color:rateColor(mx.avgLayingRate) },
-    { icon:'💀', val:fmt(mx.todayMortality),    label:'Deaths Today',   color:mx.todayMortality>10?'#ef4444':'var(--text-primary)', warn:mx.todayMortality>10 },
-    { icon:'🐦', val:fmt(pen.totalBirds),       label:'Live Birds',     color:'var(--purple)' },
-  ] : [
-    { icon:'⚖',  val:mx.avgWeightG?`${fmt(mx.avgWeightG)}g`:'—',        label:'Avg Weight',      color:'#3b82f6' },
-    { icon:'🔄', val:mx.avgFCR??'—',                                      label:'Avg FCR',         color:fcrColor(mx.avgFCR||0) },
-    { icon:'💀', val:fmt(mx.todayMortality),                               label:'Deaths Today',    color:mx.todayMortality>10?'#ef4444':'var(--text-primary)', warn:mx.todayMortality>10 },
-    { icon:'📅', val:mx.nearestHarvest!=null?`${mx.nearestHarvest}d`:'—', label:'Nearest Harvest', color:'#8b5cf6' },
-  ];
+  // When autoOpen becomes true: force-open card, scroll, start breathing highlight
+  useEffect(() => {
+    if (!autoOpen) return;
+    setOpen(true);
+    const scrollT = setTimeout(() => {
+      cardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 80);
+    if (highlightSection) {
+      setBreathSection(highlightSection);
+      const clearT = setTimeout(() => setBreathSection(null), 3000);
+      return () => { clearTimeout(scrollT); clearTimeout(clearT); };
+    } else {
+      setCardBreath(true);
+      const clearT = setTimeout(() => setCardBreath(false), 3000);
+      return () => { clearTimeout(scrollT); clearTimeout(clearT); };
+    }
+  }, [autoOpen, highlightSection]);
+  const isL    = pen.operationType === 'LAYER';
+  const mx     = pen.metrics;
+  const isCrit = pen.alertLevel === 'critical';
+  const isWarn = pen.alertLevel === 'warn';
+
+  const avgRate      = (mx.avgLayingRate > 0) ? mx.avgLayingRate : null;
+  const primaryVal   = isL
+    ? (avgRate != null ? `${avgRate}%` : '—')
+    : (mx.avgWeightG != null ? `${(mx.avgWeightG/1000).toFixed(2)} kg` : '—');
+  const primaryLabel = isL ? 'lay rate' : 'avg weight';
+  const primaryCrit  = isL ? (avgRate != null && avgRate < 70) : false;
+  const deaths7d     = mx.weekMortality ?? 0;
+  const firstFlag    = (pen.sections||[]).flatMap(s=>s.flags||[]).find(f=>f.type==='critical')
+                    || (pen.sections||[]).flatMap(s=>s.flags||[]).find(f=>f.type==='warn')
+                    || (pen.flags||[])[0];
 
   return (
-    <div style={{marginBottom:16}}>
-      <div className="card" style={{padding:0,overflow:'hidden',borderLeft:`4px solid ${alertBorder}`}}>
+    <div ref={cardRef} id={`pen-${pen.id}`} style={{marginBottom:10}}>
+      <div style={{background:'#fff',border:`1.5px solid ${cardBreath?'#fb923c':isCrit?'#fecaca':isWarn?'#fde68a':'#e2e8f0'}`,borderRadius:14,overflow:'hidden',boxShadow:isCrit?'0 0 0 2px rgba(239,68,68,0.07)':'none',animation:cardBreath?'harvestBreath 0.8s ease-in-out infinite':'none'}}>
 
-        {/* ── Clickable header + KPIs ── */}
-        <div
-          onClick={()=>setSectionsOpen(o=>!o)}
-          style={{padding:'16px 18px',cursor:'pointer',userSelect:'none'}}
-        >
-          {/* Pen header */}
-          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
-            <div style={{display:'flex',alignItems:'center',gap:10}}>
-              <div style={{width:38,height:38,borderRadius:10,background:`${color}18`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:18}}>{OP_ICON[pen.operationType]}</div>
-              <div>
-                <div style={{fontWeight:700,fontSize:15}}>{pen.name}</div>
-                <div style={{fontSize:11,color:'var(--text-muted)'}}>{pen.farmName} · {pen.sectionCount} sections · {fmt(pen.totalBirds)} birds</div>
-              </div>
+        {/* Collapsed header row */}
+        <div onClick={()=>setOpen(o=>!o)} style={{padding:'13px 16px',cursor:'pointer',display:'flex',alignItems:'center',gap:11,borderBottom:open?'1px solid #f1f5f9':'none',background:open?'#f8fafc':'#fff'}}>
+          <div style={{width:10,height:10,borderRadius:'50%',background:isCrit?'#ef4444':isWarn?'#f59e0b':'#16a34a',flexShrink:0}}/>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{display:'flex',alignItems:'center',gap:7,marginBottom:3}}>
+              <span style={{fontFamily:"'Poppins',sans-serif",fontSize:14,fontWeight:600,color:'var(--text-primary)'}}>{pen.name}</span>
+              <span style={{fontSize:10,fontWeight:700,padding:'1px 7px',borderRadius:99,background:isL?'#eeecff':'#fff7ed',color:isL?'#6c63ff':'#ea580c'}}>{isL?'Layer':'Broiler'}</span>
+              {(isCrit||isWarn)&&<span style={{fontSize:10,fontWeight:700,padding:'1px 7px',borderRadius:99,background:isCrit?'#fef2f2':'#fffbeb',color:isCrit?'#ef4444':'#d97706'}}>{isCrit?'critical':'warning'}</span>}
             </div>
-            <div style={{display:'flex',alignItems:'center',gap:10}}>
-              {pen.alertLevel !== 'ok' && (
-                <span style={{fontSize:10,fontWeight:700,color:pen.alertLevel==='critical'?'#ef4444':'#d97706',background:pen.alertLevel==='critical'?'#fff5f5':'#fffbeb',border:`1px solid ${pen.alertLevel==='critical'?'#fecaca':'#fde68a'}`,borderRadius:20,padding:'3px 10px'}}>
-                  {pen.alertLevel==='critical'?'🔴 Alert':'🟡 Warning'}
-                </span>
-              )}
-              <span style={{fontSize:20,color:'var(--text-muted)',transform:sectionsOpen?'rotate(90deg)':'rotate(0deg)',transition:'transform 0.2s ease',display:'inline-block',lineHeight:1}}>›</span>
+            <div style={{display:'flex',gap:14,alignItems:'center'}}>
+              <span style={{fontSize:12,color:'var(--text-muted)'}}><b style={{color:'var(--text-primary)',fontWeight:600}}>{pen.totalBirds?.toLocaleString()}</b> birds</span>
+              <span style={{fontSize:12,color:'var(--text-muted)'}}><b style={{color:primaryCrit?'#ef4444':'var(--text-primary)',fontWeight:600}}>{primaryVal}</b> {primaryLabel}</span>
+              <span style={{fontSize:12,color:deaths7d>15?'#ef4444':'var(--text-muted)'}}><b style={{color:deaths7d>15?'#ef4444':'var(--text-primary)',fontWeight:600}}>{deaths7d}</b> deaths/7d</span>
             </div>
+            {firstFlag&&<div style={{marginTop:3,fontSize:11,color:firstFlag.type==='critical'?'#ef4444':'#d97706',fontWeight:500}}>↳ {firstFlag.msg}</div>}
           </div>
-
-          {/* Core 4 KPIs */}
-          <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10}}>
-            {core.map(k => (
-              <div key={k.label} style={{textAlign:'center',padding:'10px 8px',background:k.warn?'#fff5f5':'var(--bg-elevated)',border:`1px solid ${k.warn?'#fecaca':'var(--border)'}`,borderRadius:8}}>
-                <div style={{fontSize:18,marginBottom:3}}>{k.icon}</div>
-                <div style={{fontFamily:"'Poppins',sans-serif",fontSize:17,fontWeight:700,color:k.color}}>{k.val}</div>
-                <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.04em',marginTop:2}}>{k.label}</div>
-              </div>
-            ))}
-          </div>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{transform:open?'rotate(180deg)':'none',transition:'transform 0.2s',flexShrink:0}}><polyline points="6 9 12 15 18 9"/></svg>
         </div>
 
-        {/* ── Section cards (revealed on click) ── */}
-        {sectionsOpen && (
-          <div style={{borderTop:'1px solid var(--border)',padding:'14px 16px',background:'var(--bg-page)'}}>
-            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(260px,1fr))',gap:12}}>
-              {pen.sections.map(sec => {
-                const smx = sec.metrics;
-                const flg = sec.flags[0];
-                const secBorder = flg?.type==='critical'?'#ef4444':flg?.type==='warn'?'#f59e0b':color;
-                const secCore = isL ? [
-                  { icon:'🥚', val:fmt(smx.todayEggs),          label:'Eggs Today',   color:'#f59e0b' },
-                  { icon:'📊', val:`${smx.todayLayingRate??0}%`, label:'Laying Rate',  color:rateColor(smx.todayLayingRate) },
-                  { icon:'💀', val:fmt(smx.todayMortality),      label:'Deaths Today', color:smx.todayMortality>5?'#ef4444':'var(--text-primary)', warn:smx.todayMortality>5 },
-                  { icon:'🐦', val:fmt(sec.currentBirds),        label:'Live Birds',   color:'var(--purple)' },
-                ] : [
-                  { icon:'⚖',  val:smx.latestWeightG?`${fmt(smx.latestWeightG)}g`:'—', label:'Avg Weight',   color:'#3b82f6' },
-                  { icon:'🔄', val:smx.estimatedFCR??'—',                               label:'Est. FCR',     color:fcrColor(smx.estimatedFCR||0) },
-                  { icon:'💀', val:fmt(smx.todayMortality),                              label:'Deaths Today', color:smx.todayMortality>5?'#ef4444':'var(--text-primary)', warn:smx.todayMortality>5 },
-                  { icon:'📅', val:smx.daysToHarvest!=null?`${smx.daysToHarvest}d`:'—',label:'To Harvest',   color:'#8b5cf6' },
-                ];
-                return (
-                  <div key={sec.id} style={{background:'#fff',border:`1.5px solid ${secBorder}`,borderRadius:10,padding:14,display:'flex',flexDirection:'column',gap:10}}>
-                    {/* Section header */}
-                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
-                      <div style={{minWidth:0,flex:1}}>
-                        <div style={{fontWeight:700,fontSize:13}}>{sec.name}</div>
-                        {sec.flock
-                          ? <div style={{fontSize:10,color:'var(--text-muted)',marginTop:1}}>{sec.flock.batchCode} · {sec.flock.breed} · {sec.ageInDays}d</div>
-                          : <div style={{fontSize:10,color:'var(--text-faint)',marginTop:1}}>Empty</div>}
-                        {sec.workers.length>0 && <div style={{fontSize:10,color:'var(--purple)',marginTop:2}}>{sec.workers.map(w=>`${w.firstName} ${w.lastName[0]}.`).join(', ')}</div>}
-                      </div>
-                      <div style={{textAlign:'right',flexShrink:0,marginLeft:8}}>
-                        <div style={{fontFamily:"'Poppins',sans-serif",fontSize:16,fontWeight:700,color:occColor(sec.occupancyPct)}}>{sec.occupancyPct}%</div>
-                        <div style={{fontSize:10,color:'var(--text-muted)'}}>{fmt(sec.currentBirds)}/{fmt(sec.capacity)}</div>
-                      </div>
+        {/* Expanded: section rows */}
+        {open&&(
+          <div style={{padding:'11px 15px',display:'flex',flexDirection:'column',gap:7}}>
+            <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:2}}>📍 {pen.sectionCount} sections · click "View Trends" for charts</div>
+            {(pen.sections||[]).map(sec=>{
+              const isBreathing = breathSection && sec.name === breathSection;
+              const smx=sec.metrics;
+              const sFlg=(sec.flags||[])[0];
+              const sPrimary=isL?(smx.todayLayingRate!=null?`${smx.todayLayingRate}%`:'—'):(smx.latestWeightG!=null?`${(smx.latestWeightG/1000).toFixed(2)} kg`:'—');
+              const sPrimaryColor=isL?(smx.todayLayingRate<70?'#ef4444':smx.todayLayingRate<80?'#d97706':'#16a34a'):'var(--text-primary)';
+              return(
+                <div key={sec.id} style={{borderRadius:9,padding:'9px 13px',display:'flex',alignItems:'center',gap:11,border:`1px solid ${isBreathing?'#fb923c':'#e2e8f0'}`,background:isBreathing?'#fff7ed':'#f8fafc',animation:isBreathing?'harvestBreath 0.8s ease-in-out infinite':'none',transition:'background 0.4s,border-color 0.4s'}}>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:13,fontWeight:600,color:'var(--text-secondary)',marginBottom:3}}>{sec.name}</div>
+                    <div style={{display:'flex',gap:12,alignItems:'center',flexWrap:'wrap'}}>
+                      <span style={{fontSize:11,color:'var(--text-muted)'}}>{sec.currentBirds?.toLocaleString()} birds</span>
+                      <span style={{fontSize:11,fontWeight:700,color:sPrimaryColor}}>{sPrimary} {isL?'lay rate':'avg weight'}</span>
+                      {smx.todayMortality!=null&&<span style={{fontSize:11,color:smx.todayMortality>5?'#ef4444':'var(--text-muted)'}}>{smx.todayMortality} deaths today</span>}
+                      {sec.flock&&<span style={{fontSize:11,color:'var(--text-muted)'}}>{sec.ageInDays}d old</span>}
                     </div>
-                    <OccBar pct={sec.occupancyPct} h={4} />
-                    {flg && (
-                      <div style={{fontSize:10,fontWeight:700,color:flg.type==='critical'?'#ef4444':'#d97706',background:flg.type==='critical'?'#fff5f5':'#fffbeb',border:`1px solid ${flg.type==='critical'?'#fecaca':'#fde68a'}`,borderRadius:6,padding:'4px 10px'}}>
-                        ⚠ {flg.msg}
-                      </div>
-                    )}
-                    {/* KPI chips */}
-                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
-                      {secCore.map(k => (
-                        <div key={k.label} style={{textAlign:'center',padding:'8px 6px',background:k.warn?'#fff5f5':'var(--bg-elevated)',border:`1px solid ${k.warn?'#fecaca':'var(--border)'}`,borderRadius:8}}>
-                          <div style={{fontSize:16,marginBottom:2}}>{k.icon}</div>
-                          <div style={{fontFamily:"'Poppins',sans-serif",fontSize:14,fontWeight:700,color:k.color}}>{k.val}</div>
-                          <div style={{fontSize:8,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.04em',marginTop:1}}>{k.label}</div>
-                        </div>
-                      ))}
-                    </div>
-                    {/* Charts button — stopPropagation so clicking it doesn't collapse the pen */}
-                    {sec.flock && (
-                      <button
-                        onClick={e => { e.stopPropagation(); setModalSec({ id:sec.id, name:sec.name }); }}
-                        style={{width:'100%',padding:'7px',background:'var(--bg-elevated)',border:'1px solid var(--border)',borderRadius:8,cursor:'pointer',fontSize:11,fontWeight:600,color:'var(--text-secondary)',display:'flex',alignItems:'center',justifyContent:'center',gap:5}}
-                      >
-                        📈 View Trends & Charts
-                      </button>
-                    )}
                   </div>
-                );
-              })}
-            </div>
+                  {sFlg&&<span style={{fontSize:10,fontWeight:600,color:'#d97706',background:'#fffbeb',border:'1px solid #fde68a',borderRadius:5,padding:'2px 7px',whiteSpace:'nowrap'}}>{sFlg.msg}</span>}
+                  {sec.flock&&<button onClick={e=>{e.stopPropagation();setModalSec({id:sec.id,name:sec.name});}} style={{background:'#eeecff',border:'none',borderRadius:7,padding:'5px 11px',fontSize:11,fontWeight:600,color:'#6c63ff',cursor:'pointer',whiteSpace:'nowrap'}}>View Trends →</button>}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
-      {modalSec && (
-        <ChartModal
-          sectionId={modalSec.id}
-          sectionName={modalSec.name}
-          penName={pen.name}
-          opType={pen.operationType}
-          onClose={()=>setModalSec(null)}
-        />
-      )}
+      {modalSec&&<ChartModal sectionId={modalSec.id} sectionName={modalSec.name} penName={pen.name} opType={pen.operationType} onClose={()=>setModalSec(null)}/>}
     </div>
   );
 }
@@ -713,32 +691,124 @@ function WorkerDashboard({ sections, tasks, user, apiFetch }) {
     loadRejected();
   }, [apiFetch]);
 
-  const kpis = isL ? [
-    { icon:'🥚', val:fmt(todayEggs),    label:'Eggs Collected Today',    color:'#f59e0b' },
-    { icon:'📊', val:`${avgRate}%`,     label:'Avg Laying Rate',          color:rateColor(avgRate), warn:avgRate<70&&sections.some(s=>s.flock) },
-    { icon:'💀', val:fmt(totDead),      label:'Deaths Today',             warn:totDead>10 },
-    { icon:'🐦', val:fmt(totBirds),     label:'Live Birds (My Sections)', color:'var(--purple)' },
+  // ── Task completion rate ─────────────────────────────────────────────────────
+  const totalTasks = tasks.length;
+  const doneTasks  = tasks.filter(t => t.status === 'COMPLETED').length;
+  const taskRate   = totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : null;
+  const taskStatus = taskRate == null ? 'neutral' : taskRate === 100 ? 'good' : taskRate >= 70 ? 'warn' : 'critical';
+  const taskDelta  = taskRate == null ? 'No tasks today' : taskRate === 100 ? 'All tasks done 🎉' : `${totalTasks - doneTasks} remaining`;
+  const taskCard   = {
+    label:'Task Completion', value: taskRate != null ? `${taskRate}%` : '—',
+    sub: totalTasks > 0 ? `${doneTasks} of ${totalTasks} tasks done` : 'No tasks assigned today',
+    delta: taskDelta, trend: taskRate===100?'up':taskRate!=null&&taskRate<70?'down':'stable',
+    status: taskStatus, icon:'✅', context:'Today',
+  };
+
+  // ── Build status-colour KPI cards ───────────────────────────────────────────
+  const workerKpis = isL ? [
+    {
+      label:'Live Birds', value: fmt(totBirds),
+      sub:`${sections.length} section${sections.length!==1?'s':''}`,
+      delta:'', trend:'stable', status:'neutral',
+      icon:'🐦', context:'Your sections',
+    },
+    {
+      label:'Eggs Collected Today', value: fmt(todayEggs),
+      sub:`7d avg ${fmt(Math.round(sections.filter(s=>s.metrics.type==='LAYER').reduce((a,s)=>a+(s.metrics.weekEggs||0),0)/7))}`,
+      delta: todayEggs>0?`${fmt(todayEggs)} collected`:'None yet',
+      trend:'stable', status: todayEggs>0?'good':'neutral',
+      icon:'🥚', context:'Your sections',
+    },
+    {
+      label:'Mortality Today', value: fmt(totDead),
+      sub:`7d total: ${fmt(sections.reduce((a,s)=>a+(s.metrics.weekMortality||0),0))}`,
+      delta: totDead===0?'All clear':totDead<=2?'Normal':'Spike detected',
+      trend: totDead===0?'up':totDead>5?'down':'stable',
+      status: mortCountStatus(totDead, 5),
+      icon:'📉', context:'Your sections',
+    },
+    taskCard,
   ] : [
-    { icon:'⚖',  val:avgWt?`${fmt(avgWt)}g`:'—', label:'Avg Live Weight',       color:'#3b82f6' },
-    { icon:'🔄', val:avgFCR??'—',                  label:'Est. Feed Conv. Ratio', color:fcrColor(avgFCR||0), warn:avgFCR>2.5 },
-    { icon:'💀', val:fmt(totDead),                  label:'Deaths Today',          warn:totDead>10 },
-    { icon:'🐦', val:fmt(totBirds),                 label:'Live Birds (My Sections)',color:'var(--purple)' },
+    {
+      label:'Live Birds', value: fmt(totBirds),
+      sub:`${sections.length} section${sections.length!==1?'s':''}`,
+      delta:'', trend:'stable', status:'neutral',
+      icon:'🐔', context:'Your sections',
+    },
+    {
+      label:'Avg Live Weight', value: avgWt?`${(avgWt/1000).toFixed(2)} kg`:'—',
+      sub:`Age ${sections[0]?.ageInDays||'—'}d`,
+      delta: avgWt?`${avgWt}g avg`:'No weigh-in yet',
+      trend:'stable', status:'neutral',
+      icon:'⚖️', context:'Your sections',
+    },
+    {
+      label:'Mortality Today', value: fmt(totDead),
+      sub:`7d total: ${fmt(sections.reduce((a,s)=>a+(s.metrics.weekMortality||0),0))}`,
+      delta: totDead===0?'All clear':totDead<=2?'Normal':'Spike detected',
+      trend: totDead===0?'up':totDead>5?'down':'stable',
+      status: mortCountStatus(totDead, 5),
+      icon:'📉', context:'Your sections',
+    },
+    taskCard,
   ];
+
+  // ── Sort sections: flagged (critical first, then warn) then ok ───────────────
+  function secLevel(sec) {
+    const f = (sec.flags||[])[0];
+    if (!f) return 2;
+    if (f.type === 'critical') return 0;
+    return 1;
+  }
+  const sortedSections = [...sections].sort((a, b) => secLevel(a) - secLevel(b));
+  const flaggedSections = sortedSections.filter(s => (s.flags||[]).length > 0);
+  const okSections      = sortedSections.filter(s => (s.flags||[]).length === 0);
+
+  // Build a synthetic pens-like structure for AttentionPill from worker sections
+  const pillPens = sections.reduce((acc, sec) => {
+    const existing = acc.find(p => p.id === sec.penId);
+    const flag = (sec.flags||[])[0];
+    const secEntry = { name: sec.name, flags: sec.flags||[] };
+    if (existing) {
+      existing.sections.push(secEntry);
+      if (flag) {
+        const cur = existing.alertLevel;
+        existing.alertLevel = (flag.type==='critical'||cur==='critical') ? 'critical' : 'warn';
+      }
+    } else {
+      acc.push({
+        id: sec.penId,
+        name: sec.penName,
+        operationType: sec.penOperationType,
+        alertLevel: flag ? flag.type : 'ok',
+        sections: [secEntry],
+      });
+    }
+    return acc;
+  }, []);
 
   return (
     <div>
-      <div style={{marginBottom:24}}>
+      {/* ── Header ── */}
+      <div style={{marginBottom:16}}>
         <h1 style={{fontFamily:"'Poppins',sans-serif",fontSize:22,fontWeight:700,margin:0}}>Good {greet}, {user.firstName} 👋</h1>
         <p style={{fontSize:12,color:'var(--text-muted)',marginTop:4}}>
           {isL?'🥚 Layer':'🍗 Broiler'} · {sections.length} section{sections.length!==1?'s':''} assigned
-          {overdue>0&&<span style={{color:'#ef4444',fontWeight:700,marginLeft:8}}>· {overdue} overdue</span>}
           {rejected.length>0&&<span style={{color:'#dc2626',fontWeight:700,marginLeft:8}}>· {rejected.length} correction{rejected.length!==1?'s':''} needed</span>}
         </p>
       </div>
-      <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:24}}>
-        {kpis.map(k=><KpiCard key={k.label} {...k} />)}
+
+      {/* ── Attention banner ── */}
+      <div style={{marginBottom:16}}>
+        <AttentionPill pens={pillPens} mode='sections' onNavigate={() => {}} />
       </div>
-      {/* ── Needs Correction banner ─────────────────────────────────────────── */}
+
+      {/* ── KPI row: Live Birds first ── */}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:24}}>
+        {workerKpis.map(k=><KpiCard key={k.label} label={k.label} value={k.value} sub={k.sub} delta={k.delta} trend={k.trend} status={k.status} icon={k.icon} context={k.context} />)}
+      </div>
+
+      {/* ── Needs Correction banner ── */}
       {rejected.length > 0 && (
         <div style={{marginBottom:20,background:'#fff5f5',border:'1.5px solid #fecaca',borderRadius:12,padding:'14px 18px'}}>
           <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10}}>
@@ -777,19 +847,25 @@ function WorkerDashboard({ sections, tasks, user, apiFetch }) {
           onSave={()=>{ setEditRecord(null); setRejected(r=>r.filter(i=>i.record.id!==editRecord.record.id)); }} />
       )}
 
-      <div style={{display:'grid',gridTemplateColumns:'3fr 2fr',gap:16}}>
-        <div>
+      {/* ── Sections — flagged first, then ok ── */}
+      <div style={{display:'flex',flexDirection:'column',gap:0}}>
+        {flaggedSections.length > 0 && (
+          <>
+            <div style={{fontSize:11,fontWeight:700,color:'#ef4444',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:10}}>
+              ⚠ Needs Attention ({flaggedSections.length})
+            </div>
+            {flaggedSections.map(sec=><WorkerSectionCard key={sec.id} sec={sec} defaultExpanded />)}
+            {okSections.length > 0 && (
+              <div style={{fontSize:11,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.06em',margin:'18px 0 10px'}}>
+                All Clear ({okSections.length})
+              </div>
+            )}
+          </>
+        )}
+        {okSections.length > 0 && !flaggedSections.length && (
           <div style={{fontSize:11,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:12}}>My Sections</div>
-          <div style={{display:'flex',flexDirection:'column',gap:14}}>
-            {sections.map(sec=><WorkerSectionCard key={sec.id} sec={sec}/>)}
-          </div>
-        </div>
-        <div>
-          <div style={{fontSize:11,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:12}}>
-            Today's Tasks {overdue>0&&<span style={{color:'#ef4444'}}>({overdue} overdue)</span>}
-          </div>
-          <TaskList tasks={tasks}/>
-        </div>
+        )}
+        {okSections.map(sec=><WorkerSectionCard key={sec.id} sec={sec}/>)}
       </div>
     </div>
   );
@@ -797,6 +873,8 @@ function WorkerDashboard({ sections, tasks, user, apiFetch }) {
 
 // ── Pen Manager dashboard ─────────────────────────────────────────────────────
 function PenManagerDashboard({ pens, tasks, user }) {
+  const router = useRouter();
+  const [navTarget, setNavTarget] = useState(null); // { penId, sectionName }
   const totBirds = pens.reduce((s,p)=>s+p.totalBirds,0);
   const totDead  = pens.reduce((s,p)=>s+p.metrics.todayMortality,0);
   const todayEggs= pens.filter(p=>p.operationType==='LAYER').reduce((s,p)=>s+(p.metrics.todayEggs||0),0);
@@ -804,30 +882,380 @@ function PenManagerDashboard({ pens, tasks, user }) {
   const h = new Date().getHours();
   const greet = h<12?'morning':h<17?'afternoon':'evening';
 
+  const layerPens  = pens.filter(p=>p.operationType==='LAYER');
+  const hasLayer   = layerPens.length > 0;
+
+  // Aggregate lay rate across layer pens
+  const layRates   = layerPens.filter(p=>(p.metrics.avgLayingRate||0)>0);
+  const avgLayRate = layRates.length ? parseFloat((layRates.reduce((s,p)=>s+(p.metrics.avgLayingRate||0),0)/layRates.length).toFixed(1)) : 0;
+
+  // ── Per-pen aggregates scoped to this manager's pens ────────────────────────
+  const broilerPens   = pens.filter(p=>p.operationType==='BROILER');
+  const hasBroiler    = broilerPens.length > 0;
+
+  // Layer aggregates
+  const lBirds        = layerPens.reduce((s,p)=>s+p.totalBirds,0);
+  const lEggs         = layerPens.reduce((s,p)=>s+(p.metrics.todayEggs||0),0);
+  const lWeekEggs     = layerPens.reduce((s,p)=>s+(p.metrics.weekEggs||0),0);
+  const lDead7        = layerPens.reduce((s,p)=>s+(p.metrics.weekMortality||0),0);
+  const lMortR        = lBirds>0 ? parseFloat(((lDead7/lBirds)*100).toFixed(2)) : 0;
+  const lGAPens       = layerPens.filter(p=>(p.metrics.todayGradeAPct||0)>0);
+  const lGradeA       = lGAPens.length ? parseFloat((lGAPens.reduce((s,p)=>s+(p.metrics.todayGradeAPct||0),0)/lGAPens.length).toFixed(1)) : null;
+  const lWaterPens    = layerPens.filter(p=>p.metrics.avgWaterLPB!=null);
+  const lAvgWater     = lWaterPens.length ? parseFloat((lWaterPens.reduce((s,p)=>s+(p.metrics.avgWaterLPB||0),0)/lWaterPens.length).toFixed(2)) : null;
+  const lAvgAge       = layerPens.length ? Math.round(layerPens.reduce((s,p)=>s+(p.sections&&p.sections[0]?p.sections[0].ageInDays||180:180),0)/layerPens.length) : 180;
+  const lWaterBench   = layerWaterBenchmark(lAvgAge);
+
+  // Broiler aggregates
+  const bBirds        = broilerPens.reduce((s,p)=>s+p.totalBirds,0);
+  const bDead7        = broilerPens.reduce((s,p)=>s+(p.metrics.weekMortality||0),0);
+  const bMortR        = bBirds>0 ? parseFloat(((bDead7/bBirds)*100).toFixed(2)) : 0;
+  const bWts          = broilerPens.filter(p=>p.metrics.avgWeightG);
+  const bAvgWt        = bWts.length ? parseFloat((bWts.reduce((s,p)=>s+p.metrics.avgWeightG,0)/bWts.length).toFixed(0)) : null;
+  const bFcrs         = broilerPens.filter(p=>p.metrics.avgFCR);
+  const bAvgFCR       = bFcrs.length ? parseFloat((bFcrs.reduce((s,p)=>s+p.metrics.avgFCR,0)/bFcrs.length).toFixed(2)) : null;
+  const bWaterPens    = broilerPens.filter(p=>p.metrics.avgWaterLPB!=null);
+  const bAvgWater     = bWaterPens.length ? parseFloat((bWaterPens.reduce((s,p)=>s+(p.metrics.avgWaterLPB||0),0)/bWaterPens.length).toFixed(2)) : null;
+  const bAvgAge       = broilerPens.length ? Math.round(broilerPens.reduce((s,p)=>s+(p.sections&&p.sections[0]?p.sections[0].ageInDays||28:28),0)/broilerPens.length) : 28;
+  const bWaterBench   = broilerWaterBenchmark(bAvgAge);
+  const bNearHarvest  = broilerPens.filter(p=>p.metrics.nearestHarvest!=null&&p.metrics.nearestHarvest<=7).length;
+
+  // Layer KPI story: Total Birds → Lay Rate → Eggs Today → Grade A → Water → Mortality
+  const layerKpis = hasLayer ? [
+    { label:'Total Birds',    value: fmt(lBirds),                           sub: layerPens.length+' pen'+(layerPens.length!==1?'s':''),      delta:'', trend:'stable', status:'neutral', icon:'🐦', context:'Your layer pen' },
+    { label:'Lay Rate',       value: avgLayRate>0 ? avgLayRate+'%' : '—',   sub: 'Target 82%',                                               delta:avgLayRate>0?(avgLayRate>=82?'+'+((avgLayRate-82).toFixed(1))+'% above target':((avgLayRate-82).toFixed(1))+'% below target'):'No data yet', trend:avgLayRate>=82?'up':avgLayRate>0?'down':'stable', status:layRates.length?layRateStatus(avgLayRate):'neutral', icon:'📊', context:'Performance' },
+    { label:'Eggs Today',     value: fmt(lEggs),                            sub: '7d total '+fmt(lWeekEggs),                                 delta:lEggs>0?fmt(lEggs)+' collected today':'None recorded yet', trend:'stable', status:lEggs>0?'good':'neutral', icon:'🥚', context:'Output' },
+    { label:'Grade A Rate',   value: lGradeA ? lGradeA+'%' : '—',          sub: 'Target ≥85%',                                         delta:lGradeA?(lGradeA>=85?'+'+((lGradeA-85).toFixed(1))+'% above target':((lGradeA-85).toFixed(1))+'% below target'):'No data yet', trend:lGradeA>=85?'up':'down', status:gradeAStatus(lGradeA), icon:'⭐', context:'Quality' },
+    { label:'Water Intake',   value: lAvgWater ? lAvgWater+' L/bird' : '—', sub: 'Benchmark '+lWaterBench+' L/bird · age '+lAvgAge+'d', delta:waterDelta(lAvgWater,lWaterBench), trend:lAvgWater?(lAvgWater>=lWaterBench*0.85?'up':'down'):'stable', status:lAvgWater?waterStatus(lAvgWater,lWaterBench):'neutral', icon:'💧', context:'Health signal' },
+    { label:'Mortality (7d)', value: fmt(lDead7),                           sub: lMortR+'% of flock',                                        delta:lMortR<=0.05?'Within normal range':lMortR<=0.15?'Slightly elevated':'Elevated — investigate', trend:lMortR<=0.05?'up':'down', status:mortalityStatus(lMortR), icon:'📉', context:'Health losses' },
+  ] : [];
+
+  // Broiler KPI story: Total Birds → Avg Weight → Harvest → FCR → Water → Mortality
+  const broilerKpis = hasBroiler ? [
+    { label:'Total Birds',       value: fmt(bBirds),                             sub: broilerPens.length+' pen'+(broilerPens.length!==1?'s':''), delta:'', trend:'stable', status:'neutral', icon:'🐔', context:'Your broiler pen' },
+    { label:'Avg Live Weight',   value: bAvgWt ? (bAvgWt/1000).toFixed(2)+' kg' : '—', sub: 'Age ~'+bAvgAge+'d',                              delta:bAvgWt?bAvgWt+'g avg':'No weigh-in yet', trend:'stable', status:'neutral', icon:'⚖️', context:'Growth' },
+    { label:'Harvest Countdown', value: ''+bNearHarvest,                          sub: 'Sections due ≤ 7 days',                            delta:bNearHarvest>0?bNearHarvest+' section'+(bNearHarvest!==1?'s':'')+' ready':'None due this week', trend:'stable', status:bNearHarvest>0?'warn':'neutral', icon:'📅', context:'Planning' },
+    { label:'Feed Conv. Ratio',  value: bAvgFCR ? ''+bAvgFCR : '—',              sub: 'Target ≤1.9',                                       delta:bAvgFCR?(bAvgFCR<=1.9?'On target':(bAvgFCR-1.9).toFixed(2)+' above target'):'No data yet', trend:bAvgFCR?(bAvgFCR<=1.9?'up':'down'):'stable', status:fcrStatus(bAvgFCR,true), icon:'🌾', context:'Efficiency' },
+    { label:'Water Intake',      value: bAvgWater ? bAvgWater+' L/bird' : '—',   sub: 'Benchmark '+bWaterBench+' L/bird · age '+bAvgAge+'d', delta:waterDelta(bAvgWater,bWaterBench), trend:bAvgWater?(bAvgWater>=bWaterBench*0.85?'up':'down'):'stable', status:bAvgWater?waterStatus(bAvgWater,bWaterBench):'neutral', icon:'💧', context:'Health signal' },
+    { label:'Mortality (7d)',    value: fmt(bDead7),                             sub: bMortR+'% of flock',                                      delta:bMortR<=0.1?'Within normal range':bMortR<=0.2?'Slightly elevated':'Elevated — investigate', trend:bMortR<=0.1?'up':'down', status:mortalityStatus(bMortR), icon:'📉', context:'Health losses' },
+  ] : [];
+
+  const mgrKpis = [...layerKpis, ...broilerKpis];
+
+  // ── Harvest sections for broiler pens ────────────────────────────────────────
+  const harvestSections = [];
+  broilerPens.forEach(pen => {
+    (pen.sections || []).forEach(sec => {
+      if (sec.metrics?.daysToHarvest != null && sec.metrics.daysToHarvest <= 7) {
+        harvestSections.push({ penId: pen.id, penName: pen.name, sectionName: sec.name, daysToHarvest: sec.metrics.daysToHarvest, birds: sec.currentBirds });
+      }
+    });
+  });
+  if (harvestSections.length === 0) {
+    broilerPens.filter(p => p.metrics.nearestHarvest != null && p.metrics.nearestHarvest <= 7).forEach(pen => {
+      harvestSections.push({ penId: pen.id, penName: pen.name, sectionName: null, daysToHarvest: pen.metrics.nearestHarvest, birds: pen.totalBirds });
+    });
+  }
+
+  // Wire harvest countdown onClick
   return (
     <div>
-      <div style={{marginBottom:24}}>
+      <div style={{marginBottom:16}}>
         <h1 style={{fontFamily:"'Poppins',sans-serif",fontSize:22,fontWeight:700,margin:0}}>Good {greet}, {user.firstName} 👋</h1>
         <p style={{fontSize:12,color:'var(--text-muted)',marginTop:4}}>
-          Pen Manager · {pens.length} pen{pens.length!==1?'s':''} — click 📈 Trends on any section
-          {alerts>0&&<span style={{color:'#ef4444',fontWeight:700,marginLeft:8}}>· {alerts} need attention</span>}
+          Pen Manager · {pens.length} pen{pens.length!==1?'s':''} — click any pen to expand sections
         </p>
       </div>
-      <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:24}}>
-        <KpiCard icon="🐦" value={fmt(totBirds)} label="Total Live Birds"       color="var(--purple)" />
-        <KpiCard icon="💀" value={fmt(totDead)}  label="Deaths Today"           warn={totDead>20} />
-        {pens.some(p=>p.operationType==='LAYER') && <KpiCard icon="🥚" value={fmt(todayEggs)} label="Layer Eggs Today" color="#f59e0b" />}
-        <KpiCard icon="🔔" value={alerts}        label="Pens Needing Attention" warn={alerts>0} />
+      {/* ── Attention pill ── */}
+      <div style={{marginBottom:16}}>
+        <AttentionPill pens={pens} mode='sections' onNavigate={(penId, sectionName) => setNavTarget({ penId, sectionName })} />
       </div>
-      <div style={{fontSize:11,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:12}}>My Pens</div>
-      {pens.map(pen=><PenCard key={pen.id} pen={pen}/>)}
+      {/* ── KPI cards ── */}
+      {layerKpis.length > 0 && <OpKpiBlock title="Layer Production" opIcon="🥚" isLayer={true} cards={layerKpis} />}
+      <div>
+        {broilerKpis.length > 0 && <OpKpiBlock title="Broiler Production" opIcon="🍗" isLayer={false} cards={broilerKpis} />}
+
+      </div>
+      <div style={{fontSize:11,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:12,marginTop:8}}>My Pens</div>
+      {pens.map(pen=><PenCard key={pen.id} pen={pen} autoOpen={navTarget?.penId===pen.id} highlightSection={navTarget?.penId===pen.id?navTarget.sectionName:null}/>)}
+    </div>
+  );
+}
+
+// ── Operation KPI block (Farm Manager / Admin) — cards always visible ────────
+function OpKpiBlock({ title, opIcon, isLayer, cards }) {
+  const crit = cards.filter(c=>c.status==='critical').length;
+  const warn = cards.filter(c=>c.status==='warn').length;
+  const accentColor = isLayer ? '#6c63ff' : '#ea580c';
+  const iconBg      = isLayer ? '#eeecff' : '#fff7ed';
+  const iconBorder  = isLayer ? '#c7d2fe' : '#fed7aa';
+  return (
+    <div style={{marginBottom:20}}>
+      {/* Header row — flat, non-clickable, with divider line */}
+      <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10}}>
+        <div style={{width:30,height:30,borderRadius:8,background:iconBg,border:`1px solid ${iconBorder}`,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,fontSize:14}}>
+          {opIcon}
+        </div>
+        <span style={{fontFamily:"'Poppins',sans-serif",fontSize:14,fontWeight:700,color:'var(--text-primary)',whiteSpace:'nowrap'}}>{title}</span>
+        <div style={{display:'flex',gap:4,alignItems:'center',marginLeft:4}}>
+          {crit>0&&<span style={{fontSize:10,fontWeight:700,background:'#fef2f2',color:'#ef4444',border:'1px solid #fecaca',borderRadius:5,padding:'2px 8px'}}>{crit} critical</span>}
+          {warn>0&&<span style={{fontSize:10,fontWeight:700,background:'#fffbeb',color:'#d97706',border:'1px solid #fde68a',borderRadius:5,padding:'2px 8px'}}>{warn} warn</span>}
+          {crit===0&&warn===0&&<span style={{fontSize:10,fontWeight:700,background:'#f0fdf4',color:'#16a34a',border:'1px solid #bbf7d0',borderRadius:5,padding:'2px 8px'}}>All good</span>}
+        </div>
+        {/* Divider line fills remaining space */}
+        <div style={{flex:1,height:1,background:'#e2e8f0',marginLeft:4}}/>
+      </div>
+      {/* Cards — always visible */}
+      <div style={{display:'grid',gridTemplateColumns:`repeat(${cards.length},1fr)`,gap:10}}>
+        {cards.map(c=><KpiCard key={c.label} label={c.label} value={c.value} sub={c.sub} delta={c.delta} trend={c.trend} status={c.status} icon={c.icon} context={c.context} onClick={c.onClick||null} compact />)}
+      </div>
+    </div>
+  );
+}
+
+// ── Attention Pill — collapsed pill with popover, replaces AlertsPanel ────────
+function AttentionPill({ pens, onNavigate, mode = 'pens' }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  // Close on outside click
+  useEffect(() => {
+    if (!open) return;
+    function handler(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  // Normalise alertLevel — API may return 'warn' or 'warning', both mean amber
+  function normLevel(lvl) {
+    if (!lvl) return 'ok';
+    if (lvl === 'critical') return 'critical';
+    if (lvl === 'warn' || lvl === 'warning') return 'warn';
+    return 'ok';
+  }
+
+  // Build items — sections mode (Pen Manager) or pens mode (Farm Manager)
+  const items = [];
+  pens.forEach(pen => {
+    const penLevel = normLevel(pen.alertLevel);
+    if (penLevel === 'ok') return;
+
+    if (mode === 'sections') {
+      // Pen Manager: enumerate each flagged section individually.
+      // A section is flagged if it has any flags at all (even 0% no-data ones —
+      // the pen is flagged so something is wrong). Show section name always;
+      // use the flag msg if meaningful, otherwise a clean generic message.
+      const flaggedSections = (pen.sections || []).filter(sec =>
+        (sec.flags || []).length > 0
+      );
+      if (flaggedSections.length > 0) {
+        flaggedSections.forEach(sec => {
+          const allFlags = sec.flags || [];
+          // Prefer a meaningful (non-zero) message
+          const meaningfulFlag = allFlags.find(f => f.msg && !/:\s*0(\.0)?%/.test(f.msg));
+          const topFlag = meaningfulFlag || allFlags[0];
+          const topLevel = allFlags.reduce((worst, f) => {
+            const l = normLevel(f.type);
+            return l === 'critical' ? 'critical' : worst === 'critical' ? 'critical' : l;
+          }, 'warn');
+          const topMsg = (meaningfulFlag?.msg) || (topLevel === 'critical' ? 'Critical — review this section' : 'Flagged for attention');
+          items.push({ penId: pen.id, penName: pen.name, operationType: pen.operationType, sectionName: sec.name, level: topLevel, msg: topMsg });
+        });
+      } else {
+        // Pen flagged but sections have no flags — show pen-level fallback
+        items.push({ penId: pen.id, penName: pen.name, operationType: pen.operationType, sectionName: null, level: penLevel, msg: penLevel === 'critical' ? 'Critical issue — review this pen' : 'Flagged for attention — review this pen' });
+      }
+    } else {
+      // Farm Manager: one row per pen
+      const meaningfulMsgs = [];
+      (pen.sections || []).forEach(sec => {
+        (sec.flags || []).forEach(flag => {
+          const isNoData = flag.msg && /:\s*0(\.0)?%/.test(flag.msg);
+          if (!isNoData) meaningfulMsgs.push({ sectionName: sec.name, level: normLevel(flag.type), msg: flag.msg });
+        });
+      });
+      (pen.flags || []).forEach(flag => {
+        const isNoData = flag.msg && /:\s*0(\.0)?%/.test(flag.msg);
+        if (!isNoData) meaningfulMsgs.push({ sectionName: null, level: normLevel(flag.type), msg: flag.msg });
+      });
+      if (meaningfulMsgs.length > 0) {
+        meaningfulMsgs.forEach(f => {
+          items.push({ penId: pen.id, penName: pen.name, operationType: pen.operationType, sectionName: f.sectionName, level: f.level, msg: f.msg });
+        });
+      } else {
+        items.push({ penId: pen.id, penName: pen.name, operationType: pen.operationType, sectionName: null, level: penLevel, msg: penLevel === 'critical' ? 'Critical issue — review this pen' : 'Flagged for attention — review this pen' });
+      }
+    }
+  });
+
+  const critCount = items.filter(a => a.level === 'critical').length;
+  const warnCount = items.filter(a => a.level === 'warn').length;
+  const total     = items.length;
+  const allOk     = total === 0;
+
+  const accentColor  = allOk ? '#16a34a' : critCount > 0 ? '#ef4444' : '#d97706';
+  const bannerBg     = allOk ? '#f0fdf4' : critCount > 0 ? '#fff8f8' : '#fffdf0';
+  const bannerBorder = allOk ? '#bbf7d0' : critCount > 0 ? '#fca5a5' : '#fcd34d';
+
+  return (
+    <div ref={ref} style={{position:'relative', marginBottom: 16}}>
+
+      {/* ── Banner button ── */}
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{
+          width: '100%', display: 'flex', alignItems: 'center', gap: 12,
+          background: bannerBg,
+          border: `1.5px solid ${bannerBorder}`,
+          borderLeft: `5px solid ${accentColor}`,
+          borderRadius: 10, padding: '12px 16px',
+          cursor: 'pointer', textAlign: 'left', transition: 'box-shadow 0.15s',
+          boxShadow: !allOk ? `0 2px 10px ${accentColor}20` : 'none',
+        }}
+        onMouseEnter={e => e.currentTarget.style.boxShadow = `0 4px 14px ${accentColor}28`}
+        onMouseLeave={e => e.currentTarget.style.boxShadow = !allOk ? `0 2px 10px ${accentColor}20` : 'none'}
+      >
+        {/* Icon bubble */}
+        <div style={{
+          width: 36, height: 36, borderRadius: 9, flexShrink: 0,
+          background: accentColor + '20', border: `1.5px solid ${accentColor}40`,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18,
+        }}>
+          {allOk ? '✅' : critCount > 0 ? '🚨' : '⚠️'}
+        </div>
+
+        {/* Label + sub */}
+        <div style={{flex: 1, minWidth: 0}}>
+          <div style={{fontSize: 13, fontWeight: 700, color: accentColor, lineHeight: 1.3}}>
+            {allOk
+              ? (mode === 'sections' ? 'All sections operating normally' : 'All pens operating normally')
+              : mode === 'sections'
+                ? `${total} section${total !== 1 ? 's' : ''} need${total === 1 ? 's' : ''} attention`
+                : `${total} pen${total !== 1 ? 's' : ''} need${total === 1 ? 's' : ''} attention`}
+          </div>
+          <div style={{fontSize: 11, color: 'var(--text-muted)', marginTop: 2}}>
+            {allOk
+              ? (mode === 'sections' ? 'No section warnings or critical issues detected' : 'No warnings or critical issues detected')
+              : [critCount > 0 && `${critCount} critical`, warnCount > 0 && `${warnCount} warning`].filter(Boolean).join(' · ') + ' — click to review'}
+          </div>
+        </div>
+
+        {/* Count badges */}
+        {critCount > 0 && (
+          <span style={{background:'#fef2f2', color:'#ef4444', border:'1px solid #fecaca', borderRadius: 99, padding: '3px 10px', fontSize: 11, fontWeight: 800, flexShrink: 0, whiteSpace:'nowrap'}}>
+            {critCount} critical
+          </span>
+        )}
+        {warnCount > 0 && (
+          <span style={{background:'#fffbeb', color:'#d97706', border:'1px solid #fde68a', borderRadius: 99, padding: '3px 10px', fontSize: 11, fontWeight: 800, flexShrink: 0, whiteSpace:'nowrap'}}>
+            {warnCount} warning{warnCount !== 1 ? 's' : ''}
+          </span>
+        )}
+
+        {/* Pulsing live dot */}
+        {!allOk && (
+          <span style={{width: 10, height: 10, borderRadius: '50%', background: accentColor, flexShrink: 0, animation: 'pillPulse 1.8s ease-in-out infinite'}}/>
+        )}
+
+        {/* Chevron */}
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={accentColor} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+          style={{transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s', flexShrink: 0, opacity: 0.8}}>
+          <polyline points="6 9 12 15 18 9"/>
+        </svg>
+      </button>
+
+      {/* ── Dropdown popover ── */}
+      {open && (
+        <div style={{
+          position:'absolute', top:'calc(100% + 6px)', left: 0, right: 0, zIndex: 300,
+          background:'#fff', border:'1px solid #e2e8f0', borderRadius: 12,
+          boxShadow:'0 12px 40px rgba(0,0,0,0.14)', overflow:'hidden',
+          animation:'fadeSlideDown 0.15s ease both',
+        }}>
+          {/* Popover header */}
+          <div style={{padding:'10px 16px', borderBottom:'1px solid #f1f5f9', display:'flex', alignItems:'center', gap:8}}>
+            <span style={{fontSize:13, fontWeight:700, color:'var(--text-primary)', flex:1}}>
+              {allOk ? (mode==='sections'?'✅ All sections OK':'✅ All pens OK') : mode==='sections' ? `${total} section${total!==1?'s':''} flagged` : `${total} pen${total!==1?'s':''} flagged`}
+            </span>
+            <button onClick={e=>{e.stopPropagation();setOpen(false);}} style={{background:'none',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:17,lineHeight:1,padding:'0 3px'}}>✕</button>
+          </div>
+
+          {allOk ? (
+            <div style={{padding:'24px 16px', textAlign:'center', color:'#16a34a', fontSize:13, fontWeight:600}}>
+              {mode==='sections' ? 'All sections are operating normally 🎉' : 'All pens are operating normally 🎉'}
+            </div>
+          ) : (
+            <div style={{maxHeight:340, overflowY:'auto'}}>
+              {items.map((item, i) => {
+                const crit = item.level === 'critical';
+                const rowColor = crit ? '#ef4444' : '#d97706';
+                return (
+                  <div
+                    key={i}
+                    onClick={() => { onNavigate?.(item.penId, item.sectionName, item.operationType); setOpen(false); }}
+                    style={{
+                      display:'flex', alignItems:'center', gap:12,
+                      padding:'11px 16px', cursor:'pointer',
+                      borderBottom: i < items.length - 1 ? '1px solid #f8fafc' : 'none',
+                      background:'transparent', transition:'background 0.1s',
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = crit ? '#fef2f2' : '#fffbeb'}
+                    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                  >
+                    {/* Status dot */}
+                    <div style={{width:9, height:9, borderRadius:'50%', background:rowColor, flexShrink:0}}/>
+                    {/* Text */}
+                    <div style={{flex:1, minWidth:0}}>
+                      <div style={{fontSize:13, fontWeight:600, color:'var(--text-primary)'}}>
+                        {item.penName}
+                        {item.sectionName && <span style={{fontWeight:400, color:'var(--text-muted)'}}> › {item.sectionName}</span>}
+                      </div>
+                      <div style={{fontSize:11, color:'var(--text-muted)', marginTop:2}}>{item.msg}</div>
+                    </div>
+                    {/* Level badge */}
+                    <span style={{
+                      background: crit ? '#fef2f2' : '#fffbeb',
+                      color: rowColor, border:`1px solid ${crit?'#fecaca':'#fde68a'}`,
+                      borderRadius:99, padding:'3px 9px', fontSize:10, fontWeight:800,
+                      flexShrink:0, whiteSpace:'nowrap',
+                    }}>{crit ? 'Critical' : 'Warning'}</span>
+                    {/* Arrow */}
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}}>
+                      <polyline points="9 18 15 12 9 6"/>
+                    </svg>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      <style>{`
+        @keyframes pillPulse {
+          0%, 100% { opacity: 1; transform: scale(1); }
+          50%       { opacity: 0.55; transform: scale(0.85); }
+        }
+        @keyframes fadeSlideDown {
+          from { opacity: 0; transform: translateY(-8px); }
+          to   { opacity: 1; transform: none; }
+        }
+        @keyframes harvestBreath {
+          0%, 100% { background: #fff7ed; border-color: #fb923c; box-shadow: 0 0 0 0 rgba(251,146,60,0); }
+          50%       { background: #ffedd5; border-color: #f97316; box-shadow: 0 0 0 4px rgba(251,146,60,0.18); }
+        }
+      `}</style>
     </div>
   );
 }
 
 // ── Farm Manager+ dashboard ───────────────────────────────────────────────────
 function ManagerDashboard({ pens, orgTotals, user }) {
+  const router       = useRouter();
+  const [navTarget, setNavTarget]       = useState(null); // { penId, sectionName, opType }
+
   const alerts    = pens.filter(p => p.alertLevel !== 'ok').length;
+  const isFarmAdmin = user?.role === 'FARM_ADMIN';
   const roleLabel = { FARM_MANAGER:'Farm Manager', FARM_ADMIN:'Farm Admin', CHAIRPERSON:'Chairperson', SUPER_ADMIN:'Super Admin' }[user?.role] || user?.role || '';
 
   const layerPens   = pens.filter(p => p.operationType === 'LAYER');
@@ -837,85 +1265,140 @@ function ManagerDashboard({ pens, orgTotals, user }) {
   const defaultTab  = layerPens.length ? 'LAYER' : 'BROILER';
   const [activeTab, setActiveTab] = useState(defaultTab);
 
+  // If navTarget specifies an opType, override the active tab
+  const effectiveTab = navTarget?.opType || activeTab;
+
   // If one operation type is empty, lock to the one that exists
   const hasBoth = layerPens.length > 0 && broilerPens.length > 0;
-  const visiblePens = activeTab === 'LAYER' ? layerPens : broilerPens;
+  const visiblePens = effectiveTab === 'LAYER' ? layerPens : broilerPens;
 
   const tabs = [
     { key: 'LAYER',   icon: '🥚', label: 'Layer Operations',   count: layerPens.length },
     { key: 'BROILER', icon: '🍗', label: 'Broiler Operations', count: broilerPens.length },
   ].filter(t => t.count > 0);
 
+  // ── Layer aggregates ─────────────────────────────────────────────────────────
+  const lPens     = layerPens;
+  const lBirds    = lPens.reduce((s,p)=>s+p.totalBirds,0);
+  const lEggs     = lPens.reduce((s,p)=>s+(p.metrics.todayEggs||0),0);
+  const lWeekEggs = lPens.reduce((s,p)=>s+(p.metrics.weekEggs||0),0);
+  const lDead7    = lPens.reduce((s,p)=>s+(p.metrics.weekMortality||0),0);
+  const lMortR    = lBirds>0 ? parseFloat(((lDead7/lBirds)*100).toFixed(2)) : 0;
+  const lRates    = lPens.filter(p=>(p.metrics.avgLayingRate||0)>0);
+  const lAvgRate  = lRates.length ? parseFloat((lRates.reduce((s,p)=>s+(p.metrics.avgLayingRate||0),0)/lRates.length).toFixed(1)) : 0;
+  const lGAPens   = lPens.filter(p=>(p.metrics.todayGradeAPct||0)>0);
+  const lGradeA   = lGAPens.length ? parseFloat((lGAPens.reduce((s,p)=>s+(p.metrics.todayGradeAPct||0),0)/lGAPens.length).toFixed(1)) : null;
+  const lWaterPens  = lPens.filter(p => p.metrics.avgWaterLPB != null);
+  const lAvgWater   = lWaterPens.length ? parseFloat((lWaterPens.reduce((s,p)=>s+(p.metrics.avgWaterLPB||0),0)/lWaterPens.length).toFixed(2)) : null;
+  const lAvgAge     = lPens.length ? Math.round(lPens.reduce((s,p)=>s+(p.sections&&p.sections[0]?p.sections[0].ageInDays||180:180),0)/lPens.length) : 180;
+  const lWaterBench = layerWaterBenchmark(lAvgAge);
+
+  // ── Broiler aggregates ───────────────────────────────────────────────────────
+  const bPens     = broilerPens;
+  const bBirds    = bPens.reduce((s,p)=>s+p.totalBirds,0);
+  const bDead7    = bPens.reduce((s,p)=>s+(p.metrics.weekMortality||0),0);
+  const bMortR    = bBirds>0 ? parseFloat(((bDead7/bBirds)*100).toFixed(2)) : 0;
+  const bWts      = bPens.filter(p=>p.metrics.avgWeightG);
+  const bAvgWt    = bWts.length ? parseFloat((bWts.reduce((s,p)=>s+p.metrics.avgWeightG,0)/bWts.length).toFixed(0)) : null;
+  const bFcrs     = bPens.filter(p=>p.metrics.avgFCR);
+  const bAvgFCR   = bFcrs.length ? parseFloat((bFcrs.reduce((s,p)=>s+p.metrics.avgFCR,0)/bFcrs.length).toFixed(2)) : null;
+  const bHarvest  = bPens.filter(p=>p.metrics.nearestHarvest!=null&&p.metrics.nearestHarvest<=7).length;
+  const bUnis     = bPens.filter(p=>p.metrics.uniformityPct!=null);
+  const bAvgUni   = bUnis.length ? parseFloat((bUnis.reduce((s,p)=>s+(p.metrics.uniformityPct||0),0)/bUnis.length).toFixed(1)) : null;
+  const bWaterPens  = bPens.filter(p => p.metrics.avgWaterLPB != null);
+  const bAvgWater   = bWaterPens.length ? parseFloat((bWaterPens.reduce((s,p)=>s+(p.metrics.avgWaterLPB||0),0)/bWaterPens.length).toFixed(2)) : null;
+  const bAvgAge     = bPens.length ? Math.round(bPens.reduce((s,p)=>s+(p.sections&&p.sections[0]?p.sections[0].ageInDays||28:28),0)/bPens.length) : 28;
+  const bWaterBench = broilerWaterBenchmark(bAvgAge);
+
+  // ── Harvest-ready sections (broiler sections with daysToHarvest ≤ 7) ─────────
+  const harvestSections = [];
+  bPens.forEach(pen => {
+    (pen.sections || []).forEach(sec => {
+      if (sec.metrics?.daysToHarvest != null && sec.metrics.daysToHarvest <= 7) {
+        harvestSections.push({ penId: pen.id, penName: pen.name, sectionName: sec.name, daysToHarvest: sec.metrics.daysToHarvest, birds: sec.currentBirds });
+      }
+    });
+  });
+  if (harvestSections.length === 0) {
+    bPens.filter(p => p.metrics.nearestHarvest != null && p.metrics.nearestHarvest <= 7).forEach(pen => {
+      harvestSections.push({ penId: pen.id, penName: pen.name, sectionName: null, daysToHarvest: pen.metrics.nearestHarvest, birds: pen.totalBirds });
+    });
+  }
+
+  // ── Layer story: Total Birds → Lay Rate → Eggs Today → Grade A → Water → Mortality
+  const layerCards = lPens.length ? [
+    { label:'Total Birds',    value: fmt(lBirds),                         sub: lPens.length + ' pen' + (lPens.length!==1?'s':''),                                         delta:'',                                                                                            trend:'stable', status:'neutral',                  icon:'🐦', context:'Layer flock'    },
+    { label:'Lay Rate',       value: lAvgRate>0 ? lAvgRate+'%' : '—',     sub: 'Target 82%',                                                                              delta:lAvgRate>0?(lAvgRate>=82?'+'+((lAvgRate-82).toFixed(1))+'% above target':((lAvgRate-82).toFixed(1))+'% below target'):'No data yet', trend:lAvgRate>=82?'up':lAvgRate>0?'down':'stable', status:lRates.length?layRateStatus(lAvgRate):'neutral', icon:'📊', context:'Performance' },
+    { label:'Eggs Today',     value: fmt(lEggs),                           sub: '7d total ' + fmt(lWeekEggs),                                                              delta:lEggs>0?fmt(lEggs)+' collected today':'None recorded yet',                                       trend:'stable', status:lEggs>0?'good':'neutral', icon:'🥚', context:'Output'         },
+    { label:'Grade A Rate',   value: lGradeA ? lGradeA+'%' : '—',         sub: 'Target ≥85%',                                                                        delta:lGradeA?(lGradeA>=85?'+'+((lGradeA-85).toFixed(1))+'% above target':((lGradeA-85).toFixed(1))+'% below target'):'No data yet', trend:lGradeA>=85?'up':'down', status:gradeAStatus(lGradeA), icon:'⭐', context:'Quality'       },
+    { label:'Water Intake',   value: lAvgWater ? lAvgWater+' L/bird' : '—', sub: 'Benchmark '+lWaterBench+' L/bird · age '+lAvgAge+'d',                                  delta:waterDelta(lAvgWater, lWaterBench),                                                               trend:lAvgWater?(lAvgWater>=lWaterBench*0.85?'up':'down'):'stable', status:lAvgWater?waterStatus(lAvgWater,lWaterBench):'neutral', icon:'💧', context:'Health signal' },
+    { label:'Mortality (7d)', value: fmt(lDead7),                          sub: lMortR+'% of flock',                                                                       delta:lMortR<=0.05?'Within normal range':lMortR<=0.15?'Slightly elevated':'Elevated — investigate', trend:lMortR<=0.05?'up':'down', status:mortalityStatus(lMortR), icon:'📉', context:'Health losses' },
+    ...(isFarmAdmin ? [{ label:'Est. Revenue (Eggs)', value: lEggs>0?'₦'+Math.round(lEggs*280).toLocaleString():'—', sub:'Est. @ ₦280/egg', delta:'Projection', trend:'stable', status:'neutral', icon:'💰', context:'Financial' }] : []),
+  ] : [];
+
+  // ── Broiler story: Total Birds → Avg Weight → Harvest → FCR → Water → Mortality
+  const broilerCards = bPens.length ? [
+    { label:'Total Birds',       value: fmt(bBirds),                           sub: bPens.length+' pen'+(bPens.length!==1?'s':''),                                     delta:'',                                                                                              trend:'stable', status:'neutral',                   icon:'🐔', context:'Broiler flock' },
+    { label:'Avg Live Weight',   value: bAvgWt ? (bAvgWt/1000).toFixed(2)+' kg' : '—', sub: 'Age ~'+bAvgAge+'d',                                                      delta:bAvgWt?bAvgWt+'g avg across pens':'No weigh-in yet',                                             trend:'stable', status:'neutral',                   icon:'⚖️', context:'Growth'        },
+    { label:'Harvest Countdown', value: ''+(harvestSections.length||bHarvest),  sub: 'Sections due ≤ 7 days',                                                      delta:harvestSections.length>0?harvestSections.length+' section'+(harvestSections.length!==1?'s':'')+' ready':'None due this week', trend:'stable', status:harvestSections.length>0?'warn':'neutral', icon:'📅', context:'Planning', },
+    { label:'Feed Conv. Ratio',  value: bAvgFCR ? ''+bAvgFCR : '—',             sub: 'Target ≤1.9',                                                               delta:bAvgFCR?(bAvgFCR<=1.9?'On target':(bAvgFCR-1.9).toFixed(2)+' above target'):'No data yet',      trend:bAvgFCR?(bAvgFCR<=1.9?'up':'down'):'stable', status:fcrStatus(bAvgFCR,true), icon:'🌾', context:'Efficiency'  },
+    { label:'Water Intake',      value: bAvgWater ? bAvgWater+' L/bird' : '—',  sub: 'Benchmark '+bWaterBench+' L/bird · age '+bAvgAge+'d',                       delta:waterDelta(bAvgWater, bWaterBench),                                                               trend:bAvgWater?(bAvgWater>=bWaterBench*0.85?'up':'down'):'stable', status:bAvgWater?waterStatus(bAvgWater,bWaterBench):'neutral', icon:'💧', context:'Health signal' },
+    { label:'Mortality (7d)',    value: fmt(bDead7),                             sub: bMortR+'% of flock',                                                               delta:bMortR<=0.1?'Within normal range':bMortR<=0.2?'Slightly elevated':'Elevated — investigate', trend:bMortR<=0.1?'up':'down', status:mortalityStatus(bMortR), icon:'📉', context:'Health losses' },
+    ...(isFarmAdmin ? [{ label:'Est. Revenue (Harvest)', value: bHarvest>0?'₦'+Math.round(bBirds*0.1*2800).toLocaleString():'—', sub:'Est. harvest value', delta:'Projection', trend:'stable', status:'neutral', icon:'💰', context:'Financial' }] : []),
+  ] : [];
+
   return (
     <div>
-      {/* ── Page header ── */}
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:24}}>
+      {/* ── Page header with attention pill ── */}
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:16}}>
         <div>
           <h1 style={{fontFamily:"'Poppins',sans-serif",fontSize:22,fontWeight:700,margin:0}}>Farm Overview</h1>
           <p style={{fontSize:12,color:'var(--text-muted)',marginTop:4}}>
             {roleLabel} · {pens.length} pen{pens.length!==1?'s':''} — click any pen to expand sections
-            {alerts>0&&<span style={{color:'#ef4444',fontWeight:700,marginLeft:8}}>· {alerts} need attention</span>}
           </p>
         </div>
       </div>
+      {/* ── Attention pill — above KPI blocks ── */}
+      <div style={{marginBottom:16}}>
+        <AttentionPill pens={pens} onNavigate={(penId, sectionName, opType) => {
+          setNavTarget({ penId, sectionName, opType });
+        }} />
+      </div>
 
-      {/* ── Org-level KPIs ── */}
-      {orgTotals && (
-        <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:12,marginBottom:24}}>
-          <KpiCard icon="🐦" value={fmt(orgTotals.totalBirds)}         label="Total Live Birds"  color="var(--purple)" />
-          <KpiCard icon="💀" value={fmt(orgTotals.todayMortality)}      label="Deaths Today"      warn={orgTotals.todayMortality>30} />
-          <KpiCard icon="🥚" value={fmt(orgTotals.todayEggs)}           label="Layer Eggs Today"  color="#f59e0b" />
-          <KpiCard icon="📊" value={`${orgTotals.avgLayingRate??0}%`}   label="Avg Laying Rate"   color="#16a34a" warn={orgTotals.avgLayingRate<70} />
-          <KpiCard icon="🔔" value={orgTotals.pensWithAlerts}           label="Pens With Alerts"  warn={orgTotals.pensWithAlerts>0} />
-        </div>
-      )}
-
-      {/* ── Operation type tabs ── */}
-      {hasBoth && (
-        <div style={{display:'flex',gap:6,marginBottom:20,background:'var(--bg-elevated)',borderRadius:12,padding:4,border:'1px solid var(--border)',width:'fit-content'}}>
-          {tabs.map(t => {
-            const isActive = activeTab === t.key;
-            const tabColor = t.key === 'LAYER' ? '#f59e0b' : '#3b82f6';
-            return (
-              <button
-                key={t.key}
-                onClick={() => setActiveTab(t.key)}
-                style={{
-                  display:'inline-flex', alignItems:'center', gap:8,
-                  padding:'9px 20px', borderRadius:9, border:'none',
-                  background: isActive ? '#fff' : 'transparent',
-                  boxShadow: isActive ? 'var(--shadow-sm,0 1px 4px rgba(0,0,0,0.08))' : 'none',
-                  cursor:'pointer', fontFamily:'inherit', fontWeight: isActive ? 700 : 500,
-                  fontSize:13, color: isActive ? tabColor : 'var(--text-muted)',
-                  transition:'all 0.15s',
-                }}
-              >
-                <span style={{fontSize:16}}>{t.icon}</span>
-                {t.label}
-                <span style={{
-                  fontSize:10, fontWeight:700, padding:'2px 7px', borderRadius:10,
-                  background: isActive ? `${tabColor}18` : 'var(--bg-page)',
-                  color: isActive ? tabColor : 'var(--text-muted)',
-                  border:`1px solid ${isActive ? tabColor+'30' : 'var(--border)'}`,
-                  minWidth:20, textAlign:'center',
-                }}>{t.count}</span>
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      {/* ── Pen list for active tab ── */}
+      {/* ── KPI blocks — always visible, flat headers ── */}
+      {layerCards.length>0   && <OpKpiBlock title="Layer Production"   opIcon="🥚" isLayer={true}  cards={layerCards} />}
+      {/* Broiler block + harvest popover anchored below it */}
       <div>
+        {broilerCards.length>0 && <OpKpiBlock title="Broiler Production" opIcon="🍗" isLayer={false} cards={broilerCards} />}
+
+      </div>
+
+      {/* ── Operation type tabs + pen list ── */}
+      <div style={{marginTop:8}}>
+        {hasBoth && (
+          <div style={{display:'flex',gap:6,marginBottom:16,background:'var(--bg-elevated)',borderRadius:12,padding:4,border:'1px solid var(--border)',width:'fit-content'}}>
+            {tabs.map(t => {
+              const isActive = effectiveTab === t.key;
+              const tabColor = t.key === 'LAYER' ? '#f59e0b' : '#3b82f6';
+              return (
+                <button key={t.key} style={{display:'inline-flex',alignItems:'center',gap:8,padding:'9px 20px',borderRadius:9,border:'none',background:isActive?'#fff':'transparent',boxShadow:isActive?'var(--shadow-sm,0 1px 4px rgba(0,0,0,0.08))':'none',cursor:'pointer',fontFamily:'inherit',fontWeight:isActive?700:500,fontSize:13,color:isActive?tabColor:'var(--text-muted)',transition:'all 0.15s'}} onClick={()=>{setActiveTab(t.key);setNavTarget(null);}}>
+                  <span style={{fontSize:16}}>{t.icon}</span>
+                  {t.label}
+                  <span style={{fontSize:10,fontWeight:700,padding:'2px 7px',borderRadius:10,background:isActive?`${tabColor}18`:'var(--bg-page)',color:isActive?tabColor:'var(--text-muted)',border:`1px solid ${isActive?tabColor+'30':'var(--border)'}`,minWidth:20,textAlign:'center'}}>{t.count}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
         {!hasBoth && tabs.length > 0 && (
-          <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:16}}>
+          <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:14}}>
             <span style={{fontSize:16}}>{tabs[0].icon}</span>
             <span style={{fontSize:11,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.06em'}}>
               {tabs[0].label} · {tabs[0].count} pen{tabs[0].count!==1?'s':''}
             </span>
           </div>
         )}
-        {visiblePens.map(pen => <PenCard key={pen.id} pen={pen} />)}
+        {visiblePens.map(pen => <PenCard key={pen.id} pen={pen} autoOpen={navTarget?.penId===pen.id} highlightSection={navTarget?.penId===pen.id?navTarget.sectionName:null}/>)}
       </div>
     </div>
   );

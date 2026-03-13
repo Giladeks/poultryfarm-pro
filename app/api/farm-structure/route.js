@@ -4,7 +4,6 @@ import { prisma } from '@/lib/db/prisma';
 import { verifyToken } from '@/lib/middleware/auth';
 
 const MANAGER_ROLES = ['FARM_ADMIN', 'FARM_MANAGER', 'CHAIRPERSON', 'SUPER_ADMIN'];
-const ADMIN_ROLES   = ['FARM_ADMIN', 'FARM_MANAGER', 'CHAIRPERSON', 'SUPER_ADMIN'];
 
 export async function GET(request) {
   const user = await verifyToken(request);
@@ -19,9 +18,8 @@ export async function GET(request) {
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
     // ── Determine which sections this user can see ──────────────────────────
-    // Managers see all. Workers/PenManagers see only their assigned sections.
-    let allowedSectionIds = null; // null = all
-    let allowedOpTypes    = null; // null = all
+    let allowedSectionIds = null;
+    let allowedOpTypes    = null;
 
     if (!isManager) {
       const assignments = await prisma.penWorkerAssignment.findMany({
@@ -37,7 +35,7 @@ export async function GET(request) {
       allowedOpTypes = opTypes.length > 0 ? opTypes : ['NONE'];
     }
 
-    // ── Fetch structure ─────────────────────────────────────────────────────
+    // ── Fetch farm structure ────────────────────────────────────────────────
     const farms = await prisma.farm.findMany({
       where: { tenantId: user.tenantId, isActive: true },
       include: {
@@ -76,7 +74,6 @@ export async function GET(request) {
       orderBy: { name: 'asc' },
     });
 
-    // Filter out pens with no visible sections (for field workers)
     const filteredFarms = farms.map(farm => ({
       ...farm,
       pens: farm.pens.filter(pen => pen.sections.length > 0),
@@ -84,6 +81,10 @@ export async function GET(request) {
 
     // ── Fetch metrics ───────────────────────────────────────────────────────
     const sectionFilter = allowedSectionIds
+      ? { penSectionId: { in: allowedSectionIds } }
+      : { flock: { penSection: { pen: { farm: { tenantId: user.tenantId } } } } };
+
+    const eggSectionFilter = allowedSectionIds
       ? { penSectionId: { in: allowedSectionIds } }
       : { flock: { penSection: { pen: { farm: { tenantId: user.tenantId } } } } };
 
@@ -112,25 +113,21 @@ export async function GET(request) {
         _sum: { quantityKg: true },
         _avg: { gramsPerBird: true },
       }),
-      // Today eggs (LAYER only)
+      // Today eggs — Phase 8B fields only (no dirtyCount, gradeACount is nullable/PM-set)
       prisma.eggProduction.groupBy({
         by: ['penSectionId'],
         where: {
-          ...(allowedSectionIds
-            ? { penSectionId: { in: allowedSectionIds } }
-            : { flock: { penSection: { pen: { farm: { tenantId: user.tenantId } } } } }),
+          ...eggSectionFilter,
           collectionDate: { gte: today },
         },
-        _sum: { totalEggs: true, gradeACount: true, dirtyCount: true },
+        _sum: { totalEggs: true, gradeACount: true, crackedCount: true },
         _avg: { layingRatePct: true },
       }),
       // 7-day eggs
       prisma.eggProduction.groupBy({
         by: ['penSectionId'],
         where: {
-          ...(allowedSectionIds
-            ? { penSectionId: { in: allowedSectionIds } }
-            : { flock: { penSection: { pen: { farm: { tenantId: user.tenantId } } } } }),
+          ...eggSectionFilter,
           collectionDate: { gte: sevenDaysAgo },
         },
         _sum: { totalEggs: true, gradeACount: true },
@@ -152,7 +149,7 @@ export async function GET(request) {
       }),
     ]);
 
-    // Index metrics
+    // Index metrics by penSectionId
     const idx = {
       todayDead:  Object.fromEntries(todayMortality.map(r => [r.penSectionId, r._sum.count || 0])),
       weekDead:   Object.fromEntries(weekMortality.map(r  => [r.penSectionId, r._sum.count || 0])),
@@ -161,17 +158,18 @@ export async function GET(request) {
         gpb: parseFloat((r._avg.gramsPerBird || 0).toFixed(0)),
       }])),
       todayEggs:  Object.fromEntries(todayEggs.map(r => [r.penSectionId, {
-        total: r._sum.totalEggs || 0,
-        gradeA: r._sum.gradeACount || 0,
-        dirty:  r._sum.dirtyCount  || 0,
-        rate:   parseFloat((r._avg.layingRatePct || 0).toFixed(1)),
+        total:   r._sum.totalEggs  || 0,
+        gradeA:  r._sum.gradeACount || 0,   // null until PM grades — treat 0 as pending
+        cracked: r._sum.crackedCount || 0,
+        rate:    parseFloat((r._avg.layingRatePct || 0).toFixed(1)),
+        // flag: true when eggs exist but gradeA hasn't been set yet by PM
+        gradePending: (r._sum.totalEggs || 0) > 0 && !r._sum.gradeACount,
       }])),
       weekEggs:   Object.fromEntries(weekEggs.map(r => [r.penSectionId, {
-        total:  r._sum.totalEggs  || 0,
+        total:  r._sum.totalEggs   || 0,
         gradeA: r._sum.gradeACount || 0,
         rate:   parseFloat((r._avg.layingRatePct || 0).toFixed(1)),
       }])),
-      // Latest weight record per section
       latestWeight: weekWeights.reduce((acc, w) => {
         if (!acc[w.penSectionId]) acc[w.penSectionId] = w;
         return acc;
@@ -205,16 +203,13 @@ export async function GET(request) {
           const todayDead  = idx.todayDead[sec.id]  || 0;
           const weekDead   = idx.weekDead[sec.id]   || 0;
           const feedData   = idx.weekFeed[sec.id]   || { kg: 0, gpb: 0 };
-          const tEgg       = idx.todayEggs[sec.id]  || { total: 0, gradeA: 0, dirty: 0, rate: 0 };
+          const tEgg       = idx.todayEggs[sec.id]  || { total: 0, gradeA: 0, cracked: 0, rate: 0, gradePending: false };
           const wEgg       = idx.weekEggs[sec.id]   || { total: 0, gradeA: 0, rate: 0 };
           const wt         = idx.latestWeight[sec.id];
 
           const mortalityRate = activeFlock?.initialCount > 0
             ? parseFloat(((weekDead / activeFlock.initialCount) * 100).toFixed(2)) : 0;
 
-          // Estimated FCR: feed consumed / estimated weight gain
-          // avgWeight (g) * currentBirds / 1000 = total kg now
-          // assume chick placement weight = 42g
           const currentWeightKg = wt
             ? parseFloat(wt.avgWeightG) * currentBirds / 1000 : null;
           const placementWeightKg = currentBirds * 0.042;
@@ -223,13 +218,12 @@ export async function GET(request) {
           const estimatedFCR = estimatedGainKg && feedData.kg > 0 && estimatedGainKg > 0
             ? parseFloat((feedData.kg / estimatedGainKg).toFixed(2)) : null;
 
-          // Egg grade A %
-          const gradeAPct = tEgg.total > 0
+          // gradeA % — only meaningful once PM has graded
+          const gradeAPct = tEgg.total > 0 && tEgg.gradeA > 0
             ? parseFloat(((tEgg.gradeA / tEgg.total) * 100).toFixed(1)) : 0;
-          const weekGradeAPct = wEgg.total > 0
+          const weekGradeAPct = wEgg.total > 0 && wEgg.gradeA > 0
             ? parseFloat(((wEgg.gradeA / wEgg.total) * 100).toFixed(1)) : 0;
 
-          // Days to expected harvest (broilers)
           const daysToHarvest = activeFlock?.expectedHarvestDate
             ? Math.max(0, Math.floor((new Date(activeFlock.expectedHarvestDate) - Date.now()) / 86400000)) : null;
 
@@ -238,15 +232,15 @@ export async function GET(request) {
             currentBirds, occupancyPct, activeFlock, ageInDays,
             workers, managers,
             metrics: isLayer ? {
-              // LAYER metrics
               type: 'LAYER',
               todayMortality:   todayDead,
               weekMortality:    weekDead,
               mortalityRate,
               todayEggs:        tEgg.total,
               todayGradeA:      tEgg.gradeA,
-              todayDirty:       tEgg.dirty,
+              todayCracked:     tEgg.cracked,
               todayGradeAPct:   gradeAPct,
+              todayGradeAPending: tEgg.gradePending,   // true = eggs logged but PM hasn't graded yet
               todayLayingRate:  tEgg.rate,
               weekEggs:         wEgg.total,
               weekGradeA:       wEgg.gradeA,
@@ -256,7 +250,6 @@ export async function GET(request) {
                 ? parseFloat((feedData.kg / 7).toFixed(1)) : 0,
               feedGramsPerBird: feedData.gpb,
             } : {
-              // BROILER metrics
               type: 'BROILER',
               todayMortality:  todayDead,
               weekMortality:   weekDead,
@@ -319,7 +312,6 @@ export async function GET(request) {
         };
       });
 
-      // Farm-level aggregation (managers only see full picture)
       const totalCapacity  = pens.reduce((s, p) => s + p.totalCapacity, 0);
       const totalBirds     = pens.reduce((s, p) => s + p.currentBirds, 0);
       const layerPens      = pens.filter(p => p.operationType === 'LAYER');
@@ -331,14 +323,12 @@ export async function GET(request) {
         mortalityRate:   totalBirds > 0
           ? parseFloat(((pens.reduce((s, p) => s + p.metrics.weekMortality, 0) / totalBirds) * 100).toFixed(2)) : 0,
         weekFeedKg:      parseFloat(pens.reduce((s, p) => s + (p.metrics.weekFeedKg || 0), 0).toFixed(1)),
-        // Layer
         todayEggs:       layerPens.reduce((s, p) => s + (p.metrics.todayEggs || 0), 0),
         weekEggs:        layerPens.reduce((s, p) => s + (p.metrics.weekEggs  || 0), 0),
         avgLayingRate:   (() => {
           const lp = layerPens.filter(p => p.metrics.avgLayingRate > 0);
           return lp.length > 0 ? parseFloat((lp.reduce((s, p) => s + p.metrics.avgLayingRate, 0) / lp.length).toFixed(1)) : 0;
         })(),
-        // Broiler
         avgBroilerWeightG: (() => {
           const bp = broilerPens.filter(p => p.metrics.avgWeightG);
           return bp.length > 0 ? parseFloat((bp.reduce((s, p) => s + p.metrics.avgWeightG, 0) / bp.length).toFixed(0)) : null;
@@ -356,112 +346,14 @@ export async function GET(request) {
         pens, totalCapacity, totalBirds,
         occupancyPct: totalCapacity > 0
           ? parseFloat(((totalBirds / totalCapacity) * 100).toFixed(1)) : 0,
-        penCount: pens.length,
-        layerBirds:   layerPens.reduce((s, p) => s + p.currentBirds, 0),
-        broilerBirds: broilerPens.reduce((s, p) => s + p.currentBirds, 0),
         metrics: farmMetrics,
       };
     });
 
-    const managers = await prisma.user.findMany({
-      where: {
-        tenantId: user.tenantId,
-        role: { in: ['FARM_MANAGER', 'PEN_MANAGER'] },
-        isActive: true,
-      },
-      select: { id: true, firstName: true, lastName: true, role: true },
-      orderBy: { firstName: 'asc' },
-    });
+    return NextResponse.json({ farms: enriched });
 
-    return NextResponse.json({
-      farms: enriched,
-      managers,
-      viewerRole: user.role,
-      isManager,
-      allowedOpTypes,
-    });
   } catch (error) {
     console.error('Farm structure error:', error);
     return NextResponse.json({ error: 'Failed to fetch farm structure' }, { status: 500 });
-  }
-}
-
-export async function POST(request) {
-  const user = await verifyToken(request);
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  if (!ADMIN_ROLES.includes(user.role))
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-
-  const { searchParams } = new URL(request.url);
-  const type = searchParams.get('type');
-
-  try {
-    if (type === 'farm') {
-      const { name, location, address, phone, email, managerId } = await request.json();
-      if (!name) return NextResponse.json({ error: 'Farm name required' }, { status: 400 });
-      const farm = await prisma.farm.create({ data: { tenantId: user.tenantId, name: name.trim(), location: location||null, address: address||null, phone: phone||null, email: email||null, managerId: managerId||null } });
-      await prisma.auditLog.create({ data: { tenantId: user.tenantId, userId: user.sub, action: 'CREATE', entityType: 'Farm', entityId: farm.id, changes: { name: farm.name } } }).catch(()=>{});
-      return NextResponse.json({ farm }, { status: 201 });
-    }
-    if (type === 'pen') {
-      const { farmId, name, operationType, capacity, location, buildYear } = await request.json();
-      if (!farmId||!name||!operationType||!capacity) return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
-      const farm = await prisma.farm.findFirst({ where: { id: farmId, tenantId: user.tenantId } });
-      if (!farm) return NextResponse.json({ error: 'Farm not found' }, { status: 404 });
-      const pen = await prisma.pen.create({ data: { farmId, name: name.trim(), operationType, capacity: parseInt(capacity), location: location||null, buildYear: buildYear ? parseInt(buildYear) : null } });
-      return NextResponse.json({ pen }, { status: 201 });
-    }
-    if (type === 'section') {
-      const { penId, name, capacity } = await request.json();
-      if (!penId||!name||!capacity) return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
-      const pen = await prisma.pen.findFirst({ where: { id: penId, farm: { tenantId: user.tenantId } } });
-      if (!pen) return NextResponse.json({ error: 'Pen not found' }, { status: 404 });
-      const section = await prisma.penSection.create({ data: { penId, name: name.trim(), capacity: parseInt(capacity) } });
-      return NextResponse.json({ section }, { status: 201 });
-    }
-    return NextResponse.json({ error: 'Invalid type' }, { status: 400 });
-  } catch (error) {
-    if (error.code === 'P2002') return NextResponse.json({ error: 'Name already exists' }, { status: 409 });
-    console.error('Create error:', error);
-    return NextResponse.json({ error: 'Failed to create' }, { status: 500 });
-  }
-}
-
-export async function PATCH(request) {
-  const user = await verifyToken(request);
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  if (!ADMIN_ROLES.includes(user.role))
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-
-  const { searchParams } = new URL(request.url);
-  const type = searchParams.get('type');
-  const body = await request.json();
-
-  try {
-    if (type === 'farm') {
-      const { id, name, location, address, phone, email, managerId, isActive } = body;
-      const farm = await prisma.farm.findFirst({ where: { id, tenantId: user.tenantId } });
-      if (!farm) return NextResponse.json({ error: 'Farm not found' }, { status: 404 });
-      const updated = await prisma.farm.update({ where: { id }, data: { ...(name!==undefined&&{name}), ...(location!==undefined&&{location}), ...(address!==undefined&&{address}), ...(phone!==undefined&&{phone}), ...(email!==undefined&&{email}), ...(managerId!==undefined&&{managerId}), ...(isActive!==undefined&&{isActive}) } });
-      return NextResponse.json({ farm: updated });
-    }
-    if (type === 'pen') {
-      const { id, name, capacity, location, buildYear, isActive } = body;
-      const pen = await prisma.pen.findFirst({ where: { id, farm: { tenantId: user.tenantId } } });
-      if (!pen) return NextResponse.json({ error: 'Pen not found' }, { status: 404 });
-      const updated = await prisma.pen.update({ where: { id }, data: { ...(name!==undefined&&{name}), ...(capacity!==undefined&&{capacity:parseInt(capacity)}), ...(location!==undefined&&{location}), ...(buildYear!==undefined&&{buildYear:buildYear?parseInt(buildYear):null}), ...(isActive!==undefined&&{isActive}) } });
-      return NextResponse.json({ pen: updated });
-    }
-    if (type === 'section') {
-      const { id, name, capacity, isActive } = body;
-      const section = await prisma.penSection.findFirst({ where: { id, pen: { farm: { tenantId: user.tenantId } } } });
-      if (!section) return NextResponse.json({ error: 'Section not found' }, { status: 404 });
-      const updated = await prisma.penSection.update({ where: { id }, data: { ...(name!==undefined&&{name}), ...(capacity!==undefined&&{capacity:parseInt(capacity)}), ...(isActive!==undefined&&{isActive}) } });
-      return NextResponse.json({ section: updated });
-    }
-    return NextResponse.json({ error: 'Invalid type' }, { status: 400 });
-  } catch (error) {
-    console.error('Update error:', error);
-    return NextResponse.json({ error: 'Failed to update' }, { status: 500 });
   }
 }

@@ -47,35 +47,39 @@ function LogEggModal({ section, apiFetch, onClose, onSave }) {
   const flock = section.flocks?.[0] || null;
   const today = new Date().toISOString().split('T')[0];
   const [form, setForm] = useState({
-    collectionDate: today,
-    totalEggs: '',
-    gradeACount: '', gradeBCount: '', crackedCount: '', dirtyCount: '',
+    collectionDate:  today,
+    collectionSession: '1',   // 1=morning, 2=afternoon
+    cratesCollected: '',
+    looseEggs:       '',
+    crackedCount:    '',
   });
   const [saving, setSaving] = useState(false);
-  const [error, setError]   = useState('');
+  const [error,  setError]  = useState('');
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
 
-  const total    = Number(form.totalEggs) || 0;
-  const gradeSum = (Number(form.gradeACount) || 0) + (Number(form.gradeBCount) || 0) + (Number(form.crackedCount) || 0) + (Number(form.dirtyCount) || 0);
-  const layRate  = flock?.currentCount > 0 ? ((total / flock.currentCount) * 100).toFixed(1) : null;
+  const crates  = Math.max(0, Number(form.cratesCollected) || 0);
+  const loose   = Math.max(0, Number(form.looseEggs)       || 0);
+  const cracked = Math.max(0, Number(form.crackedCount)    || 0);
+  // Total = (crates × 30) + loose eggs + cracked eggs
+  const total   = (crates * 30) + loose + cracked;
+  const layRate = flock?.currentCount > 0 ? ((total / flock.currentCount) * 100).toFixed(1) : null;
 
   async function save() {
-    if (!flock)       return setError('No active flock in this section');
-    if (total <= 0)   return setError('Enter total eggs collected');
-    if (gradeSum > total) return setError('Grade breakdown exceeds total');
+    if (!flock)     return setError('No active flock in this section');
+    if (crates <= 0 && loose <= 0) return setError('Enter at least crates or loose eggs collected');
     setSaving(true); setError('');
     try {
       const res = await apiFetch('/api/eggs', {
         method: 'POST',
         body: JSON.stringify({
-          flockId:       flock.id,
-          penSectionId:  section.id,
-          collectionDate: form.collectionDate,
-          totalEggs:     total,
-          ...(form.gradeACount  && { gradeACount:  Number(form.gradeACount) }),
-          ...(form.gradeBCount  && { gradeBCount:  Number(form.gradeBCount) }),
-          ...(form.crackedCount && { crackedCount: Number(form.crackedCount) }),
-          ...(form.dirtyCount   && { dirtyCount:   Number(form.dirtyCount) }),
+          flockId:          flock.id,
+          penSectionId:     section.id,
+          collectionDate:   form.collectionDate,
+          collectionSession: Number(form.collectionSession),
+          cratesCollected:  crates,
+          looseEggs:        loose,
+          crackedCount:     cracked,
+          totalEggs:        total,   // system-calculated, sent for server-side confirmation
         }),
       });
       const d = await res.json();
@@ -93,35 +97,59 @@ function LogEggModal({ section, apiFetch, onClose, onSave }) {
           <strong>{section.pen?.name} › {section.name}</strong>
           {flock && <span style={{ color: 'var(--text-muted)', marginLeft: 8 }}>· {flock.batchCode} · {fmt(flock.currentCount)} birds</span>}
         </div>
-        <div>
-          <label className="label">Collection Date *</label>
-          <input type="date" className="input" value={form.collectionDate} onChange={e => set('collectionDate', e.target.value)} max={today} />
-        </div>
-        <div>
-          <label className="label">Total Eggs Collected *</label>
-          <input type="number" className="input" min="0" value={form.totalEggs} onChange={e => set('totalEggs', e.target.value)} placeholder="e.g. 1800" />
-          {layRate && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-            Laying rate: <strong style={{ color: Number(layRate) >= 80 ? 'var(--green)' : 'var(--amber)' }}>{layRate}%</strong>
-          </div>}
-        </div>
-        <div>
-          <label className="label">Grade Breakdown <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(optional)</span></label>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 8 }}>
-            {[['gradeACount','Grade A','var(--green)'],['gradeBCount','Grade B','var(--amber)'],['crackedCount','Cracked','var(--red)'],['dirtyCount','Dirty','#9ca3af']].map(([k, label, color]) => (
-              <div key={k}>
-                <div style={{ fontSize: 10, fontWeight: 700, color, marginBottom: 4 }}>{label}</div>
-                <input type="number" className="input" min="0" value={form[k]} onChange={e => set(k, e.target.value)} placeholder="0" style={{ padding: '7px 10px' }} />
-              </div>
-            ))}
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div>
+            <label className="label">Collection Date *</label>
+            <input type="date" className="input" value={form.collectionDate} onChange={e => set('collectionDate', e.target.value)} max={today} />
           </div>
-          {gradeSum > 0 && <div style={{ fontSize: 11, marginTop: 4, color: gradeSum > total ? 'var(--red)' : 'var(--text-muted)' }}>{gradeSum} / {total} accounted for</div>}
-        </div>
-        {total > 0 && (
-          <div style={{ padding: '10px 14px', background: 'var(--purple-light)', borderRadius: 9, border: '1px solid #d4d8ff', fontSize: 12 }}>
-            <strong style={{ color: 'var(--purple)' }}>Crates: {Math.floor(total / 30)}</strong>
-            <span style={{ color: 'var(--text-muted)', marginLeft: 8 }}>{total % 30} loose</span>
+          <div>
+            <label className="label">Session *</label>
+            <select className="input" value={form.collectionSession} onChange={e => set('collectionSession', e.target.value)}>
+              <option value="1">Morning (Batch 1)</option>
+              <option value="2">Afternoon (Batch 2)</option>
+            </select>
           </div>
-        )}
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10 }}>
+          <div>
+            <label className="label">Full Crates *</label>
+            <input type="number" className="input" min="0" value={form.cratesCollected}
+              onChange={e => set('cratesCollected', e.target.value)} placeholder="0" />
+            <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 3 }}>30 eggs each</div>
+          </div>
+          <div>
+            <label className="label">Loose Eggs</label>
+            <input type="number" className="input" min="0" max="29" value={form.looseEggs}
+              onChange={e => set('looseEggs', e.target.value)} placeholder="0" />
+            <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 3 }}>Under 1 crate</div>
+          </div>
+          <div>
+            <label className="label">Cracked</label>
+            <input type="number" className="input" min="0" value={form.crackedCount}
+              onChange={e => set('crackedCount', e.target.value)} placeholder="0" />
+            <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 3 }}>Reduced price</div>
+          </div>
+        </div>
+
+        {/* Live total preview */}
+        <div style={{ padding: '12px 14px', background: 'var(--purple-light)', borderRadius: 9, border: '1px solid #d4d8ff' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: 12, color: 'var(--purple)', fontWeight: 700 }}>
+              Total: {fmt(total)} eggs
+            </span>
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+              ({crates} × 30) + {loose} loose + {cracked} cracked
+            </span>
+          </div>
+          {layRate && (
+            <div style={{ fontSize: 11, marginTop: 4 }}>
+              Laying rate: <strong style={{ color: Number(layRate) >= 80 ? 'var(--green)' : Number(layRate) >= 70 ? 'var(--amber)' : 'var(--red)' }}>{layRate}%</strong>
+              <span style={{ color: 'var(--text-muted)', marginLeft: 6 }}>Grade A % calculated by Pen Manager after verification</span>
+            </div>
+          )}
+        </div>
       </div>
     </ModalShell>
   );
@@ -317,14 +345,13 @@ function EditRecordModal({ item, sections, apiFetch, onClose, onSave }) {
   const section = sections.find(s => s.id === record.penSectionId) || null;
   const flock   = section?.flocks?.[0] || null;
 
-  // Egg form state
+  // Egg form state — worker corrects crate-based fields only, no grade entry
   const [eggForm, setEggForm] = useState({
-    collectionDate: record.collectionDate?.split('T')[0] || today,
-    totalEggs:   String(record.totalEggs  || ''),
-    gradeACount: String(record.gradeACount  || ''),
-    gradeBCount: String(record.gradeBCount  || ''),
-    crackedCount: String(record.crackedCount || ''),
-    dirtyCount:   String(record.dirtyCount   || ''),
+    collectionDate:   record.collectionDate?.split('T')[0] || today,
+    collectionSession: String(record.collectionSession || '1'),
+    cratesCollected:  String(record.cratesCollected || ''),
+    looseEggs:        String(record.looseEggs        || ''),
+    crackedCount:     String(record.crackedCount     || ''),
   });
 
   // Mortality form state
@@ -340,10 +367,11 @@ function EditRecordModal({ item, sections, apiFetch, onClose, onSave }) {
   const setE = (k, v) => setEggForm(p  => ({ ...p, [k]: v }));
   const setM = (k, v) => setMortForm(p => ({ ...p, [k]: v }));
 
-  const total    = Number(eggForm.totalEggs) || 0;
-  const gradeSum = (Number(eggForm.gradeACount)||0) + (Number(eggForm.gradeBCount)||0) +
-                   (Number(eggForm.crackedCount)||0) + (Number(eggForm.dirtyCount)||0);
-  const layRate  = flock?.currentCount > 0 ? ((total / flock.currentCount) * 100).toFixed(1) : null;
+  const crates  = Math.max(0, Number(eggForm.cratesCollected) || 0);
+  const loose   = Math.max(0, Number(eggForm.looseEggs)       || 0);
+  const cracked = Math.max(0, Number(eggForm.crackedCount)    || 0);
+  const total   = (crates * 30) + loose + cracked;
+  const layRate = flock?.currentCount > 0 ? ((total / flock.currentCount) * 100).toFixed(1) : null;
   const count    = Number(mortForm.count) || 0;
   const mortRate = flock?.currentCount > 0 ? ((count / flock.currentCount) * 100).toFixed(2) : null;
 
@@ -352,16 +380,15 @@ function EditRecordModal({ item, sections, apiFetch, onClose, onSave }) {
     try {
       let body, endpoint;
       if (type === 'egg') {
-        if (total <= 0)        return setError('Enter total eggs collected');
-        if (gradeSum > total)  return setError('Grade breakdown exceeds total');
+        if (crates <= 0 && loose <= 0) return setError('Enter at least crates or loose eggs collected');
         endpoint = `/api/eggs/${record.id}`;
         body = {
-          collectionDate: eggForm.collectionDate,
-          totalEggs: total,
-          ...(eggForm.gradeACount  && { gradeACount:  Number(eggForm.gradeACount)  }),
-          ...(eggForm.gradeBCount  && { gradeBCount:  Number(eggForm.gradeBCount)  }),
-          ...(eggForm.crackedCount && { crackedCount: Number(eggForm.crackedCount) }),
-          ...(eggForm.dirtyCount   && { dirtyCount:   Number(eggForm.dirtyCount)   }),
+          collectionDate:   eggForm.collectionDate,
+          collectionSession: Number(eggForm.collectionSession),
+          cratesCollected:  crates,
+          looseEggs:        loose,
+          crackedCount:     cracked,
+          totalEggs:        total,
         };
       } else {
         if (count <= 0) return setError('Enter number of deaths');
@@ -417,29 +444,44 @@ function EditRecordModal({ item, sections, apiFetch, onClose, onSave }) {
                 onChange={e => setE('collectionDate', e.target.value)} max={today} />
             </div>
             <div>
-              <label className="label">Total Eggs Collected *</label>
-              <input type="number" className="input" min="0" value={eggForm.totalEggs}
-                onChange={e => setE('totalEggs', e.target.value)} placeholder="e.g. 1800" />
+              <label className="label">Session *</label>
+              <select className="input" value={eggForm.collectionSession} onChange={e => setE('collectionSession', e.target.value)}>
+                <option value="1">Morning (Batch 1)</option>
+                <option value="2">Afternoon (Batch 2)</option>
+              </select>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10 }}>
+              <div>
+                <label className="label">Full Crates *</label>
+                <input type="number" className="input" min="0" value={eggForm.cratesCollected}
+                  onChange={e => setE('cratesCollected', e.target.value)} placeholder="0" />
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 3 }}>30 eggs each</div>
+              </div>
+              <div>
+                <label className="label">Loose Eggs</label>
+                <input type="number" className="input" min="0" max="29" value={eggForm.looseEggs}
+                  onChange={e => setE('looseEggs', e.target.value)} placeholder="0" />
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 3 }}>Under 1 crate</div>
+              </div>
+              <div>
+                <label className="label">Cracked</label>
+                <input type="number" className="input" min="0" value={eggForm.crackedCount}
+                  onChange={e => setE('crackedCount', e.target.value)} placeholder="0" />
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 3 }}>Reduced price</div>
+              </div>
+            </div>
+            <div style={{ padding: '12px 14px', background: 'var(--purple-light)', borderRadius: 9, border: '1px solid #d4d8ff' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: 12, color: 'var(--purple)', fontWeight: 700 }}>
+                  Total: {fmt(total)} eggs
+                </span>
+                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                  ({crates} × 30) + {loose} + {cracked}
+                </span>
+              </div>
               {layRate !== null && (
                 <div style={{ fontSize: 11, marginTop: 4, color: 'var(--text-muted)' }}>
-                  Laying rate: <strong style={{ color: '#16a34a' }}>{layRate}%</strong>
-                </div>
-              )}
-            </div>
-            <div>
-              <label className="label">Grade Breakdown <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(optional)</span></label>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 8 }}>
-                {[['gradeACount','Grade A','#16a34a'],['gradeBCount','Grade B','#d97706'],['crackedCount','Cracked','#dc2626'],['dirtyCount','Dirty','#6b7280']].map(([k,lbl,col]) => (
-                  <div key={k}>
-                    <div style={{ fontSize: 10, fontWeight: 700, color: col, marginBottom: 4 }}>{lbl}</div>
-                    <input type="number" className="input" style={{ padding: '6px 8px', textAlign: 'center' }}
-                      min="0" value={eggForm[k]} onChange={e => setE(k, e.target.value)} placeholder="0" />
-                  </div>
-                ))}
-              </div>
-              {gradeSum > 0 && (
-                <div style={{ fontSize: 11, marginTop: 6, color: gradeSum > total ? '#dc2626' : 'var(--text-muted)' }}>
-                  {gradeSum} / {total} accounted for
+                  Laying rate: <strong style={{ color: Number(layRate) >= 80 ? 'var(--green)' : Number(layRate) >= 70 ? 'var(--amber)' : 'var(--red)' }}>{layRate}%</strong>
                 </div>
               )}
             </div>

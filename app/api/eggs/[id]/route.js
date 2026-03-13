@@ -1,17 +1,16 @@
-// app/api/eggs/[id]/route.js — Edit a rejected egg production record
+// app/api/eggs/[id]/route.js — Worker edits a rejected egg record (Phase 8B)
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
 import { verifyToken } from '@/lib/middleware/auth';
 import { z } from 'zod';
 
+// Worker can only re-enter the crate-based fields they originally submitted
 const editSchema = z.object({
-  totalEggs:     z.number().int().min(0),
-  gradeACount:   z.number().int().min(0).optional(),
-  gradeBCount:   z.number().int().min(0).optional(),
-  crackedCount:  z.number().int().min(0).optional(),
-  dirtyCount:    z.number().int().min(0).optional(),
-  collectionDate: z.string().optional(),
-  notes:         z.string().optional().nullable(),
+  cratesCollected:   z.number().int().min(0),
+  looseEggs:         z.number().int().min(0).max(29),
+  crackedCount:      z.number().int().min(0),
+  collectionDate:    z.string().optional(),
+  collectionSession: z.number().int().min(1).max(2).optional(),
 });
 
 export async function PATCH(request, { params: rawParams }) {
@@ -20,7 +19,6 @@ export async function PATCH(request, { params: rawParams }) {
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   try {
-    // Find the record and verify it belongs to this tenant and was submitted by this user
     const record = await prisma.eggProduction.findFirst({
       where: {
         id: params.id,
@@ -30,8 +28,6 @@ export async function PATCH(request, { params: rawParams }) {
     });
 
     if (!record) return NextResponse.json({ error: 'Record not found' }, { status: 404 });
-
-    // Only the original submitter can edit, and only if it's PENDING (returned from rejection)
     if (record.recordedById !== user.sub)
       return NextResponse.json({ error: 'You can only edit your own records' }, { status: 403 });
     if (record.submissionStatus !== 'PENDING')
@@ -40,29 +36,41 @@ export async function PATCH(request, { params: rawParams }) {
     const body = await request.json();
     const data = editSchema.parse(body);
 
+    // Recalculate total from new crate inputs
+    const cratesCollected = data.cratesCollected ?? record.cratesCollected;
+    const looseEggs       = data.looseEggs       ?? record.looseEggs;
+    const crackedCount    = data.crackedCount     ?? record.crackedCount;
+    const totalEggs       = (cratesCollected * 30) + looseEggs + crackedCount;
+
     const layingRatePct = record.flock.currentCount > 0
-      ? parseFloat(((data.totalEggs / record.flock.currentCount) * 100).toFixed(2))
+      ? parseFloat(((totalEggs / record.flock.currentCount) * 100).toFixed(2))
       : 0;
-    const cratesCount = Math.floor(data.totalEggs / 30);
 
     const updated = await prisma.eggProduction.update({
       where: { id: params.id },
       data: {
-        totalEggs:      data.totalEggs,
-        gradeACount:    data.gradeACount  ?? record.gradeACount,
-        gradeBCount:    data.gradeBCount  ?? record.gradeBCount,
-        crackedCount:   data.crackedCount ?? record.crackedCount,
-        dirtyCount:     data.dirtyCount   ?? record.dirtyCount,
-        ...(data.collectionDate && { collectionDate: new Date(data.collectionDate) }),
-        ...(data.notes !== undefined && { notes: data.notes }),
+        cratesCollected,
+        looseEggs,
+        crackedCount,
+        totalEggs,
         layingRatePct,
-        cratesCount,
-        submissionStatus: 'PENDING',   // stays PENDING — enters verification queue fresh
-        rejectionReason:  null,        // clear the rejection reason
+        ...(data.collectionDate    && { collectionDate:    new Date(data.collectionDate) }),
+        ...(data.collectionSession && { collectionSession: data.collectionSession }),
+        // Clear any PM grading since the worker input changed
+        gradeBCrates:     null,
+        gradeBLoose:      null,
+        crackedConfirmed: null,
+        gradeBCount:      null,
+        gradeACount:      null,
+        gradeAPct:        null,
+        approvedById:     null,
+        approvedAt:       null,
+        submissionStatus: 'PENDING',
+        rejectionReason:  null,
       },
     });
 
-    // Reset linked verification back to PENDING so it reappears in the queue
+    // Reset linked verification back to PENDING
     await prisma.verification.updateMany({
       where: {
         referenceId: params.id,
@@ -79,7 +87,10 @@ export async function PATCH(request, { params: rawParams }) {
         action:     'UPDATE',
         entityType: 'EggProduction',
         entityId:   params.id,
-        changes:    { reason: 'Resubmitted after rejection', totalEggs: data.totalEggs },
+        changes: {
+          reason: 'Resubmitted after rejection',
+          cratesCollected, looseEggs, crackedCount, totalEggs,
+        },
       },
     }).catch(() => {});
 

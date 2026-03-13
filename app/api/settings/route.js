@@ -1,4 +1,4 @@
-// app/api/settings/route.js — Tenant-level settings (SMS + Email config, alert preferences)
+// app/api/settings/route.js — Tenant-level settings (SMS + Email config, alert preferences, Operation Mode)
 // GET  — returns current settings for this tenant
 // PATCH — updates settings (FARM_ADMIN / FARM_MANAGER / CHAIRPERSON / SUPER_ADMIN only)
 //
@@ -11,6 +11,13 @@ import { verifyToken }  from '@/lib/middleware/auth';
 const ADMIN_ROLES = ['FARM_ADMIN', 'FARM_MANAGER', 'CHAIRPERSON', 'SUPER_ADMIN'];
 
 const DEFAULT_SETTINGS = {
+  // ── Phase 8A: Operation Mode ─────────────────────────────────────────────────
+  // operationMode drives nav visibility, dashboards, task templates and reports.
+  // hasFeedMillModule / hasProcessingModule are optional add-on flags.
+  operationMode:        'LAYER_ONLY', // LAYER_ONLY | BROILER_ONLY | BOTH
+  hasFeedMillModule:    false,
+  hasProcessingModule:  false,
+
   sms: {
     enabled:        false,
     alertPhones:    [],
@@ -35,11 +42,31 @@ export async function GET(request) {
   try {
     const tenant = await prisma.tenant.findUnique({
       where:  { id: user.tenantId },
-      select: { settings: true },
+      select: {
+        settings: true,
+        // Core tenant fields used to pre-populate Farm Profile when
+        // settings.farmProfile has not yet been explicitly saved
+        farmName: true,
+        address:  true,
+        phone:    true,
+        email:    true,
+        logoUrl:  true,
+      },
     });
 
     const settings = deepMerge(DEFAULT_SETTINGS, tenant?.settings || {});
-    return NextResponse.json({ settings });
+
+    // Expose tenant core fields so the client can fall back to them
+    // when settings.farmProfile fields are empty
+    const tenantDefaults = {
+      farmName: tenant?.farmName || null,
+      address:  tenant?.address  || null,
+      phone:    tenant?.phone    || null,
+      email:    tenant?.email    || null,
+      logoUrl:  tenant?.logoUrl  || null,
+    };
+
+    return NextResponse.json({ settings, tenantDefaults });
   } catch (err) {
     console.error('Settings GET error:', err);
     return NextResponse.json({ error: 'Failed to load settings' }, { status: 500 });
@@ -54,6 +81,14 @@ export async function PATCH(request) {
 
   try {
     const body = await request.json();
+
+    // Validate operationMode if it's being changed
+    if (body.operationMode !== undefined) {
+      const valid = ['LAYER_ONLY', 'BROILER_ONLY', 'BOTH'];
+      if (!valid.includes(body.operationMode)) {
+        return NextResponse.json({ error: 'Invalid operationMode value' }, { status: 400 });
+      }
+    }
 
     const tenant  = await prisma.tenant.findUnique({
       where:  { id: user.tenantId },

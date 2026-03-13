@@ -98,10 +98,12 @@ export async function GET(request) {
         }),
 
         // Today eggs
+        // gradeACount is PM-computed on verification (nullable until PM approves)
+        // crackedCount replaces dirtyCount as the tracked waste/reduced-price category
         prisma.eggProduction.groupBy({
           by: ['penSectionId'],
           where: { penSectionId: { in: sectionIds }, collectionDate: { gte: today } },
-          _sum: { totalEggs: true, gradeACount: true, dirtyCount: true },
+          _sum: { totalEggs: true, gradeACount: true, crackedCount: true },
           _avg: { layingRatePct: true },
         }),
 
@@ -109,7 +111,7 @@ export async function GET(request) {
         prisma.eggProduction.groupBy({
           by: ['penSectionId'],
           where: { penSectionId: { in: sectionIds }, collectionDate: { gte: sevenDaysAgo } },
-          _sum: { totalEggs: true, gradeACount: true },
+          _sum: { totalEggs: true, gradeACount: true, crackedCount: true },
           _avg: { layingRatePct: true },
         }),
 
@@ -146,15 +148,16 @@ export async function GET(request) {
         gpb: parseFloat((r._avg.gramsPerBird || 0).toFixed(0)),
       }])),
       todayEggs:  Object.fromEntries(todayEggs.map(r => [r.penSectionId, {
-        total:  r._sum.totalEggs || 0,
-        gradeA: r._sum.gradeACount || 0,
-        dirty:  r._sum.dirtyCount || 0,
-        rate:   parseFloat((r._avg.layingRatePct || 0).toFixed(1)),
+        total:   r._sum.totalEggs   || 0,
+        gradeA:  r._sum.gradeACount || 0,  // 0 until PM verifies — shown as pending in UI
+        cracked: r._sum.crackedCount || 0,
+        rate:    parseFloat((r._avg.layingRatePct || 0).toFixed(1)),
       }])),
       weekEggs:   Object.fromEntries(weekEggs.map(r => [r.penSectionId, {
-        total:  r._sum.totalEggs || 0,
-        gradeA: r._sum.gradeACount || 0,
-        rate:   parseFloat((r._avg.layingRatePct || 0).toFixed(1)),
+        total:   r._sum.totalEggs   || 0,
+        gradeA:  r._sum.gradeACount || 0,
+        cracked: r._sum.crackedCount || 0,
+        rate:    parseFloat((r._avg.layingRatePct || 0).toFixed(1)),
       }])),
       latestWeight: weekWeights.reduce((acc, w) => {
         if (!acc[w.penSectionId]) acc[w.penSectionId] = w;
@@ -173,8 +176,8 @@ export async function GET(request) {
       const todayDead  = idx.todayDead[sec.id]  || 0;
       const weekDead   = idx.weekDead[sec.id]   || 0;
       const feedData   = idx.weekFeed[sec.id]   || { kg: 0, gpb: 0 };
-      const tEgg       = idx.todayEggs[sec.id]  || { total: 0, gradeA: 0, dirty: 0, rate: 0 };
-      const wEgg       = idx.weekEggs[sec.id]   || { total: 0, gradeA: 0, rate: 0 };
+      const tEgg       = idx.todayEggs[sec.id]  || { total: 0, gradeA: 0, cracked: 0, rate: 0 };
+      const wEgg       = idx.weekEggs[sec.id]   || { total: 0, gradeA: 0, cracked: 0, rate: 0 };
       const wt         = idx.latestWeight[sec.id];
 
       const mortalityRate = flock?.initialCount > 0
@@ -213,7 +216,8 @@ export async function GET(request) {
         metrics: isLayer ? {
           type: 'LAYER',
           todayMortality: todayDead, weekMortality: weekDead, mortalityRate,
-          todayEggs: tEgg.total, todayGradeA: tEgg.gradeA, todayDirty: tEgg.dirty,
+          todayEggs: tEgg.total, todayGradeA: tEgg.gradeA, todayCracked: tEgg.cracked,
+          todayGradeAPending: tEgg.gradeA === 0 && tEgg.total > 0, // true when PM hasn't verified yet
           todayGradeAPct: gradeAPct, todayLayingRate: tEgg.rate,
           weekEggs: wEgg.total, weekGradeAPct: wGradeAPct, avgLayingRate: wEgg.rate,
           avgDailyFeedKg: avgDailyFeed, feedGramsPerBird: feedData.gpb,
