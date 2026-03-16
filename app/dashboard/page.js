@@ -705,6 +705,12 @@ function WorkerDashboard({ sections, tasks, user, apiFetch }) {
   };
 
   // ── Build status-colour KPI cards ───────────────────────────────────────────
+  // Broiler-specific aggregates for expanded KPI set
+  const harvests    = sections.filter(s=>s.metrics.daysToHarvest!=null);
+  const nearHarvest = harvests.length ? Math.min(...harvests.map(s=>s.metrics.daysToHarvest)) : null;
+  const broilerAge  = sections[0]?.ageInDays || null;
+  const bWaterBench = broilerAge ? (broilerAge<=7?0.04:broilerAge<=21?0.12:broilerAge<=35?0.22:0.30) : 0.25;
+
   const workerKpis = isL ? [
     {
       label:'Live Birds', value: fmt(totBirds),
@@ -729,18 +735,41 @@ function WorkerDashboard({ sections, tasks, user, apiFetch }) {
     },
     taskCard,
   ] : [
+    // Broiler: Total Birds → Avg Weight → Harvest Countdown → FCR → Water → Mortality
     {
-      label:'Live Birds', value: fmt(totBirds),
+      label:'Total Birds', value: fmt(totBirds),
       sub:`${sections.length} section${sections.length!==1?'s':''}`,
       delta:'', trend:'stable', status:'neutral',
       icon:'🐔', context:'Your sections',
     },
     {
       label:'Avg Live Weight', value: avgWt?`${(avgWt/1000).toFixed(2)} kg`:'—',
-      sub:`Age ${sections[0]?.ageInDays||'—'}d`,
+      sub: broilerAge ? `Age ${broilerAge}d` : 'Not weighed yet',
       delta: avgWt?`${avgWt}g avg`:'No weigh-in yet',
       trend:'stable', status:'neutral',
-      icon:'⚖️', context:'Your sections',
+      icon:'⚖️', context:'Growth',
+    },
+    {
+      label:'Harvest Countdown', value: nearHarvest!=null ? `${nearHarvest}d` : '—',
+      sub: nearHarvest!=null ? (nearHarvest<=3?'Ready very soon!':nearHarvest<=7?'Coming up soon':'Days to harvest') : 'No harvest date set',
+      delta: nearHarvest!=null && nearHarvest<=7 ? `⚠ ${nearHarvest} day${nearHarvest!==1?'s':''} to harvest` : '',
+      trend:'stable', status: nearHarvest!=null&&nearHarvest<=3?'warn':'neutral',
+      icon:'📅', context:'Planning',
+    },
+    {
+      label:'Feed Conv. Ratio', value: avgFCR?`${avgFCR}`:'—',
+      sub:'Target ≤1.9',
+      delta: avgFCR?(avgFCR<=1.9?'On target':`${(avgFCR-1.9).toFixed(2)} above target`):'No data yet',
+      trend: avgFCR?(avgFCR<=1.9?'up':'down'):'stable',
+      status: fcrStatus(avgFCR, true),
+      icon:'🌾', context:'Efficiency',
+    },
+    {
+      label:'Water Intake', value:'—',
+      sub:`Benchmark ${bWaterBench} L/bird${broilerAge?` · age ${broilerAge}d`:''}`,
+      delta:'Not yet tracked',
+      trend:'stable', status:'neutral',
+      icon:'💧', context:'Health signal',
     },
     {
       label:'Mortality Today', value: fmt(totDead),
@@ -750,7 +779,6 @@ function WorkerDashboard({ sections, tasks, user, apiFetch }) {
       status: mortCountStatus(totDead, 5),
       icon:'📉', context:'Your sections',
     },
-    taskCard,
   ];
 
   // ── Sort sections: flagged (critical first, then warn) then ok ───────────────
@@ -804,7 +832,7 @@ function WorkerDashboard({ sections, tasks, user, apiFetch }) {
       </div>
 
       {/* ── KPI row: Live Birds first ── */}
-      <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:24}}>
+      <div style={{display:'grid',gridTemplateColumns:`repeat(${workerKpis.length},1fr)`,gap:14,marginBottom:24}}>
         {workerKpis.map(k=><KpiCard key={k.label} label={k.label} value={k.value} sub={k.sub} delta={k.delta} trend={k.trend} status={k.status} icon={k.icon} context={k.context} />)}
       </div>
 
@@ -872,9 +900,56 @@ function WorkerDashboard({ sections, tasks, user, apiFetch }) {
 }
 
 // ── Pen Manager dashboard ─────────────────────────────────────────────────────
-function PenManagerDashboard({ pens, tasks, user }) {
+function PenManagerDashboard({ pens, tasks, user, apiFetch }) {
   const router = useRouter();
   const [navTarget, setNavTarget] = useState(null); // { penId, sectionName }
+
+  // ── Pending verifications (PM's action queue) ────────────────────────────────
+  const [pendingVerifs, setPendingVerifs] = useState([]);
+  const [verifLoading,  setVerifLoading]  = useState(false);
+  const [verifAction,   setVerifAction]   = useState(null); // { id, action }
+  const [verifSaving,   setVerifSaving]   = useState(false);
+  const [verifToast,    setVerifToast]    = useState(null);
+
+  useEffect(() => {
+    if (!apiFetch) return;
+    setVerifLoading(true);
+    apiFetch('/api/verification?pendingOnly=true')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (d?.pendingQueue) {
+          // Pen manager sees only egg production and mortality records
+          setPendingVerifs(d.pendingQueue.filter(i =>
+            ['DAILY_PRODUCTION','MORTALITY_REPORT'].includes(i.type)
+          ).slice(0, 10));
+        }
+      })
+      .catch(() => {})
+      .finally(() => setVerifLoading(false));
+  }, [apiFetch]);
+
+  const handleVerif = async (item, action) => {
+    setVerifSaving(true);
+    try {
+      const res = await apiFetch('/api/verification', {
+        method: 'POST',
+        body: JSON.stringify({
+          verificationType: item.type,
+          referenceId:      item.referenceId,
+          referenceType:    item.referenceType,
+          verificationDate: new Date().toISOString().slice(0, 10),
+          status: action === 'verify' ? 'VERIFIED' : 'DISCREPANCY_FOUND',
+          discrepancyNotes: action === 'flag' ? (verifAction?.notes || 'Flagged by pen manager') : null,
+        }),
+      });
+      if (res.ok) {
+        setPendingVerifs(prev => prev.filter(i => i.referenceId !== item.referenceId));
+        setVerifToast(action === 'verify' ? '✓ Record verified' : '⚠ Discrepancy flagged');
+        setTimeout(() => setVerifToast(null), 3000);
+      }
+    } catch {} finally { setVerifSaving(false); setVerifAction(null); }
+  };
+
   const totBirds = pens.reduce((s,p)=>s+p.totalBirds,0);
   const totDead  = pens.reduce((s,p)=>s+p.metrics.todayMortality,0);
   const todayEggs= pens.filter(p=>p.operationType==='LAYER').reduce((s,p)=>s+(p.metrics.todayEggs||0),0);
@@ -974,8 +1049,81 @@ function PenManagerDashboard({ pens, tasks, user }) {
       {layerKpis.length > 0 && <OpKpiBlock title="Layer Production" opIcon="🥚" isLayer={true} cards={layerKpis} />}
       <div>
         {broilerKpis.length > 0 && <OpKpiBlock title="Broiler Production" opIcon="🍗" isLayer={false} cards={broilerKpis} />}
-
       </div>
+
+      {/* ── Pending Verifications panel ── */}
+      {verifToast && (
+        <div style={{position:'fixed',bottom:24,right:24,zIndex:9999,background:'#166534',color:'#fff',padding:'11px 20px',borderRadius:10,fontSize:13,fontWeight:600,boxShadow:'0 4px 16px rgba(0,0,0,0.2)'}}>
+          {verifToast}
+        </div>
+      )}
+      <div style={{marginBottom:20}}>
+        <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10}}>
+          <div style={{width:30,height:30,borderRadius:8,background:'#fffbeb',border:'1px solid #fde68a',display:'flex',alignItems:'center',justifyContent:'center',fontSize:14,flexShrink:0}}>✅</div>
+          <span style={{fontFamily:"'Poppins',sans-serif",fontSize:14,fontWeight:700,color:'var(--text-primary)',whiteSpace:'nowrap'}}>Pending Verifications</span>
+          {pendingVerifs.length > 0 && (
+            <span style={{fontSize:10,fontWeight:700,background:'#fef2f2',color:'#ef4444',border:'1px solid #fecaca',borderRadius:5,padding:'2px 8px',marginLeft:4}}>{pendingVerifs.length} pending</span>
+          )}
+          <div style={{flex:1,height:1,background:'#e2e8f0',marginLeft:4}}/>
+          <a href="/verification" style={{fontSize:11,fontWeight:700,color:'var(--purple)',textDecoration:'none',whiteSpace:'nowrap',flexShrink:0}}>View all →</a>
+        </div>
+        {verifLoading ? (
+          <div style={{background:'#fff',borderRadius:12,border:'1px solid var(--border-card)',padding:'16px 18px',color:'var(--text-muted)',fontSize:13,textAlign:'center'}}>
+            Loading verification queue…
+          </div>
+        ) : pendingVerifs.length === 0 ? (
+          <div style={{background:'#f0fdf4',borderRadius:12,border:'1px solid #bbf7d0',padding:'14px 18px',display:'flex',alignItems:'center',gap:10}}>
+            <span style={{fontSize:20}}>🎉</span>
+            <span style={{fontSize:13,fontWeight:600,color:'#16a34a'}}>All caught up — no records awaiting verification</span>
+          </div>
+        ) : (
+          <div style={{background:'#fff',borderRadius:12,border:'1px solid var(--border-card)',overflow:'hidden'}}>
+            {pendingVerifs.map((item, idx) => {
+              const isMort = item.type === 'MORTALITY_REPORT';
+              const accentColor = isMort ? '#ef4444' : '#6c63ff';
+              const bgColor     = isMort ? '#fef2f2' : '#f5f3ff';
+              return (
+                <div key={item.id || idx} style={{
+                  display:'flex',alignItems:'center',gap:12,padding:'12px 16px',
+                  borderBottom: idx < pendingVerifs.length - 1 ? '1px solid #f1f5f9' : 'none',
+                }}>
+                  {/* Type icon */}
+                  <div style={{width:34,height:34,borderRadius:9,background:bgColor,display:'flex',alignItems:'center',justifyContent:'center',fontSize:16,flexShrink:0}}>
+                    {isMort ? '💀' : '🥚'}
+                  </div>
+                  {/* Summary */}
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:13,fontWeight:700,color:'var(--text-primary)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                      {item.summary}
+                    </div>
+                    <div style={{fontSize:11,color:'var(--text-muted)',marginTop:1}}>
+                      👤 {item.submittedBy}
+                      {item.context && <span> · {item.context}</span>}
+                      {item.date && <span> · {new Date(item.date).toLocaleDateString('en-NG',{day:'numeric',month:'short'})}</span>}
+                    </div>
+                  </div>
+                  {/* Quick actions */}
+                  <div style={{display:'flex',gap:6,flexShrink:0}}>
+                    <button
+                      onClick={() => handleVerif(item, 'verify')}
+                      disabled={verifSaving}
+                      style={{padding:'6px 12px',borderRadius:7,border:'1.5px solid #16a34a',background:'#f0fdf4',color:'#16a34a',fontSize:11,fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}}>
+                      ✅ Verify
+                    </button>
+                    <button
+                      onClick={() => handleVerif(item, 'flag')}
+                      disabled={verifSaving}
+                      style={{padding:'6px 12px',borderRadius:7,border:'1.5px solid #d97706',background:'#fffbeb',color:'#d97706',fontSize:11,fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}}>
+                      ⚠ Flag
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
       <div style={{fontSize:11,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:12,marginTop:8}}>My Pens</div>
       {pens.map(pen=><PenCard key={pen.id} pen={pen} autoOpen={navTarget?.penId===pen.id} highlightSection={navTarget?.penId===pen.id?navTarget.sectionName:null}/>)}
     </div>
@@ -1066,25 +1214,25 @@ function AttentionPill({ pens, onNavigate, mode = 'pens' }) {
         items.push({ penId: pen.id, penName: pen.name, operationType: pen.operationType, sectionName: null, level: penLevel, msg: penLevel === 'critical' ? 'Critical issue — review this pen' : 'Flagged for attention — review this pen' });
       }
     } else {
-      // Farm Manager: one row per pen
-      const meaningfulMsgs = [];
+      // Farm Manager / Farm Admin: ONE row per pen — never enumerate sections here.
+      // Collect the worst flag message from all sections + pen-level flags.
+      let worstLevel = penLevel;
+      let worstMsg   = null;
       (pen.sections || []).forEach(sec => {
         (sec.flags || []).forEach(flag => {
           const isNoData = flag.msg && /:\s*0(\.0)?%/.test(flag.msg);
-          if (!isNoData) meaningfulMsgs.push({ sectionName: sec.name, level: normLevel(flag.type), msg: flag.msg });
+          if (isNoData) return;
+          const lv = normLevel(flag.type);
+          if (!worstMsg || lv === 'critical') { worstLevel = lv === 'critical' ? 'critical' : worstLevel; worstMsg = flag.msg; }
         });
       });
       (pen.flags || []).forEach(flag => {
         const isNoData = flag.msg && /:\s*0(\.0)?%/.test(flag.msg);
-        if (!isNoData) meaningfulMsgs.push({ sectionName: null, level: normLevel(flag.type), msg: flag.msg });
+        if (!isNoData && !worstMsg) worstMsg = flag.msg;
       });
-      if (meaningfulMsgs.length > 0) {
-        meaningfulMsgs.forEach(f => {
-          items.push({ penId: pen.id, penName: pen.name, operationType: pen.operationType, sectionName: f.sectionName, level: f.level, msg: f.msg });
-        });
-      } else {
-        items.push({ penId: pen.id, penName: pen.name, operationType: pen.operationType, sectionName: null, level: penLevel, msg: penLevel === 'critical' ? 'Critical issue — review this pen' : 'Flagged for attention — review this pen' });
-      }
+      const displayMsg = worstMsg || (worstLevel === 'critical' ? 'Critical issue — expand pen to review' : 'Flagged for attention — expand pen to review');
+      // sectionName is always null for pens-mode so clicking navigates to the pen card only
+      items.push({ penId: pen.id, penName: pen.name, operationType: pen.operationType, sectionName: null, level: worstLevel, msg: displayMsg });
     }
   });
 
@@ -2374,7 +2522,7 @@ export default function DashboardPage() {
           </div>
         )}
         {isPenWorker && sections.length>0 && <WorkerDashboard sections={sections} tasks={tasks} user={user} apiFetch={apiFetch}/>}
-        {isPenMgr    && <PenManagerDashboard pens={pens} tasks={tasks} user={user}/>}
+        {isPenMgr    && <PenManagerDashboard pens={pens} tasks={tasks} user={user} apiFetch={apiFetch}/>}
         {isManager   && <ManagerDashboard pens={pens} orgTotals={orgTotals} user={user}/>}
       </div>
     </AppShell>
