@@ -568,6 +568,57 @@ async function main() {
   console.log('✓ Broiler weight records created');
 
   // ============================================================
+  // WEIGHT SAMPLES  (broilers — feeds /api/weight-samples & broiler performance page)
+  // WeightSample = worker-submitted weigh-in record (distinct from WeightRecord which
+  // is the dashboard-summary model). We create weekly samples from placement date.
+  // ============================================================
+  for (const flock of broilerFlocks) {
+    const placeDays = Math.floor((today - flock.dateOfPlacement) / 86400000);
+    const sampleAges = Object.keys(weightByAge).map(Number).filter(a => a <= placeDays);
+    let prevMeanG    = null;
+    let prevDate     = null;
+
+    for (const age of sampleAges) {
+      const baseW       = weightByAge[age];
+      const meanWeightG = baseW + Math.floor(Math.random() * 60) - 30;
+      const sampleDate  = new Date(flock.dateOfPlacement.getTime() + age * 86400000);
+
+      // Estimate FCR: ~110 g feed/bird/day; divide by weight gain per bird
+      let estimatedFCR = null;
+      if (prevMeanG && prevDate) {
+        const gainPerBird = meanWeightG - prevMeanG;
+        const days        = Math.max(1, Math.round((sampleDate - prevDate) / 86400000));
+        const totalFeedKg = flock.currentCount * 0.110 * days;
+        const totalGainKg = (gainPerBird / 1000) * flock.currentCount;
+        if (totalGainKg > 0) estimatedFCR = parseFloat((totalFeedKg / totalGainKg).toFixed(2));
+      }
+
+      const worker = flock.penSectionId.includes('pen-broiler-a') ? 'user-w3' : 'user-w4';
+
+      await prisma.weightSample.create({
+        data: {
+          tenantId:      tenant.id,
+          flockId:       flock.id,
+          penSectionId:  flock.penSectionId,
+          sampleDate,
+          sampleCount:   50,
+          meanWeightG,
+          minWeightG:    meanWeightG - 110,
+          maxWeightG:    meanWeightG + 130,
+          uniformityPct: parseFloat((84 + Math.random() * 12).toFixed(1)),
+          estimatedFCR,
+          recordedById:  worker,
+        },
+      }).catch(() => {});  // idempotent — skip if already exists
+
+      prevMeanG = meanWeightG;
+      prevDate  = sampleDate;
+    }
+  }
+  console.log('✓ Weight samples created (broiler performance page)');
+
+
+  // ============================================================
   // WATER METER READINGS  — NEW in Phase 8B
   //
   // Odometer-style: meterReading is a cumulative value.

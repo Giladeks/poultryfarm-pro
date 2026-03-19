@@ -1,32 +1,15 @@
 'use client';
 /**
  * components/ui/Modal.js
- * ─────────────────────────────────────────────────────────────────────────────
- * Shared portal-rendered modal used across all pages.
- * Always renders into document.body via createPortal, so it's never clipped
- * by a scrolled parent — fixes the scroll-position bug on all pages.
+ * Portal-rendered modal — never clipped by scrolled parents.
  *
- * Usage — simple wrapper (you supply the full content):
- *   import Modal from '@/components/ui/Modal';
+ * Usage (simple):
+ *   <Modal onClose={handleClose} width={480}>…body…</Modal>
  *
- *   <Modal onClose={handleClose} width={480}>
- *     <h2>Title</h2>
- *     <p>Body content…</p>
- *   </Modal>
- *
- * Usage — with built-in header + footer:
- *   <Modal
- *     title="Schedule Vaccination"
- *     onClose={handleClose}
- *     width={460}
- *     footer={
- *       <>
- *         <button className="btn btn-ghost" onClick={handleClose}>Cancel</button>
- *         <button className="btn btn-primary" onClick={handleSave}>Save</button>
- *       </>
- *     }
- *   >
- *     <p>Body content…</p>
+ * Usage (with header + footer):
+ *   <Modal title="Log Eggs" onClose={handleClose} width={460}
+ *     footer={<><button onClick={handleClose}>Cancel</button><button onClick={save}>Save</button></>}>
+ *     …body…
  *   </Modal>
  */
 
@@ -36,20 +19,20 @@ import { createPortal } from 'react-dom';
 export default function Modal({
   children,
   onClose,
-  width      = 480,
+  width     = 480,
   title,
   subtitle,
   footer,
-  noPadding  = false,
+  noPadding = false,
 }) {
-  // Close on Escape key
+  // Close on Escape
   useEffect(() => {
     const handler = (e) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [onClose]);
 
-  // Prevent body scroll while modal is open
+  // Lock body scroll while open
   useEffect(() => {
     document.body.style.overflow = 'hidden';
     return () => { document.body.style.overflow = ''; };
@@ -75,7 +58,6 @@ export default function Modal({
         }}
         onClick={e => e.stopPropagation()}
       >
-        {/* Auto header — only rendered when title is provided */}
         {title && (
           <div style={{
             display:        'flex',
@@ -102,15 +84,15 @@ export default function Modal({
             <button
               onClick={onClose}
               style={{
-                background: 'none',
-                border:     'none',
-                fontSize:   20,
-                cursor:     'pointer',
-                color:      'var(--text-muted)',
-                lineHeight: 1,
-                padding:    '4px 6px',
+                background:   'none',
+                border:       'none',
+                fontSize:     20,
+                cursor:       'pointer',
+                color:        'var(--text-muted)',
+                lineHeight:   1,
+                padding:      '4px 6px',
                 borderRadius: 6,
-                flexShrink: 0,
+                flexShrink:   0,
               }}
             >
               ✕
@@ -118,10 +100,8 @@ export default function Modal({
           </div>
         )}
 
-        {/* Body */}
         {children}
 
-        {/* Auto footer — only rendered when footer is provided */}
         {footer && (
           <div style={{
             display:        'flex',

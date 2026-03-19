@@ -311,7 +311,12 @@ export default function EggsPage() {
         apiFetch('/api/farm-structure'),
         apiFetch('/api/dashboard'),
       ]);
-      if (eggRes.ok)   setData(await eggRes.json());
+      if (eggRes.ok) {
+        setData(await eggRes.json());
+      } else {
+        const errBody = await eggRes.json().catch(() => ({}));
+        console.error('Eggs API error', eggRes.status, errBody?.detail || errBody?.error || errBody);
+      }
       if (dashRes.ok)  setDashData(await dashRes.json());
       if (flockRes.ok) {
         const d = await flockRes.json();

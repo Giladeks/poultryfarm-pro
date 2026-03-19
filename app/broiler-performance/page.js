@@ -133,7 +133,7 @@ function LogWeightModal({ flocks, onClose, onSave, apiFetch }) {
         ...(form.maxWeightG   && { maxWeightG:   Number(form.maxWeightG) }),
         ...(form.uniformityPct && { uniformityPct: Number(form.uniformityPct) }),
       };
-      const res = await apiFetch('/api/weight-samples', { method: 'POST', body: JSON.stringify(payload) });
+      const res = await apiFetch('/api/weight-records', { method: 'POST', body: JSON.stringify(payload) });
       const d   = await res.json();
       if (!res.ok) return setError(d.error || 'Failed to save');
       onSave();
@@ -226,7 +226,7 @@ export default function BroilerPerformancePage() {
     setLoading(true);
     try {
       const [wRes, flockRes, dashRes] = await Promise.all([
-        apiFetch(`/api/weight-samples?days=${days}${flockFilter ? `&flockId=${flockFilter}` : ''}`),
+        apiFetch(`/api/weight-records?days=${days}${flockFilter ? `&flockId=${flockFilter}` : ''}`),
         apiFetch('/api/farm-structure'),
         apiFetch('/api/dashboard'),
       ]);
@@ -273,12 +273,20 @@ export default function BroilerPerformancePage() {
   const stdWt      = getStandardWeight(avgAge);
   const harvestDue = broilerSections.filter(s => s.metrics?.daysToHarvest != null && s.metrics.daysToHarvest <= 7).length;
 
+  // Live Birds → Harvest Countdown → Avg Live Weight → FCR → Water → Mortality
   const sectionKpis = broilerSections.length > 0 ? [
     {
       icon: '🐔', label: 'Live Birds',
       value: fmt(totBirds),
       sub: `${broilerSections.length} section${broilerSections.length !== 1 ? 's' : ''}`,
       delta: '', status: 'neutral',
+    },
+    {
+      icon: '📅', label: 'Harvest Countdown',
+      value: harvestDue > 0 ? `${harvestDue}` : '—',
+      sub: 'Sections due ≤ 7 days',
+      delta: harvestDue > 0 ? `${harvestDue} section${harvestDue !== 1 ? 's' : ''} ready soon` : 'None due this week',
+      status: harvestDue > 0 ? 'warn' : 'neutral',
     },
     {
       icon: '⚖️', label: 'Avg Live Weight',
@@ -307,13 +315,6 @@ export default function BroilerPerformancePage() {
       sub: `${mortRate}% of flock`,
       delta: mortRate <= 0.1 ? 'Within normal range' : mortRate <= 0.2 ? 'Slightly elevated' : 'Elevated — investigate',
       status: mortalityStatus(mortRate),
-    },
-    {
-      icon: '📅', label: 'Harvest Countdown',
-      value: `${harvestDue}`,
-      sub: 'Sections due ≤ 7 days',
-      delta: harvestDue > 0 ? `${harvestDue} section${harvestDue !== 1 ? 's' : ''} ready soon` : 'None due this week',
-      status: harvestDue > 0 ? 'warn' : 'neutral',
     },
   ] : [];
 

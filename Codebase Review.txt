@@ -1,0 +1,228 @@
+ COMPREHENSIVE CODEBASE REVIEW
+
+  CRITICAL ISSUES (Fix Immediately)
+
+  1. N+1 Query Anti-Pattern in app/api/flocks/route.js:64-100
+
+  // For each flock, 3 separate DB queries are made
+  const enriched = await Promise.all(flocks.map(async (flock) => {
+    const latestWeight = await prisma.weightRecord.findFirst({...});  // N+1
+    const recentMortality = await prisma.mortalityRecord.aggregate({...});  // N+1
+    const recentEggs = await prisma.eggProduction.aggregate({...});  // N+1
+  }));
+  Impact: 50 flocks = 150+ DB queries. Will cause timeout at scale.
+
+  Fix: Use Prisma include with groupBy or batch loading with findMany + client-side mapping.
+
+  2. Race Condition in Invoice Numbering (app/api/finance/supplier-invoices/route.js:12-24 &
+  sales-invoices)
+
+  const last = await prisma.supplierInvoice.findFirst({...});  // READ
+  const seq = last ? parseInt(...) + 1 : 1;                     // COMPUTE
+  // ... later ...
+  await prisma.supplierInvoice.create({...});                   // WRITE
+  Impact: Concurrent requests can receive identical invoice numbers.
+
+  Fix: Use database sequence, Prisma transactions with retry, or unique constraint with
+  application-level fallback.
+
+  3. Missing Validation on Multiple Endpoints
+
+  ┌─────────────────────────────────┬──────┬────────────────────────┐
+  │              File               │ Line │         Issue          │
+  ├─────────────────────────────────┼──────┼────────────────────────┤
+  │ app/api/billing/route.js        │ 43   │ No Zod schema          │
+  ├─────────────────────────────────┼──────┼────────────────────────┤
+  │ app/api/notifications/route.js  │ 69   │ No validation          │
+  ├─────────────────────────────────┼──────┼────────────────────────┤
+  │ app/api/mortality/[id]/route.js │ 37   │ PATCH body unvalidated │
+  ├─────────────────────────────────┼──────┼────────────────────────┤
+  │ app/api/eggs/[id]/route.js      │ 36   │ PATCH body unvalidated │
+  └─────────────────────────────────┴──────┴────────────────────────┘
+
+  ---
+  HIGH SEVERITY
+
+  4. Hardcoded Secrets with Fallbacks
+
+  Three files define JWT_SECRET with identical fallback 'dev-secret':
+  - lib/middleware/auth.js:5
+  - middleware.js:6
+  - app/api/auth/login/route.js:7
+
+  Risk: If JWT_SECRET env var is unset in production, all three use weak default.
+
+  5. Silent Error Swallowing
+
+  Multiple .catch(() => {}) patterns hide failures:
+  - app/api/auth/login/route.js:73 - audit log failures ignored
+  - app/api/flocks/route.js:155 - audit log failures ignored
+  - app/api/verification/route.js:407, 411, 428 - notification failures silenced
+  - lib/services/notifications.js:63-66 - dev mode returns {success: true} without sending
+
+  6. Tenant Isolation Verbose Pattern
+
+  app/api/flocks/route.js:46:
+  penSection: { pen: { farm: { tenantId: user.tenantId } } }
+  Correct but fragile - easy to miss in future additions. Consider middleware-level tenant injection.
+
+  ---
+  MEDIUM SEVERITY
+
+  7. Dead Code in lib/services/notifications.js
+
+  Lines 377-473 contain unused functions:
+  - sendVaccinationReminder() (line 377)
+  - sendFeedAlert() (line 389)
+  - sendMortalityAlert() (line 401)
+  - generateSystemAlerts() (line 417) - returns hardcoded dailyUsage = 100
+
+  8. Inconsistent Error Response Format
+
+  Some routes return { error, details }, others { error }, others { message }. Standardize.
+
+  9. Duplicate Role Constants
+
+  MANAGER_ROLES defined in:
+  - lib/constants/roles.js:41-47
+  - app/api/flocks/route.js:21
+  - middleware.js:20-33 (ROLE_ROUTES)
+
+  Centralize in lib/constants/roles.js only.
+
+  ---
+  LOW SEVERITY (Code Quality)
+
+  10. Emoji Usage in Production Code
+
+  - app/auth/login/page.js:150 - 🐔
+  - app/worker/page.js:264 - 🥚, 🍗, 💀
+  - lib/services/notifications.js subject lines use emojis
+
+  Consider unicode constants or remove for professionalism.
+
+  11. Inline Styles vs CSS Classes
+
+  Mixed patterns throughout:
+  - app/auth/login/page.js - inline <style> tag (142 lines)
+  - components/ui/KpiCard.js - inline style={{}} objects
+  - app/worker/page.js - mix of inline styles and CSS variables
+
+  Consider Tailwind migration for consistency.
+
+  12. Magic Numbers
+
+  - app/worker/page.js:64 - (crates * 30) - crate size hardcoded
+  - lib/services/analytics.js:78 - 2.3 kg broiler weight assumption
+  - lib/services/notifications.js:421 - dailyUsage = 100 hardcoded
+
+  ---
+  UI/UX INCONSISTENCIES
+
+  13. Modal Pattern Duplication
+
+  Three modal implementations:
+  - components/ui/Modal.js - base component
+  - app/worker/page.js:238-252 - ModalShell inline
+  - app/worker/page.js - LogEggModal, LogMortalityModal embedded
+
+  Centralize modal component.
+
+  14. Inconsistent Loading States
+
+  - app/worker/page.js:656-660 - skeleton with pulse animation
+  - Other pages - simple "Loading..." text
+  - No reusable Skeleton component exported
+
+  15. Toast Notification Inconsistency
+
+  - app/worker/page.js:31-42 - inline Toast component
+  - components/layout/AuthProvider.js:12-49 - SessionToast via portal
+  - No shared toast system
+
+  ---
+  SECURITY OBSERVATIONS
+
+  16. Password Policy Missing
+
+  app/api/auth/login/route.js accepts any password. No minimum length, complexity enforcement.
+
+  17. Rate Limiting Absent
+
+  No rate limiting on /api/auth/login - brute force vulnerability.
+
+  18. CORS Wildcard in next.config.js:27
+
+  Access-Control-Allow-Origin: process.env.NEXT_PUBLIC_APP_URL || '*'
+  Fallback to * is dangerous for authenticated endpoints.
+
+  ---
+  ARCHITECTURE STRENGTHS
+
+  1. Clear separation of concerns - API routes, pages, components, lib services
+  2. Zod validation where implemented (createFlockSchema, invoice schemas)
+  3. RBAC enforcement via middleware + role constants
+  4. Multi-tenant isolation consistently applied
+  5. Audit logging on all mutations
+  6. TypeScript-like JSDoc in types/index.js
+
+  ---
+  RECOMMENDATIONS (Prioritized)
+
+  ┌──────────┬─────────────────────────────────────────┬──────────────────────────────────────────┐
+  │ Priority │                 Action                  │              Files Affected              │
+  ├──────────┼─────────────────────────────────────────┼──────────────────────────────────────────┤
+  │ P0       │ Fix N+1 queries in flocks API           │ app/api/flocks/route.js                  │
+  ├──────────┼─────────────────────────────────────────┼──────────────────────────────────────────┤
+  │ P0       │ Add database constraint or transaction  │ finance/supplier-invoices,               │
+  │          │ for invoice numbering                   │ finance/sales-invoices                   │
+  ├──────────┼─────────────────────────────────────────┼──────────────────────────────────────────┤
+  │ P1       │ Add Zod validation to all POST/PATCH    │ 5 API routes                             │
+  │          │ endpoints                               │                                          │
+  ├──────────┼─────────────────────────────────────────┼──────────────────────────────────────────┤
+  │ P1       │ Remove hardcoded secret fallbacks       │ 3 files                                  │
+  ├──────────┼─────────────────────────────────────────┼──────────────────────────────────────────┤
+  │ P1       │ Implement rate limiting on auth         │ app/api/auth/login                       │
+  │          │ endpoints                               │                                          │
+  ├──────────┼─────────────────────────────────────────┼──────────────────────────────────────────┤
+  │ P2       │ Centralize role constants               │ Remove duplicates                        │
+  ├──────────┼─────────────────────────────────────────┼──────────────────────────────────────────┤
+  │ P2       │ Remove dead code                        │ lib/services/notifications.js            │
+  ├──────────┼─────────────────────────────────────────┼──────────────────────────────────────────┤
+  │ P2       │ Standardize error response format       │ All API routes                           │
+  ├──────────┼─────────────────────────────────────────┼──────────────────────────────────────────┤
+  │ P2       │ Extract modal components                │ app/worker/page.js                       │
+  ├──────────┼─────────────────────────────────────────┼──────────────────────────────────────────┤
+  │ P3       │ Add password policy                     │ app/api/auth/login, app/api/auth/users   │
+  ├──────────┼─────────────────────────────────────────┼──────────────────────────────────────────┤
+  │ P3       │ Migrate inline styles to Tailwind       │ Multiple pages                           │
+  ├──────────┼─────────────────────────────────────────┼──────────────────────────────────────────┤
+  │ P3       │ Fix CORS wildcard                       │ next.config.js                           │
+  └──────────┴─────────────────────────────────────────┴──────────────────────────────────────────┘
+
+  ---
+  SUMMARY
+
+  Status: Production-ready core with technical debt accumulating.
+
+  Strengths:
+  - Solid multi-tenant architecture
+  - Comprehensive RBAC system
+  - Well-structured Prisma schema
+  - Worker PWA UX is polished
+
+  Weaknesses:
+  - N+1 queries will cause production timeouts
+  - Race condition in invoice generation
+  - Missing validation on several endpoints
+  - Silent error handling masks problems
+
+  Next Actions:
+  1. Fix N+1 queries (P0)
+  2. Fix invoice race condition (P0)
+  3. Add missing Zod validation (P1)
+  4. Remove hardcoded secrets (P1)
+  5. Add rate limiting (P1)
+
+  The codebase is functional but needs immediate attention on performance and correctness before
+  scaling.

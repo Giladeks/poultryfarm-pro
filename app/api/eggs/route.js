@@ -5,7 +5,6 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
 import { verifyToken } from '@/lib/middleware/auth';
 import { z } from 'zod';
-import { aggregateProduction } from '@/lib/services/analytics';
 
 // Worker POST schema — what the worker enters in the field
 const createEggSchema = z.object({
@@ -27,11 +26,11 @@ export async function GET(request) {
   const { searchParams } = new URL(request.url);
   const flockId      = searchParams.get('flockId');
   const days         = parseInt(searchParams.get('days') || '30');
-  const groupBy      = searchParams.get('groupBy') || 'day';
   const rejectedOnly = searchParams.get('rejected') === 'true';
   const pendingOnly  = searchParams.get('pending') === 'true';    // new: PM grading queue
   const since = new Date();
   since.setDate(since.getDate() - days);
+  since.setHours(0, 0, 0, 0);  // normalize to midnight for @db.Date column comparison
 
   // Workers only see their own sections
   const WORKER_ROLES = ['PEN_WORKER'];
@@ -42,18 +41,22 @@ export async function GET(request) {
       select: { penSectionId: true },
     });
     allowedSectionIds = assignments.map(a => a.penSectionId);
+    // If no assignments found, return empty — don't fall through to all-records query
+    if (allowedSectionIds.length === 0) {
+      return NextResponse.json({ records: [], summary: { totalEggs:0, avgLayingRate:0, totalGradeA:0, totalGradeB:0, totalCracked:0, totalCrates:0, avgDailyEggs:0, pendingGradingCount:0 } });
+    }
   }
 
   try {
     const records = await prisma.eggProduction.findMany({
       where: {
-        flock: { penSection: { pen: { farm: { tenantId: user.tenantId } } } },
+        // Scope to tenant via EggProduction's own penSection relation (3-hop, always valid)
+        penSection: { pen: { farm: { tenantId: user.tenantId } } },
         collectionDate: { gte: since },
-        ...(flockId && { flockId }),
-        ...(allowedSectionIds && { penSectionId: { in: allowedSectionIds } }),
-        ...(rejectedOnly && { rejectionReason: { not: null } }),
-        // pendingOnly: records where PM hasn't graded yet (gradeACount is null)
-        ...(pendingOnly && { gradeACount: null, submissionStatus: 'PENDING' }),
+        ...(flockId            && { flockId }),
+        ...(allowedSectionIds  && { penSectionId: { in: allowedSectionIds } }),
+        ...(rejectedOnly       && { rejectionReason: { not: null } }),
+        ...(pendingOnly        && { gradeACount: null, submissionStatus: 'PENDING' }),
       },
       include: {
         flock: { select: { batchCode: true, breed: true, operationType: true } },
@@ -64,18 +67,16 @@ export async function GET(request) {
       orderBy: [{ collectionDate: 'desc' }, { collectionSession: 'asc' }],
     });
 
-    const aggregated = aggregateProduction(records, groupBy);
-    const totalEggs  = records.reduce((s, r) => s + r.totalEggs, 0);
+    const totalEggs = records.reduce((s, r) => s + (r.totalEggs || 0), 0);
     const avgLayingRate = records.length > 0
-      ? parseFloat((records.reduce((s, r) => s + Number(r.layingRatePct), 0) / records.length).toFixed(2))
+      ? parseFloat((records.reduce((s, r) => s + Number(r.layingRatePct || 0), 0) / records.length).toFixed(2))
       : 0;
 
-    // Grade A/B totals are only meaningful for approved records
+    // Grade totals only meaningful for approved (PM-graded) records
     const approvedRecords = records.filter(r => r.gradeACount !== null);
 
     return NextResponse.json({
       records,
-      aggregated,
       summary: {
         totalEggs,
         avgLayingRate,
@@ -83,13 +84,14 @@ export async function GET(request) {
         totalGradeB:  approvedRecords.reduce((s, r) => s + (r.gradeBCount  || 0), 0),
         totalCracked: records.reduce((s, r) => s + (r.crackedCount || 0), 0),
         totalCrates:  records.reduce((s, r) => s + (r.cratesCollected || 0), 0),
-        avgDailyEggs: Math.round(totalEggs / days),
+        avgDailyEggs: days > 0 ? Math.round(totalEggs / days) : 0,
         pendingGradingCount: records.filter(r => r.gradeACount === null).length,
       },
     });
   } catch (error) {
-    console.error('Egg fetch error:', error);
-    return NextResponse.json({ error: 'Failed to fetch egg production' }, { status: 500 });
+    console.error('Egg fetch error:', error?.message || error);
+    // Return the actual error message in development so we can see it client-side
+    return NextResponse.json({ error: 'Failed to fetch egg production', detail: error?.message }, { status: 500 });
   }
 }
 

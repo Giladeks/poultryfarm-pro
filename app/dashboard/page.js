@@ -312,86 +312,138 @@ function Spinner() {
 }
 
 // ── Section card (pen worker) — mockup style ─────────────────────────────────
-function WorkerSectionCard({ sec, defaultExpanded = false }) {
-  const [expanded, setExpanded] = useState(defaultExpanded);
-  const [modal,    setModal]    = useState(false);
-  const mx    = sec.metrics;
-  const isL   = sec.penOperationType === 'LAYER';
-  const flag  = (sec.flags||[])[0];
-  const isCrit = flag?.type === 'critical';
-  const isWarn = flag?.type === 'warn';
+// ── Worker section grid card — click anywhere to open chart modal ─────────────
+// Each card lives in a 3-column grid. Entire surface is the click target.
+// No expand/collapse; all key metrics are visible at a glance.
+function WorkerSectionGridCard({ sec, highlighted = false }) {
+  const [modal, setModal] = useState(false);
+  const cardRef = useRef(null);
+  const mx      = sec.metrics;
+  const isL     = sec.penOperationType === 'LAYER';
+  const flag    = (sec.flags||[])[0];
+  const isCrit  = flag?.type === 'critical';
+  const isWarn  = flag?.type === 'warn';
+  const hasFlock = !!sec.flock;
 
-  // Primary metric for collapsed row
-  const layRate      = mx.todayLayingRate > 0 ? mx.todayLayingRate : null;
-  const primaryVal   = isL
-    ? (layRate != null ? `${layRate}%` : '—')
-    : (mx.latestWeightG != null ? `${(mx.latestWeightG/1000).toFixed(2)} kg` : '—');
-  const primaryColor = isL
-    ? (layRate == null ? 'var(--text-muted)' : layRate < 70 ? '#ef4444' : layRate < 80 ? '#d97706' : '#16a34a')
-    : 'var(--text-primary)';
+  // Scroll + pulse when attention pill navigates here
+  useEffect(() => {
+    if (!highlighted) return;
+    cardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, [highlighted]);
+
+  const layRate    = mx.todayLayingRate > 0 ? mx.todayLayingRate : null;
+  const rateColor  = layRate == null ? 'var(--text-muted)'
+    : layRate < 70 ? '#ef4444' : layRate < 80 ? '#d97706' : '#16a34a';
+
+  const borderColor = highlighted ? '#fb923c'
+    : isCrit ? '#fecaca' : isWarn ? '#fde68a' : '#e2e8f0';
+  const shadow = highlighted
+    ? '0 0 0 3px rgba(251,146,60,0.30)'
+    : isCrit ? '0 0 0 2px rgba(239,68,68,0.07)' : 'none';
 
   return (
-    <div style={{background:'#fff',border:`1px solid ${isCrit?'#fecaca':isWarn?'#fde68a':'#e2e8f0'}`,borderRadius:12,overflow:'hidden',boxShadow:isCrit?'0 0 0 2px rgba(239,68,68,0.07)':'none',marginBottom:8}}>
+    <>
+      <div
+        ref={cardRef}
+        onClick={() => hasFlock && setModal(true)}
+        style={{
+          background: highlighted ? '#fff7ed' : '#fff',
+          border: `1.5px solid ${borderColor}`,
+          borderRadius: 14,
+          padding: '14px 16px',
+          cursor: hasFlock ? 'pointer' : 'default',
+          boxShadow: shadow,
+          animation: highlighted ? 'harvestBreath 0.8s ease-in-out infinite' : 'none',
+          transition: 'box-shadow 0.2s, border-color 0.2s, background 0.2s',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 10,
+          position: 'relative',
+          overflow: 'hidden',
+        }}
+        onMouseEnter={e => { if (hasFlock) e.currentTarget.style.boxShadow = '0 4px 16px rgba(108,99,255,0.12)'; }}
+        onMouseLeave={e => { e.currentTarget.style.boxShadow = shadow; }}
+      >
+        {/* ── Header row ── */}
+        <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:8}}>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontFamily:"'Poppins',sans-serif",fontSize:13,fontWeight:700,color:'var(--text-primary)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+              {sec.name}
+            </div>
+            <div style={{fontSize:10,color:'var(--text-muted)',marginTop:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+              {sec.penName}
+              {hasFlock && <span> · {sec.flock.batchCode}</span>}
+              {hasFlock && sec.ageInDays != null && <span> · {sec.ageInDays}d</span>}
+            </div>
+          </div>
+          {/* Status dot */}
+          <div style={{
+            width:9, height:9, borderRadius:'50%', flexShrink:0, marginTop:2,
+            background: isCrit?'#ef4444':isWarn?'#f59e0b':'#22c55e',
+          }}/>
+        </div>
 
-      {/* ── Collapsed header row ── */}
-      <div onClick={()=>setExpanded(e=>!e)} style={{padding:'12px 15px',cursor:'pointer',display:'flex',alignItems:'center',gap:10,borderBottom:expanded?'1px solid #f1f5f9':'none',background:expanded?'#f8fafc':'#fff'}}>
-        <div style={{width:8,height:8,borderRadius:'50%',background:isCrit?'#ef4444':isWarn?'#f59e0b':'#16a34a',flexShrink:0}}/>
-        <div style={{flex:1,minWidth:0}}>
-          <div style={{fontFamily:"'Poppins',sans-serif",fontSize:13,fontWeight:600,color:'var(--text-primary)'}}>{sec.penName} — {sec.name}</div>
-          {sec.flock
-            ? <div style={{fontSize:11,color:'var(--text-muted)',marginTop:1}}>{sec.flock.batchCode} · {sec.flock.breed} · {sec.ageInDays}d old</div>
-            : <div style={{fontSize:11,color:'var(--text-faint)',marginTop:1}}>No active flock</div>}
-        </div>
-        {/* Inline stats */}
-        <div style={{display:'flex',alignItems:'center',gap:16,flexShrink:0}}>
-          <div style={{textAlign:'right'}}>
-            <div style={{fontFamily:"'Poppins',sans-serif",fontSize:15,fontWeight:700,color:primaryColor}}>{primaryVal}</div>
-            <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.04em'}}>{isL?'Lay rate':'Avg weight'}</div>
+        {/* ── Flag banner ── */}
+        {flag && (
+          <div style={{fontSize:10,fontWeight:700,color:isCrit?'#ef4444':'#d97706',background:isCrit?'#fef2f2':'#fffbeb',border:`1px solid ${isCrit?'#fecaca':'#fde68a'}`,borderRadius:5,padding:'3px 8px',lineHeight:1.4}}>
+            ⚠ {flag.msg}
           </div>
-          <div style={{textAlign:'right'}}>
-            <div style={{fontFamily:"'Poppins',sans-serif",fontSize:15,fontWeight:700,color:occColor(sec.occupancyPct)}}>{sec.occupancyPct}%</div>
-            <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.04em'}}>{fmt(sec.currentBirds)}/{fmt(sec.capacity)}</div>
+        )}
+
+        {/* ── Metric grid ── */}
+        {hasFlock ? (
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+            {isL ? (<>
+              <MiniStat label="Eggs Today"  value={fmt(mx.todayEggs||0)} color="#f59e0b" />
+              <MiniStat label="Lay Rate"    value={layRate!=null?`${layRate}%`:'—'} color={rateColor} />
+              <MiniStat label="Deaths Today" value={fmt(mx.todayMortality||0)} color={mx.todayMortality>5?'#ef4444':'var(--text-secondary)'} />
+              <MiniStat label="7d Mortality" value={fmt(mx.weekMortality||0)} color="var(--text-secondary)" />
+            </>) : (<>
+              <MiniStat label="Avg Weight"  value={mx.latestWeightG?`${(mx.latestWeightG/1000).toFixed(2)} kg`:'—'} color="#3b82f6" />
+              <MiniStat label="Est. FCR"    value={mx.estimatedFCR!=null?`${mx.estimatedFCR}`:'—'} color={fcrColor(mx.estimatedFCR||0)} />
+              <MiniStat label="Deaths Today" value={fmt(mx.todayMortality||0)} color={mx.todayMortality>5?'#ef4444':'var(--text-secondary)'} />
+              <MiniStat label="To Harvest"  value={mx.daysToHarvest!=null?`${mx.daysToHarvest}d`:'—'} color="#8b5cf6" />
+            </>)}
+          </div>
+        ) : (
+          <div style={{fontSize:11,color:'var(--text-muted)',textAlign:'center',padding:'8px 0'}}>No active flock</div>
+        )}
+
+        {/* ── Occupancy bar ── */}
+        <div>
+          <div style={{display:'flex',justifyContent:'space-between',fontSize:9,color:'var(--text-muted)',marginBottom:3}}>
+            <span>Occupancy</span>
+            <span>{fmt(sec.currentBirds)}/{fmt(sec.capacity)} birds · {sec.occupancyPct}%</span>
+          </div>
+          <div style={{height:4,background:'#f1f5f9',borderRadius:2,overflow:'hidden'}}>
+            <div style={{height:'100%',width:`${Math.min(sec.occupancyPct||0,100)}%`,background:occColor(sec.occupancyPct||0),borderRadius:2,transition:'width .5s ease'}}/>
           </div>
         </div>
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-          style={{transform:expanded?'rotate(180deg)':'none',transition:'transform 0.2s',flexShrink:0}}>
-          <polyline points="6 9 12 15 18 9"/>
-        </svg>
+
+        {/* ── Chart hint ── */}
+        {hasFlock && (
+          <div style={{fontSize:10,color:'var(--purple)',fontWeight:600,textAlign:'center',marginTop:2}}>
+            📈 Tap to view trends
+          </div>
+        )}
       </div>
 
-      {/* ── Expanded: detailed stats + flag + trends button ── */}
-      {expanded && (
-        <div style={{padding:'12px 15px',background:'#f8fafc'}}>
-          {flag && <div style={{marginBottom:10,fontSize:11,fontWeight:700,color:isCrit?'#ef4444':'#d97706',background:isCrit?'#fef2f2':'#fffbeb',border:`1px solid ${isCrit?'#fecaca':'#fde68a'}`,borderRadius:6,padding:'5px 10px',display:'inline-block'}}>⚠ {flag.msg}</div>}
-          <div style={{display:'flex',gap:10,marginBottom:sec.flock?10:0,flexWrap:'wrap'}}>
-            {isL ? <>
-              <StatChip label="Eggs Today"   value={fmt(mx.todayEggs)} color="#f59e0b"/>
-              <StatChip label="Lay Rate"     value={`${mx.todayLayingRate??0}%`} color={rateColor(mx.todayLayingRate)}/>
-              <StatChip label="Deaths"       value={fmt(mx.todayMortality)} color={mx.todayMortality>5?'#ef4444':'var(--text-secondary)'}/>
-              <StatChip label="7d Deaths"    value={fmt(mx.weekMortality)} color="var(--text-secondary)"/>
-            </> : <>
-              <StatChip label="Avg Weight"   value={mx.latestWeightG?`${fmt(mx.latestWeightG)}g`:'—'} color="#3b82f6"/>
-              <StatChip label="Est. FCR"     value={mx.estimatedFCR??'—'} color={fcrColor(mx.estimatedFCR||0)}/>
-              <StatChip label="Deaths"       value={fmt(mx.todayMortality)} color={mx.todayMortality>5?'#ef4444':'var(--text-secondary)'}/>
-              <StatChip label="To Harvest"   value={mx.daysToHarvest!=null?`${mx.daysToHarvest}d`:'—'} color="#8b5cf6"/>
-            </>}
-          </div>
-          {sec.flock && (
-            <button onClick={e=>{e.stopPropagation();setModal(true);}} style={{width:'100%',padding:'7px',background:'#eeecff',border:'none',borderRadius:8,cursor:'pointer',fontSize:11,fontWeight:600,color:'#6c63ff',display:'flex',alignItems:'center',justifyContent:'center',gap:5}}>
-              📈 View Trends →
-            </button>
-          )}
-        </div>
+      {modal && (
+        <ChartModal
+          sectionId={sec.id}
+          sectionName={sec.name}
+          penName={sec.penName}
+          opType={sec.penOperationType}
+          onClose={() => setModal(false)}
+        />
       )}
-
-      {modal && <ChartModal sectionId={sec.id} sectionName={sec.name} penName={sec.penName} opType={sec.penOperationType} onClose={()=>setModal(false)}/>}
-    </div>
+    </>
   );
 }
 
-function StatChip({ label, value, color }) {
+function MiniStat({ label, value, color }) {
   return (
-    <div style={{background:'#fff',border:'1px solid #e2e8f0',borderRadius:8,padding:'7px 12px',textAlign:'center',minWidth:70}}>
+    <div style={{background:'var(--bg-elevated)',borderRadius:8,padding:'7px 10px'}}>
       <div style={{fontFamily:"'Poppins',sans-serif",fontSize:14,fontWeight:700,color:color||'var(--text-primary)',lineHeight:1}}>{value}</div>
       <div style={{fontSize:9,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.04em',marginTop:3}}>{label}</div>
     </div>
@@ -704,12 +756,9 @@ function WorkerDashboard({ sections, tasks, user, apiFetch }) {
     status: taskStatus, icon:'✅', context:'Today',
   };
 
-  // ── Build status-colour KPI cards ───────────────────────────────────────────
-  // Broiler-specific aggregates for expanded KPI set
-  const harvests    = sections.filter(s=>s.metrics.daysToHarvest!=null);
-  const nearHarvest = harvests.length ? Math.min(...harvests.map(s=>s.metrics.daysToHarvest)) : null;
-  const broilerAge  = sections[0]?.ageInDays || null;
-  const bWaterBench = broilerAge ? (broilerAge<=7?0.04:broilerAge<=21?0.12:broilerAge<=35?0.22:0.30) : 0.25;
+  // ── Build KPI cards (4 cards for both layer and broiler workers) ──────────────
+  // highlightedSection: which section name to pulse when attention pill is clicked
+  const [highlightedSection, setHighlightedSection] = useState(null);
 
   const workerKpis = isL ? [
     {
@@ -735,41 +784,18 @@ function WorkerDashboard({ sections, tasks, user, apiFetch }) {
     },
     taskCard,
   ] : [
-    // Broiler: Total Birds → Avg Weight → Harvest Countdown → FCR → Water → Mortality
     {
-      label:'Total Birds', value: fmt(totBirds),
+      label:'Live Birds', value: fmt(totBirds),
       sub:`${sections.length} section${sections.length!==1?'s':''}`,
       delta:'', trend:'stable', status:'neutral',
-      icon:'🐔', context:'Your sections',
+      icon:'🐓', context:'Your sections',
     },
     {
       label:'Avg Live Weight', value: avgWt?`${(avgWt/1000).toFixed(2)} kg`:'—',
-      sub: broilerAge ? `Age ${broilerAge}d` : 'Not weighed yet',
+      sub:`Age ${sections[0]?.ageInDays||'—'}d`,
       delta: avgWt?`${avgWt}g avg`:'No weigh-in yet',
       trend:'stable', status:'neutral',
-      icon:'⚖️', context:'Growth',
-    },
-    {
-      label:'Harvest Countdown', value: nearHarvest!=null ? `${nearHarvest}d` : '—',
-      sub: nearHarvest!=null ? (nearHarvest<=3?'Ready very soon!':nearHarvest<=7?'Coming up soon':'Days to harvest') : 'No harvest date set',
-      delta: nearHarvest!=null && nearHarvest<=7 ? `⚠ ${nearHarvest} day${nearHarvest!==1?'s':''} to harvest` : '',
-      trend:'stable', status: nearHarvest!=null&&nearHarvest<=3?'warn':'neutral',
-      icon:'📅', context:'Planning',
-    },
-    {
-      label:'Feed Conv. Ratio', value: avgFCR?`${avgFCR}`:'—',
-      sub:'Target ≤1.9',
-      delta: avgFCR?(avgFCR<=1.9?'On target':`${(avgFCR-1.9).toFixed(2)} above target`):'No data yet',
-      trend: avgFCR?(avgFCR<=1.9?'up':'down'):'stable',
-      status: fcrStatus(avgFCR, true),
-      icon:'🌾', context:'Efficiency',
-    },
-    {
-      label:'Water Intake', value:'—',
-      sub:`Benchmark ${bWaterBench} L/bird${broilerAge?` · age ${broilerAge}d`:''}`,
-      delta:'Not yet tracked',
-      trend:'stable', status:'neutral',
-      icon:'💧', context:'Health signal',
+      icon:'⚖️', context:'Your sections',
     },
     {
       label:'Mortality Today', value: fmt(totDead),
@@ -779,6 +805,7 @@ function WorkerDashboard({ sections, tasks, user, apiFetch }) {
       status: mortCountStatus(totDead, 5),
       icon:'📉', context:'Your sections',
     },
+    taskCard,
   ];
 
   // ── Sort sections: flagged (critical first, then warn) then ok ───────────────
@@ -828,11 +855,19 @@ function WorkerDashboard({ sections, tasks, user, apiFetch }) {
 
       {/* ── Attention banner ── */}
       <div style={{marginBottom:16}}>
-        <AttentionPill pens={pillPens} mode='sections' onNavigate={() => {}} />
+        <AttentionPill
+          pens={pillPens}
+          mode='sections'
+          onNavigate={(penId, sectionName) => {
+            setHighlightedSection(sectionName);
+            // auto-clear highlight after 3.5 s
+            setTimeout(() => setHighlightedSection(null), 3500);
+          }}
+        />
       </div>
 
-      {/* ── KPI row: Live Birds first ── */}
-      <div style={{display:'grid',gridTemplateColumns:`repeat(${workerKpis.length},1fr)`,gap:14,marginBottom:24}}>
+      {/* ── KPI row (4 cards) ── */}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:24}}>
         {workerKpis.map(k=><KpiCard key={k.label} label={k.label} value={k.value} sub={k.sub} delta={k.delta} trend={k.trend} status={k.status} icon={k.icon} context={k.context} />)}
       </div>
 
@@ -875,25 +910,45 @@ function WorkerDashboard({ sections, tasks, user, apiFetch }) {
           onSave={()=>{ setEditRecord(null); setRejected(r=>r.filter(i=>i.record.id!==editRecord.record.id)); }} />
       )}
 
-      {/* ── Sections — flagged first, then ok ── */}
-      <div style={{display:'flex',flexDirection:'column',gap:0}}>
+      {/* ── Section grid — all sections visible at a glance, click opens chart modal ── */}
+      <div>
         {flaggedSections.length > 0 && (
-          <>
-            <div style={{fontSize:11,fontWeight:700,color:'#ef4444',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:10}}>
-              ⚠ Needs Attention ({flaggedSections.length})
-            </div>
-            {flaggedSections.map(sec=><WorkerSectionCard key={sec.id} sec={sec} defaultExpanded />)}
-            {okSections.length > 0 && (
-              <div style={{fontSize:11,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.06em',margin:'18px 0 10px'}}>
-                All Clear ({okSections.length})
-              </div>
-            )}
-          </>
+          <div style={{fontSize:11,fontWeight:700,color:'#ef4444',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:10}}>
+            ⚠ Needs Attention ({flaggedSections.length})
+          </div>
+        )}
+        {/* Flagged sections shown first */}
+        {flaggedSections.length > 0 && (
+          <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:14,marginBottom:flaggedSections.length&&okSections.length?20:0}}>
+            {flaggedSections.map(sec => (
+              <WorkerSectionGridCard
+                key={sec.id}
+                sec={sec}
+                highlighted={highlightedSection === sec.name}
+              />
+            ))}
+          </div>
+        )}
+        {/* Divider + label when both groups present */}
+        {flaggedSections.length > 0 && okSections.length > 0 && (
+          <div style={{fontSize:11,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.06em',margin:'0 0 10px'}}>
+            All Clear ({okSections.length})
+          </div>
         )}
         {okSections.length > 0 && !flaggedSections.length && (
-          <div style={{fontSize:11,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:12}}>My Sections</div>
+          <div style={{fontSize:11,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:10}}>
+            My Sections ({okSections.length})
+          </div>
         )}
-        {okSections.map(sec=><WorkerSectionCard key={sec.id} sec={sec}/>)}
+        <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:14}}>
+          {okSections.map(sec => (
+            <WorkerSectionGridCard
+              key={sec.id}
+              sec={sec}
+              highlighted={highlightedSection === sec.name}
+            />
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -911,22 +966,39 @@ function PenManagerDashboard({ pens, tasks, user, apiFetch }) {
   const [verifSaving,   setVerifSaving]   = useState(false);
   const [verifToast,    setVerifToast]    = useState(null);
 
+  // Build a set of pen names this PM manages — used to scope verification records
+  const myPenNames = new Set(pens.map(p => p.name));
+
   useEffect(() => {
-    if (!apiFetch) return;
+    if (!apiFetch || myPenNames.size === 0) return;
     setVerifLoading(true);
     apiFetch('/api/verification?pendingOnly=true')
       .then(r => r.ok ? r.json() : null)
       .then(d => {
         if (d?.pendingQueue) {
-          // Pen manager sees only egg production and mortality records
-          setPendingVerifs(d.pendingQueue.filter(i =>
-            ['DAILY_PRODUCTION','MORTALITY_REPORT'].includes(i.type)
-          ).slice(0, 10));
+          setPendingVerifs(
+            d.pendingQueue
+              .filter(i => {
+                // Only types the PM can action
+                if (!['DAILY_PRODUCTION','MORTALITY_REPORT','FEED_RECEIPT'].includes(i.type)) return false;
+                // Scope to this PM's assigned pens using the context field
+                // context format: "Pen Name — Section Name | Flock: ..."
+                if (i.context) {
+                  // context format: "Pen Name — Section Name | Flock: ..."
+                  // penName may contain ' — ' so check with startsWith, not split
+                  const ctxPenSection = i.context.split(' | ')[0];
+                  const matchesPen = [...myPenNames].some(pn => ctxPenSection.startsWith(pn));
+                  if (!matchesPen) return false;
+                }
+                return true;
+              })
+              .slice(0, 15)
+          );
         }
       })
       .catch(() => {})
       .finally(() => setVerifLoading(false));
-  }, [apiFetch]);
+  }, [apiFetch, pens.length]);
 
   const handleVerif = async (item, action) => {
     setVerifSaving(true);
@@ -1051,79 +1123,100 @@ function PenManagerDashboard({ pens, tasks, user, apiFetch }) {
         {broilerKpis.length > 0 && <OpKpiBlock title="Broiler Production" opIcon="🍗" isLayer={false} cards={broilerKpis} />}
       </div>
 
-      {/* ── Pending Verifications panel ── */}
+      {/* ── Pending Verifications — compact table, max-height scrollable ── */}
       {verifToast && (
         <div style={{position:'fixed',bottom:24,right:24,zIndex:9999,background:'#166534',color:'#fff',padding:'11px 20px',borderRadius:10,fontSize:13,fontWeight:600,boxShadow:'0 4px 16px rgba(0,0,0,0.2)'}}>
           {verifToast}
         </div>
       )}
-      <div style={{marginBottom:20}}>
-        <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10}}>
-          <div style={{width:30,height:30,borderRadius:8,background:'#fffbeb',border:'1px solid #fde68a',display:'flex',alignItems:'center',justifyContent:'center',fontSize:14,flexShrink:0}}>✅</div>
-          <span style={{fontFamily:"'Poppins',sans-serif",fontSize:14,fontWeight:700,color:'var(--text-primary)',whiteSpace:'nowrap'}}>Pending Verifications</span>
-          {pendingVerifs.length > 0 && (
-            <span style={{fontSize:10,fontWeight:700,background:'#fef2f2',color:'#ef4444',border:'1px solid #fecaca',borderRadius:5,padding:'2px 8px',marginLeft:4}}>{pendingVerifs.length} pending</span>
+      <div style={{marginBottom:20,background:'#fff',borderRadius:14,border:'1px solid var(--border-card)',overflow:'hidden'}}>
+        {/* Panel header */}
+        <div style={{display:'flex',alignItems:'center',gap:8,padding:'12px 16px',borderBottom:'1px solid var(--border-card)',background:'var(--bg-elevated)'}}>
+          <span style={{fontSize:14}}>✅</span>
+          <span style={{fontFamily:"'Poppins',sans-serif",fontSize:13,fontWeight:700,color:'var(--text-primary)',flex:1}}>
+            Pending Verifications
+          </span>
+          {!verifLoading && pendingVerifs.length > 0 && (
+            <span style={{fontSize:10,fontWeight:800,background:'#fef2f2',color:'#ef4444',border:'1px solid #fecaca',borderRadius:99,padding:'2px 9px'}}>
+              {pendingVerifs.length}
+            </span>
           )}
-          <div style={{flex:1,height:1,background:'#e2e8f0',marginLeft:4}}/>
-          <a href="/verification" style={{fontSize:11,fontWeight:700,color:'var(--purple)',textDecoration:'none',whiteSpace:'nowrap',flexShrink:0}}>View all →</a>
+          <a href="/verification" style={{fontSize:11,fontWeight:700,color:'var(--purple)',textDecoration:'none',marginLeft:8}}>
+            All →
+          </a>
         </div>
+
         {verifLoading ? (
-          <div style={{background:'#fff',borderRadius:12,border:'1px solid var(--border-card)',padding:'16px 18px',color:'var(--text-muted)',fontSize:13,textAlign:'center'}}>
-            Loading verification queue…
-          </div>
+          <div style={{padding:'14px 16px',color:'var(--text-muted)',fontSize:12,textAlign:'center'}}>Loading…</div>
         ) : pendingVerifs.length === 0 ? (
-          <div style={{background:'#f0fdf4',borderRadius:12,border:'1px solid #bbf7d0',padding:'14px 18px',display:'flex',alignItems:'center',gap:10}}>
-            <span style={{fontSize:20}}>🎉</span>
-            <span style={{fontSize:13,fontWeight:600,color:'#16a34a'}}>All caught up — no records awaiting verification</span>
+          <div style={{padding:'14px 16px',display:'flex',alignItems:'center',gap:8}}>
+            <span>🎉</span>
+            <span style={{fontSize:12,color:'#16a34a',fontWeight:600}}>All caught up — no records pending</span>
           </div>
         ) : (
-          <div style={{background:'#fff',borderRadius:12,border:'1px solid var(--border-card)',overflow:'hidden'}}>
-            {pendingVerifs.map((item, idx) => {
-              const isMort = item.type === 'MORTALITY_REPORT';
-              const accentColor = isMort ? '#ef4444' : '#6c63ff';
-              const bgColor     = isMort ? '#fef2f2' : '#f5f3ff';
-              return (
-                <div key={item.id || idx} style={{
-                  display:'flex',alignItems:'center',gap:12,padding:'12px 16px',
-                  borderBottom: idx < pendingVerifs.length - 1 ? '1px solid #f1f5f9' : 'none',
-                }}>
-                  {/* Type icon */}
-                  <div style={{width:34,height:34,borderRadius:9,background:bgColor,display:'flex',alignItems:'center',justifyContent:'center',fontSize:16,flexShrink:0}}>
-                    {isMort ? '💀' : '🥚'}
-                  </div>
-                  {/* Summary */}
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontSize:13,fontWeight:700,color:'var(--text-primary)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+          <div style={{maxHeight:240,overflowY:'auto',padding:'8px 10px'}}>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8}}>
+              {pendingVerifs.map((item, idx) => {
+                const TYPE_META = {
+                  DAILY_PRODUCTION: { icon:'🥚', color:'#f59e0b', bg:'#fffbeb' },
+                  MORTALITY_REPORT: { icon:'💀', color:'#ef4444', bg:'#fef2f2' },
+                  FEED_RECEIPT:     { icon:'🌾', color:'#6c63ff', bg:'#f5f3ff' },
+                };
+                const meta   = TYPE_META[item.type] || { icon:'📋', color:'#64748b', bg:'#f8fafc' };
+                const penCtx = item.context ? item.context.split(' | ')[0].trim() : '—';
+                const dateStr = item.date
+                  ? new Date(item.date).toLocaleDateString('en-NG',{day:'numeric',month:'short'})
+                  : '—';
+                return (
+                  <div key={item.id || idx} style={{
+                    background: meta.bg,
+                    border: `1px solid ${meta.color}30`,
+                    borderRadius: 9,
+                    padding: '9px 11px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 6,
+                  }}>
+                    {/* Type + date row */}
+                    <div style={{display:'flex',alignItems:'center',gap:5,justifyContent:'space-between'}}>
+                      <div style={{display:'flex',alignItems:'center',gap:4}}>
+                        <span style={{fontSize:12}}>{meta.icon}</span>
+                        <span style={{fontSize:10,fontWeight:700,color:meta.color,textTransform:'uppercase',letterSpacing:'.04em'}}>
+                          {item.type === 'DAILY_PRODUCTION' ? 'Eggs' : item.type === 'MORTALITY_REPORT' ? 'Mortality' : 'Feed'}
+                        </span>
+                      </div>
+                      <span style={{fontSize:9,color:'var(--text-muted)',flexShrink:0}}>{dateStr}</span>
+                    </div>
+                    {/* Summary */}
+                    <div style={{fontSize:11,fontWeight:600,color:'var(--text-primary)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
                       {item.summary}
                     </div>
-                    <div style={{fontSize:11,color:'var(--text-muted)',marginTop:1}}>
-                      👤 {item.submittedBy}
-                      {item.context && <span> · {item.context}</span>}
-                      {item.date && <span> · {new Date(item.date).toLocaleDateString('en-NG',{day:'numeric',month:'short'})}</span>}
+                    {/* Context */}
+                    <div style={{fontSize:10,color:'var(--text-muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                      {penCtx}
+                    </div>
+                    {/* Action buttons */}
+                    <div style={{display:'flex',gap:5,marginTop:2}}>
+                      <button
+                        onClick={() => handleVerif(item, 'verify')}
+                        disabled={verifSaving}
+                        style={{flex:1,padding:'4px 0',borderRadius:5,border:'1px solid #16a34a',background:'#f0fdf4',color:'#16a34a',fontSize:10,fontWeight:700,cursor:'pointer'}}>
+                        ✓ Verify
+                      </button>
+                      <button
+                        onClick={() => handleVerif(item, 'flag')}
+                        disabled={verifSaving}
+                        style={{flex:1,padding:'4px 0',borderRadius:5,border:'1px solid #d97706',background:'#fffbeb',color:'#d97706',fontSize:10,fontWeight:700,cursor:'pointer'}}>
+                        ⚠ Flag
+                      </button>
                     </div>
                   </div>
-                  {/* Quick actions */}
-                  <div style={{display:'flex',gap:6,flexShrink:0}}>
-                    <button
-                      onClick={() => handleVerif(item, 'verify')}
-                      disabled={verifSaving}
-                      style={{padding:'6px 12px',borderRadius:7,border:'1.5px solid #16a34a',background:'#f0fdf4',color:'#16a34a',fontSize:11,fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}}>
-                      ✅ Verify
-                    </button>
-                    <button
-                      onClick={() => handleVerif(item, 'flag')}
-                      disabled={verifSaving}
-                      style={{padding:'6px 12px',borderRadius:7,border:'1.5px solid #d97706',background:'#fffbeb',color:'#d97706',fontSize:11,fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}}>
-                      ⚠ Flag
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
         )}
       </div>
-
       <div style={{fontSize:11,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:12,marginTop:8}}>My Pens</div>
       {pens.map(pen=><PenCard key={pen.id} pen={pen} autoOpen={navTarget?.penId===pen.id} highlightSection={navTarget?.penId===pen.id?navTarget.sectionName:null}/>)}
     </div>
