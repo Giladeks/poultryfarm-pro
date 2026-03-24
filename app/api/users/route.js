@@ -6,25 +6,65 @@ import bcrypt from 'bcryptjs';
 
 const ADMIN_ROLES = ['FARM_ADMIN', 'FARM_MANAGER', 'CHAIRPERSON', 'SUPER_ADMIN'];
 
-// ── GET /api/users — list all users with their assignments ────────────────────
+// Roles that can read a limited user directory (names + roles only).
+// Used by the verification page escalation picker and IC dashboard.
+const DIRECTORY_ROLES = [
+  'FARM_ADMIN', 'FARM_MANAGER', 'CHAIRPERSON', 'SUPER_ADMIN',
+  'INTERNAL_CONTROL', 'PEN_MANAGER', 'STORE_MANAGER',
+];
+
+// ── GET /api/users ─────────────────────────────────────────────────────────────
 export async function GET(request) {
   const user = await verifyToken(request);
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  if (!ADMIN_ROLES.includes(user.role))
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
   const { searchParams } = new URL(request.url);
-  const role    = searchParams.get('role');
-  const farmId  = searchParams.get('farmId');
-  const status  = searchParams.get('status'); // 'active' | 'inactive' | 'all'
-  const search  = searchParams.get('search');
+  const roleFilter  = searchParams.get('role');
+  const rolesFilter = searchParams.get('roles');
+  const farmId      = searchParams.get('farmId');
+  const status      = searchParams.get('status');
+  const search      = searchParams.get('search');
+
+  const isAdmin     = ADMIN_ROLES.includes(user.role);
+  const isDirectory = DIRECTORY_ROLES.includes(user.role);
+
+  if (!isAdmin && !isDirectory)
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+
+  // Directory mode: non-admin with ?roles= — returns id/name/role only
+  if (!isAdmin && rolesFilter) {
+    const SAFE_LOOKUP_ROLES = [
+      'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN', 'INTERNAL_CONTROL',
+    ];
+    const filteredRoles = rolesFilter
+      .split(',').map(r => r.trim())
+      .filter(r => SAFE_LOOKUP_ROLES.includes(r));
+    if (filteredRoles.length === 0)
+      return NextResponse.json({ users: [] });
+    try {
+      const users = await prisma.user.findMany({
+        where:   { tenantId: user.tenantId, role: { in: filteredRoles }, isActive: true },
+        select:  { id: true, firstName: true, lastName: true, role: true },
+        orderBy: [{ role: 'asc' }, { firstName: 'asc' }],
+      });
+      return NextResponse.json({ users });
+    } catch (error) {
+      console.error('Users directory fetch error:', error);
+      return NextResponse.json({ error: 'Failed to fetch users' }, { status: 500 });
+    }
+  }
+
+  // Full admin mode
+  if (!isAdmin)
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
   try {
     const users = await prisma.user.findMany({
       where: {
         tenantId: user.tenantId,
-        ...(role   && { role }),
-        ...(farmId && { farmId }),
+        ...(roleFilter  && { role: roleFilter }),
+        ...(rolesFilter && { role: { in: rolesFilter.split(',').map(r => r.trim()) } }),
+        ...(farmId      && { farmId }),
         ...(status === 'active'   && { isActive: true }),
         ...(status === 'inactive' && { isActive: false }),
         ...(search && {
@@ -64,25 +104,23 @@ export async function GET(request) {
       orderBy: [{ role: 'asc' }, { firstName: 'asc' }],
     });
 
-    // Summary stats
     const summary = {
-      total: users.length,
-      active: users.filter(u => u.isActive).length,
+      total:    users.length,
+      active:   users.filter(u => u.isActive).length,
       inactive: users.filter(u => !u.isActive).length,
-      byRole: users.reduce((acc, u) => {
+      byRole:   users.reduce((acc, u) => {
         acc[u.role] = (acc[u.role] || 0) + 1;
         return acc;
       }, {}),
     };
 
-    // Fetch farms and sections for the create form dropdowns
     const [farms, penSections] = await Promise.all([
       prisma.farm.findMany({
-        where: { tenantId: user.tenantId, isActive: true },
+        where:  { tenantId: user.tenantId, isActive: true },
         select: { id: true, name: true },
       }),
       prisma.penSection.findMany({
-        where: { pen: { farm: { tenantId: user.tenantId } }, isActive: true },
+        where:   { pen: { farm: { tenantId: user.tenantId } }, isActive: true },
         select: {
           id: true, name: true,
           pen: { select: { id: true, name: true, operationType: true } },
@@ -98,7 +136,7 @@ export async function GET(request) {
   }
 }
 
-// ── POST /api/users — create user ─────────────────────────────────────────────
+// ── POST /api/users — create user ──────────────────────────────────────────────
 export async function POST(request) {
   const user = await verifyToken(request);
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -114,10 +152,9 @@ export async function POST(request) {
     if (password.length < 8)
       return NextResponse.json({ error: 'Password must be at least 8 characters' }, { status: 400 });
 
-    // Check plan user limit
     const [subscription, currentCount] = await Promise.all([
       prisma.subscription.findUnique({
-        where: { tenantId: user.tenantId },
+        where:   { tenantId: user.tenantId },
         include: { plan: true },
       }),
       prisma.user.count({ where: { tenantId: user.tenantId, isActive: true } }),
@@ -129,28 +166,26 @@ export async function POST(request) {
       }, { status: 403 });
     }
 
-    const bcrypt = await import('bcryptjs');
-    const passwordHash = await bcrypt.default.hash(password, 10);
+    const passwordHash = await bcrypt.hash(password, 10);
 
     const newUser = await prisma.user.create({
       data: {
-        tenantId: user.tenantId,
-        farmId: farmId || null,
-        email: email.toLowerCase().trim(),
+        tenantId:     user.tenantId,
+        farmId:       farmId || null,
+        email:        email.toLowerCase().trim(),
         passwordHash,
-        firstName: firstName.trim(),
-        lastName: lastName.trim(),
-        phone: phone || null,
+        firstName:    firstName.trim(),
+        lastName:     lastName.trim(),
+        phone:        phone || null,
         role,
-        isActive: true,
+        isActive:     true,
       },
     });
 
-    // Create pen section assignments if provided
     if (penSectionIds.length > 0) {
       await prisma.penWorkerAssignment.createMany({
         data: penSectionIds.map(sId => ({
-          userId: newUser.id,
+          userId:       newUser.id,
           penSectionId: sId,
         })),
         skipDuplicates: true,
@@ -159,12 +194,12 @@ export async function POST(request) {
 
     await prisma.auditLog.create({
       data: {
-        tenantId: user.tenantId,
-        userId: user.sub,
-        action: 'CREATE',
+        tenantId:   user.tenantId,
+        userId:     user.sub,
+        action:     'CREATE',
         entityType: 'User',
-        entityId: newUser.id,
-        changes: { email: newUser.email, role: newUser.role },
+        entityId:   newUser.id,
+        changes:    { email: newUser.email, role: newUser.role },
       },
     }).catch(() => {});
 
@@ -177,7 +212,7 @@ export async function POST(request) {
   }
 }
 
-// ── PATCH /api/users — update user ────────────────────────────────────────────
+// ── PATCH /api/users — update user ─────────────────────────────────────────────
 export async function PATCH(request) {
   const user = await verifyToken(request);
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -186,7 +221,10 @@ export async function PATCH(request) {
 
   try {
     const body = await request.json();
-    const { userId, isActive, role, farmId, phone, penSectionIds, firstName, lastName, email, newPassword } = body;
+    const {
+      userId, isActive, role, farmId, phone,
+      penSectionIds, firstName, lastName, email, newPassword,
+    } = body;
 
     if (!userId)
       return NextResponse.json({ error: 'userId is required' }, { status: 400 });
@@ -205,57 +243,57 @@ export async function PATCH(request) {
     if (newPassword && newPassword.length < 8)
       return NextResponse.json({ error: 'New password must be at least 8 characters' }, { status: 400 });
 
-    // Only CHAIRPERSON / FARM_ADMIN can change roles
     if (role && !['CHAIRPERSON', 'FARM_ADMIN', 'SUPER_ADMIN'].includes(user.role))
       return NextResponse.json({ error: 'Insufficient permissions to change roles' }, { status: 403 });
 
+    const updateData = {
+      ...(isActive  !== undefined && { isActive }),
+      ...(role      !== undefined && { role }),
+      ...(farmId    !== undefined && { farmId }),
+      ...(phone     !== undefined && { phone }),
+      ...(firstName                && { firstName: firstName.trim() }),
+      ...(lastName                 && { lastName:  lastName.trim() }),
+      ...(email                    && { email:     email.toLowerCase().trim() }),
+    };
+
+    if (newPassword) {
+      updateData.passwordHash = await bcrypt.hash(newPassword, 10);
+    }
+
     const updated = await prisma.user.update({
       where: { id: userId },
-      data: {
-        ...(isActive  !== undefined && { isActive }),
-        ...(role      !== undefined && { role }),
-        ...(farmId    !== undefined && { farmId }),
-        ...(phone     !== undefined && { phone }),
-        ...(firstName                && { firstName: firstName.trim() }),
-        ...(lastName                 && { lastName: lastName.trim() }),
-        ...(email                    && { email: email.toLowerCase().trim() }),
-        ...(newPassword              && { passwordHash: await bcrypt.hash(newPassword, 10) }),
-      },
+      data:  updateData,
     });
 
-    // Update pen section assignments if provided
     if (penSectionIds !== undefined) {
-      // Deactivate all existing assignments
       await prisma.penWorkerAssignment.updateMany({
         where: { userId },
-        data: { isActive: false },
+        data:  { isActive: false },
       });
-      // Create new active assignments
       if (penSectionIds.length > 0) {
         await prisma.penWorkerAssignment.createMany({
           data: penSectionIds.map(sId => ({
             userId,
             penSectionId: sId,
-            isActive: true,
+            isActive:     true,
           })),
           skipDuplicates: true,
         });
-        // Reactivate any that already existed
         await prisma.penWorkerAssignment.updateMany({
           where: { userId, penSectionId: { in: penSectionIds } },
-          data: { isActive: true },
+          data:  { isActive: true },
         });
       }
     }
 
     await prisma.auditLog.create({
       data: {
-        tenantId: user.tenantId,
-        userId: user.sub,
-        action: role ? 'ROLE_CHANGE' : 'UPDATE',
+        tenantId:   user.tenantId,
+        userId:     user.sub,
+        action:     role ? 'ROLE_CHANGE' : 'UPDATE',
         entityType: 'User',
-        entityId: userId,
-        changes: { role, isActive, farmId },
+        entityId:   userId,
+        changes:    { role, isActive, farmId },
       },
     }).catch(() => {});
 

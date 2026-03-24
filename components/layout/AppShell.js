@@ -123,6 +123,10 @@ const NAV_ITEMS = [
     roles: ['STORE_MANAGER','STORE_CLERK','FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN','PEN_MANAGER'],
   },
   {
+    href: '/feed-requisitions', icon: 'ClipboardList', label: 'Feed Requisitions', section: 'shared',
+    roles: ['PEN_MANAGER','STORE_MANAGER','INTERNAL_CONTROL','FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN'],
+  },
+  {
     href: '/feed-mill', icon: 'Cog', label: 'Feed Mill', section: 'shared',
     roles: ['FEED_MILL_MANAGER','FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN','QC_TECHNICIAN'],
     requiresFeedMill: true,
@@ -428,6 +432,186 @@ function ProfilePopover({ user, logout, onClose, anchorRef }) {
   );
 }
 
+// ── Farm Alerts dropdown ──────────────────────────────────────────────────────
+// Roles that can see the farm alerts icon
+const ALERT_ICON_ROLES = [
+  'PEN_MANAGER', 'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON',
+  'SUPER_ADMIN', 'INTERNAL_CONTROL', 'STORE_MANAGER',
+];
+
+const ALERT_TYPE_META = {
+  MORTALITY_SPIKE:     { icon: '📉', color: '#dc2626', label: 'Mortality'        },
+  PENDING_VERIFICATION:{ icon: '⏳', color: '#d97706', label: 'Pending Review'   },
+  LOW_STOCK:           { icon: '🌾', color: '#d97706', label: 'Feed Stock'        },
+  HARVEST_DUE:         { icon: '🐔', color: '#6c63ff', label: 'Harvest Due'       },
+  WATER_ANOMALY:       { icon: '💧', color: '#3b82f6', label: 'Water'             },
+  LAYING_RATE_DROP:    { icon: '🥚', color: '#dc2626', label: 'Laying Rate'       },
+  FCR_ANOMALY:         { icon: '📈', color: '#d97706', label: 'FCR'               },
+  ZERO_MORT_STREAK:    { icon: '🔍', color: '#9333ea', label: 'Audit Flag'        },
+  FEED_EGG_RATIO:      { icon: '⚖️', color: '#d97706', label: 'Feed-Egg Ratio'   },
+  BATCH_SUBMISSION:    { icon: '🕐', color: '#9333ea', label: 'Audit Flag'        },
+};
+const ALERT_SEV_DOT = { CRITICAL: '#dc2626', WARNING: '#d97706', INFO: '#6366f1' };
+
+function getAlertMeta(type) {
+  return ALERT_TYPE_META[type] || { icon: '⚠️', color: '#64748b', label: 'Alert' };
+}
+
+function AlertsDropdown({ alerts, counts, loading, onClose, onRefresh, anchorRef }) {
+  const dropRef = useRef(null);
+  const [pos, setPos] = useState({ top: 0, right: 0 });
+
+  useEffect(() => {
+    if (anchorRef.current) {
+      const r = anchorRef.current.getBoundingClientRect();
+      setPos({ top: r.bottom + 8, right: window.innerWidth - r.right });
+    }
+  }, [anchorRef]);
+
+  // Close on outside click
+  useEffect(() => {
+    const handler = (e) => {
+      if (dropRef.current && !dropRef.current.contains(e.target) &&
+          anchorRef.current && !anchorRef.current.contains(e.target)) onClose();
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [onClose, anchorRef]);
+
+  useEffect(() => {
+    const handler = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [onClose]);
+
+  if (typeof document === 'undefined') return null;
+
+  const critCount = counts?.critical || 0;
+  const warnCount = counts?.warning  || 0;
+
+  return createPortal(
+    <div ref={dropRef} style={{
+      position: 'fixed', top: pos.top, right: pos.right,
+      width: 360, background: '#fff', borderRadius: 14,
+      border: '1px solid var(--border-card)',
+      boxShadow: '0 8px 32px rgba(0,0,0,0.14)', zIndex: 1000,
+      overflow: 'hidden', animation: 'fadeInUp 0.18s ease',
+    }}>
+      {/* Header */}
+      <div style={{ padding: '13px 16px', borderBottom: '1px solid var(--border-card)', display: 'flex', alignItems: 'center', gap: 8 }}>
+        <AlertTriangle size={15} strokeWidth={2} color={critCount > 0 ? '#dc2626' : '#d97706'} />
+        <span style={{ fontFamily: "'Poppins',sans-serif", fontWeight: 700, fontSize: 13, color: 'var(--text-primary)', flex: 1 }}>
+          Farm Alerts
+        </span>
+        {critCount > 0 && (
+          <span style={{ background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', borderRadius: 99, padding: '2px 8px', fontSize: 10, fontWeight: 800 }}>
+            {critCount} critical
+          </span>
+        )}
+        {warnCount > 0 && (
+          <span style={{ background: '#fffbeb', color: '#d97706', border: '1px solid #fde68a', borderRadius: 99, padding: '2px 8px', fontSize: 10, fontWeight: 800 }}>
+            {warnCount} warning{warnCount !== 1 ? 's' : ''}
+          </span>
+        )}
+        <button onClick={onRefresh} title="Refresh alerts" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--purple)', fontSize: 13, padding: '2px 4px', borderRadius: 5, display: 'flex', alignItems: 'center' }}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+        </button>
+      </div>
+
+      {/* Alert list */}
+      <div style={{ maxHeight: 400, overflowY: 'auto' }}>
+        {loading ? (
+          <div style={{ padding: '20px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {[1, 2, 3].map(i => (
+              <div key={i} style={{ height: 56, background: '#f8fafc', borderRadius: 8, animation: 'pulse 1.5s ease-in-out infinite' }} />
+            ))}
+          </div>
+        ) : alerts.length === 0 ? (
+          <div style={{ padding: '32px 16px', textAlign: 'center' }}>
+            <div style={{ fontSize: 28, marginBottom: 8 }}>✅</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: '#16a34a' }}>All clear — no active alerts</div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>Farm metrics within normal range</div>
+          </div>
+        ) : (
+          <div>
+            {alerts.map((alert, i) => {
+              const m   = getAlertMeta(alert.type);
+              const dot = ALERT_SEV_DOT[alert.severity] || '#64748b';
+              return (
+                <div
+                  key={alert.id || i}
+                  style={{
+                    display: 'flex', alignItems: 'flex-start', gap: 10,
+                    padding: '11px 14px',
+                    borderBottom: i < alerts.length - 1 ? '1px solid #f8fafc' : 'none',
+                    borderLeft: `3px solid ${dot}`,
+                    background: '#fff',
+                    transition: 'background 0.1s',
+                    cursor: alert.actionUrl ? 'pointer' : 'default',
+                  }}
+                  onMouseEnter={e => { if (alert.actionUrl) e.currentTarget.style.background = '#fafafa'; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = '#fff'; }}
+                  onClick={() => {
+                    if (alert.actionUrl) {
+                      onClose();
+                      window.location.href = alert.actionUrl;
+                    }
+                  }}
+                >
+                  {/* Icon */}
+                  <span style={{ fontSize: 16, flexShrink: 0, marginTop: 1 }}>{m.icon}</span>
+
+                  {/* Content */}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 2 }}>
+                      <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: m.color }}>
+                        {m.label}
+                      </span>
+                      <span style={{ width: 5, height: 5, borderRadius: '50%', background: dot, flexShrink: 0 }} />
+                      <span style={{ fontSize: 9, color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                        {alert.severity}
+                      </span>
+                      {alert.context && (
+                        <span style={{ fontSize: 9, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginLeft: 2 }}>
+                          · {alert.context}
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1.3, marginBottom: 2 }}>
+                      {alert.title}
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.4, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
+                      {alert.message}
+                    </div>
+                  </div>
+
+                  {/* Action chevron */}
+                  {alert.actionUrl && (
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: 4 }}>
+                      <polyline points="9 18 15 12 9 6"/>
+                    </svg>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Footer */}
+      <div style={{ padding: '8px 14px', borderTop: '1px solid var(--border-card)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+          {alerts.length > 0 ? `${alerts.length} active alert${alerts.length !== 1 ? 's' : ''} · refreshes every 60s` : 'Refreshes every 60s'}
+        </span>
+        <button onClick={onClose} style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px' }}>
+          Close
+        </button>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 // ── Single nav link ───────────────────────────────────────────────────────────
 function NavLink({ href, icon, label, collapsed, pathname, search, accentColor }) {
   const [hrefPath, hrefQuery] = href.split('?');
@@ -622,6 +806,15 @@ export default function AppShell({ children }) {
   const [unreadCount,   setUnreadCount]   = useState(0);
   const [notifLoading,  setNotifLoading]  = useState(false);
 
+  // ── Farm alerts ──────────────────────────────────────────────────────────────
+  const [alertsOpen,    setAlertsOpen]    = useState(false);
+  const [alertsList,    setAlertsList]    = useState([]);
+  const [alertsCounts,  setAlertsCounts]  = useState(null);
+  const [alertsLoading, setAlertsLoading] = useState(false);
+  const alertsBellRef = useRef(null);
+
+  const canSeeAlerts = ALERT_ICON_ROLES.includes(user?.role);
+
   // Tenant operation mode
   const [opMode,        setOpMode]        = useState('LAYER_ONLY');
   const [hasFeedMill,   setHasFeedMill]   = useState(false);
@@ -774,8 +967,50 @@ export default function AppShell({ children }) {
     return () => clearInterval(interval);
   }, [fetchUnreadCount]);
 
+  // ── Farm alerts fetch + 60s poll ─────────────────────────────────────────────
+  const fetchAlerts = useCallback(async () => {
+    if (!user || !ALERT_ICON_ROLES.includes(user.role)) return;
+    try {
+      const token = localStorage.getItem('pfp_token');
+      const res   = await fetch('/api/dashboard/alerts', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.status === 404) return; // route not deployed yet — silent
+      if (!res.ok) return;
+      const data = await res.json();
+      setAlertsList(data.alerts  || []);
+      setAlertsCounts(data.counts || null);
+    } catch { /* silent */ }
+  }, [user]);
+
+  useEffect(() => {
+    fetchAlerts();
+    const interval = setInterval(fetchAlerts, 60_000);
+    return () => clearInterval(interval);
+  }, [fetchAlerts]);
+
+  const openAlerts = async () => {
+    if (alertsOpen) { setAlertsOpen(false); return; }
+    setNotifOpen(false); // close notifications if open
+    setAlertsOpen(true);
+    setAlertsLoading(true);
+    try {
+      const token = localStorage.getItem('pfp_token');
+      const res   = await fetch('/api/dashboard/alerts', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setAlertsList(data.alerts  || []);
+        setAlertsCounts(data.counts || null);
+      }
+    } catch { /* silent */ }
+    finally { setAlertsLoading(false); }
+  };
+
   const openNotifications = async () => {
     if (notifOpen) { setNotifOpen(false); return; }
+    setAlertsOpen(false); // close alerts if open
     setNotifOpen(true);
     setNotifLoading(true);
     try {
@@ -1006,6 +1241,70 @@ export default function AppShell({ children }) {
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            {/* ── Farm Alerts icon — manager+ roles only ── */}
+            {canSeeAlerts && (() => {
+              const critCount = alertsCounts?.critical || 0;
+              const warnCount = alertsCounts?.warning  || 0;
+              const totalBadge = critCount + warnCount;
+              const badgeColor = critCount > 0 ? '#dc2626' : '#d97706';
+              return (
+                <>
+                  <button
+                    ref={alertsBellRef}
+                    onClick={openAlerts}
+                    title="Farm Alerts"
+                    style={{
+                      position: 'relative',
+                      background: alertsOpen
+                        ? (critCount > 0 ? '#fef2f2' : '#fffbeb')
+                        : (totalBadge > 0 ? (critCount > 0 ? '#fef2f2' : '#fffbeb') : 'var(--bg-elevated)'),
+                      border: `1px solid ${alertsOpen || totalBadge > 0
+                        ? (critCount > 0 ? '#fecaca' : '#fde68a')
+                        : 'var(--border)'}`,
+                      borderRadius: 9, width: 36, height: 36,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      cursor: 'pointer', transition: 'all 0.15s',
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.opacity = '0.85'; }}
+                    onMouseLeave={e => { e.currentTarget.style.opacity = '1'; }}
+                  >
+                    <AlertTriangle
+                      size={16} strokeWidth={1.8}
+                      color={totalBadge > 0 ? badgeColor : '#64748b'}
+                    />
+                    {totalBadge > 0 && (
+                      <span style={{
+                        position: 'absolute', top: -4, right: -4,
+                        minWidth: 16, height: 16,
+                        background: badgeColor,
+                        borderRadius: '50%', fontSize: 9, color: '#fff',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontWeight: 700, border: '2px solid #fff', padding: '0 3px',
+                        animation: critCount > 0 ? 'pillPulse 1.8s ease-in-out infinite' : 'none',
+                      }}>
+                        {totalBadge > 99 ? '99+' : totalBadge}
+                      </span>
+                    )}
+                  </button>
+
+                  {alertsOpen && (
+                    <AlertsDropdown
+                      alerts={alertsList}
+                      counts={alertsCounts}
+                      loading={alertsLoading}
+                      onClose={() => setAlertsOpen(false)}
+                      onRefresh={async () => {
+                        setAlertsLoading(true);
+                        await fetchAlerts();
+                        setAlertsLoading(false);
+                      }}
+                      anchorRef={alertsBellRef}
+                    />
+                  )}
+                </>
+              );
+            })()}
+
             {/* Bell */}
             <button ref={bellRef} onClick={openNotifications} style={{
               position: 'relative',
@@ -1066,3 +1365,4 @@ export default function AppShell({ children }) {
     </div>
   );
 }
+

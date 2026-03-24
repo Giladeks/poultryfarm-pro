@@ -5,6 +5,10 @@ import { createPortal } from 'react-dom';
 import AppShell from '@/components/layout/AppShell';
 import { useAuth } from '@/components/layout/AuthProvider';
 import KpiCard from '@/components/ui/KpiCard';
+import GradingModal from '@/components/eggs/GradingModal';
+import MortalityVerifyModal from '@/components/verification/MortalityVerifyModal';
+import OverrideModal from '@/components/verification/OverrideModal';
+import SpotCheckPanel from '@/components/dashboard/SpotCheckPanel';
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ResponsiveContainer, ReferenceLine, Area, ComposedChart,
@@ -593,16 +597,21 @@ function DashModalShell({ title, onClose, footer, children }) {
 }
 
 // ── Edit/correct a rejected record ────────────────────────────────────────────
+// Workers resubmit after PM rejection.
+// Egg records use the Phase 8B crate-based schema:
+//   cratesCollected + looseEggs (0–29) + crackedCount  →  totalEggs computed server-side
+// Mortality records use count + causeCode + recordDate + notes.
 function EditRecordModal({ item, apiFetch, onClose, onSave }) {
   const { record, type } = item;
   const today = new Date().toISOString().split('T')[0];
+
+  // ── Egg form — crate-based (Phase 8B) ───────────────────────────────────────
   const [eggForm, setEggForm] = useState({
-    collectionDate: record.collectionDate?.split('T')[0] || today,
-    totalEggs:    String(record.totalEggs    || ''),
-    gradeACount:  String(record.gradeACount  || ''),
-    gradeBCount:  String(record.gradeBCount  || ''),
-    crackedCount: String(record.crackedCount || ''),
-    dirtyCount:   String(record.dirtyCount   || ''),
+    collectionDate:    record.collectionDate?.split('T')[0] || today,
+    collectionSession: record.collectionSession || 1,
+    cratesCollected:   String(record.cratesCollected ?? ''),
+    looseEggs:         String(record.looseEggs        ?? ''),
+    crackedCount:      String(record.crackedCount      ?? ''),
   });
   const [mortForm, setMortForm] = useState({
     recordDate: record.recordDate?.split('T')[0] || today,
@@ -612,39 +621,48 @@ function EditRecordModal({ item, apiFetch, onClose, onSave }) {
   });
   const [saving, setSaving] = useState(false);
   const [err,    setErr]    = useState('');
-  const setE = (k,v) => setEggForm(p=>({...p,[k]:v}));
-  const setM = (k,v) => setMortForm(p=>({...p,[k]:v}));
+  const setE = (k, v) => setEggForm(p => ({...p, [k]: v}));
+  const setM = (k, v) => setMortForm(p => ({...p, [k]: v}));
 
-  const total    = Number(eggForm.totalEggs)||0;
-  const gradeSum = (Number(eggForm.gradeACount)||0)+(Number(eggForm.gradeBCount)||0)
-                 + (Number(eggForm.crackedCount)||0)+(Number(eggForm.dirtyCount)||0);
-  const count    = Number(mortForm.count)||0;
-  const isEgg    = type === 'egg';
+  // Live egg total: (crates × 30) + looseEggs + crackedCount
+  const crates  = Math.max(0, parseInt(eggForm.cratesCollected) || 0);
+  const loose   = Math.max(0, parseInt(eggForm.looseEggs)       || 0);
+  const cracked = Math.max(0, parseInt(eggForm.crackedCount)    || 0);
+  const totalEggs = (crates * 30) + loose + cracked;
+  const mortCount = Number(mortForm.count) || 0;
+  const isEgg = type === 'egg';
 
   async function save() {
     setSaving(true); setErr('');
     try {
       let endpoint, body;
       if (isEgg) {
-        if (total <= 0)       return setErr('Enter total eggs collected');
-        if (gradeSum > total) return setErr('Grade breakdown exceeds total');
+        if (crates <= 0 && loose <= 0) return setErr('Enter at least crates collected or loose eggs');
+        if (loose > 29)                return setErr('Loose eggs must be 0–29 (above 29 is a full crate)');
         endpoint = `/api/eggs/${record.id}`;
         body = {
-          collectionDate: eggForm.collectionDate,
-          totalEggs: total,
-          gradeACount:  Number(eggForm.gradeACount)  || 0,
-          gradeBCount:  Number(eggForm.gradeBCount)  || 0,
-          crackedCount: Number(eggForm.crackedCount) || 0,
-          dirtyCount:   Number(eggForm.dirtyCount)   || 0,
+          cratesCollected:   crates,
+          looseEggs:         loose,
+          crackedCount:      cracked,
+          collectionDate:    eggForm.collectionDate,
+          collectionSession: Number(eggForm.collectionSession),
         };
       } else {
-        if (count <= 0) return setErr('Enter number of deaths');
+        if (mortCount <= 0) return setErr('Enter number of deaths');
         endpoint = `/api/mortality/${record.id}`;
-        body = { recordDate: mortForm.recordDate, count, causeCode: mortForm.causeCode, notes: mortForm.notes.trim() || undefined };
+        body = { count: mortCount, causeCode: mortForm.causeCode, recordDate: mortForm.recordDate, notes: mortForm.notes.trim() || null };
       }
+
       const res = await apiFetch(endpoint, { method: 'PATCH', body: JSON.stringify(body) });
-      const d   = await res.json();
-      if (!res.ok) return setErr(d.error || 'Failed to save');
+
+      // Safe JSON parse — guard against empty bodies (204) or non-JSON errors
+      let d = {};
+      const ct = res.headers?.get('content-type') || '';
+      if (ct.includes('application/json')) {
+        try { d = await res.json(); } catch { /* empty body — treat as success if res.ok */ }
+      }
+
+      if (!res.ok) { setErr(d.error || `Save failed (${res.status})`); return; }
       onSave();
     } finally { setSaving(false); }
   }
@@ -652,7 +670,7 @@ function EditRecordModal({ item, apiFetch, onClose, onSave }) {
   return (
     <DashModalShell title={isEgg ? '🥚 Correct Egg Record' : '💀 Correct Mortality Record'} onClose={onClose}
       footer={<><button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-               <button className="btn btn-primary" onClick={save} disabled={saving}>{saving?'Saving…':'Resubmit Record'}</button></>}>
+               <button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Resubmit Record'}</button></>}>
       {err && <div className="alert alert-red" style={{marginBottom:12}}>⚠ {err}</div>}
       {/* Rejection reason */}
       <div style={{marginBottom:16,padding:'10px 14px',background:'#fff5f5',border:'1px solid #fecaca',borderRadius:8,fontSize:12}}>
@@ -661,46 +679,75 @@ function EditRecordModal({ item, apiFetch, onClose, onSave }) {
       </div>
       <div style={{display:'flex',flexDirection:'column',gap:14}}>
         {isEgg ? (<>
-          <div>
-            <label className="label">Collection Date *</label>
-            <input type="date" className="input" value={eggForm.collectionDate} onChange={e=>setE('collectionDate',e.target.value)} max={today}/>
-          </div>
-          <div>
-            <label className="label">Total Eggs *</label>
-            <input type="number" className="input" min="0" value={eggForm.totalEggs} onChange={e=>setE('totalEggs',e.target.value)} placeholder="e.g. 1800"/>
-          </div>
-          <div>
-            <label className="label">Grade Breakdown <span style={{fontWeight:400,color:'var(--text-muted)'}}>(optional)</span></label>
-            <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:8}}>
-              {[['gradeACount','Grade A','#16a34a'],['gradeBCount','Grade B','#d97706'],['crackedCount','Cracked','#dc2626'],['dirtyCount','Dirty','#6b7280']].map(([k,lbl,col])=>(
-                <div key={k}>
-                  <div style={{fontSize:10,fontWeight:700,color:col,marginBottom:4}}>{lbl}</div>
-                  <input type="number" className="input" style={{padding:'6px 8px',textAlign:'center'}} min="0" value={eggForm[k]} onChange={e=>setE(k,e.target.value)} placeholder="0"/>
-                </div>
-              ))}
+          {/* Date + session */}
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+            <div>
+              <label className="label">Collection Date *</label>
+              <input type="date" className="input" value={eggForm.collectionDate}
+                onChange={e=>setE('collectionDate',e.target.value)} max={today}/>
             </div>
-            {gradeSum > 0 && <div style={{fontSize:11,marginTop:6,color:gradeSum>total?'#dc2626':'var(--text-muted)'}}>{gradeSum}/{total} accounted for</div>}
+            <div>
+              <label className="label">Session</label>
+              <select className="input" value={eggForm.collectionSession}
+                onChange={e=>setE('collectionSession',e.target.value)}>
+                <option value={1}>Morning</option>
+                <option value={2}>Afternoon</option>
+              </select>
+            </div>
           </div>
+          {/* Crate-based fields */}
+          <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:10}}>
+            <div>
+              <label className="label">Full Crates *</label>
+              <input type="number" className="input" min="0" value={eggForm.cratesCollected}
+                onChange={e=>setE('cratesCollected',e.target.value)} placeholder="0" autoFocus/>
+              <div style={{fontSize:9,color:'var(--text-muted)',marginTop:3}}>30 eggs each</div>
+            </div>
+            <div>
+              <label className="label">Loose Eggs</label>
+              <input type="number" className="input" min="0" max="29" value={eggForm.looseEggs}
+                onChange={e=>setE('looseEggs',e.target.value)} placeholder="0–29"/>
+            </div>
+            <div>
+              <label className="label">Cracked</label>
+              <input type="number" className="input" min="0" value={eggForm.crackedCount}
+                onChange={e=>setE('crackedCount',e.target.value)} placeholder="0"/>
+            </div>
+          </div>
+          {/* Live total preview */}
+          {(crates > 0 || loose > 0 || cracked > 0) && (
+            <div style={{padding:'8px 12px',background:'var(--purple-light)',border:'1px solid #d4d8ff',borderRadius:8,fontSize:12}}>
+              <span style={{color:'var(--text-muted)'}}>
+                ({crates} × 30) + {loose} + {cracked} cracked =&nbsp;
+              </span>
+              <strong style={{color:'var(--purple)',fontSize:14}}>{totalEggs.toLocaleString()} eggs total</strong>
+            </div>
+          )}
         </>) : (<>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
             <div>
               <label className="label">Date *</label>
-              <input type="date" className="input" value={mortForm.recordDate} onChange={e=>setM('recordDate',e.target.value)} max={today}/>
+              <input type="date" className="input" value={mortForm.recordDate}
+                onChange={e=>setM('recordDate',e.target.value)} max={today}/>
             </div>
             <div>
               <label className="label">Number of Deaths *</label>
-              <input type="number" className="input" min="0" value={mortForm.count} onChange={e=>setM('count',e.target.value)} placeholder="0"/>
+              <input type="number" className="input" min="1" value={mortForm.count}
+                onChange={e=>setM('count',e.target.value)} placeholder="0"/>
             </div>
           </div>
           <div>
             <label className="label">Cause of Death</label>
-            <select className="input" value={mortForm.causeCode} onChange={e=>setM('causeCode',e.target.value)}>
+            <select className="input" value={mortForm.causeCode}
+              onChange={e=>setM('causeCode',e.target.value)}>
               {MORT_CAUSES.map(([v,l])=><option key={v} value={v}>{l}</option>)}
             </select>
           </div>
           <div>
             <label className="label">Notes <span style={{fontWeight:400,color:'var(--text-muted)'}}>(optional)</span></label>
-            <textarea className="input" rows={2} value={mortForm.notes} onChange={e=>setM('notes',e.target.value)} placeholder="Observations…" style={{resize:'vertical'}}/>
+            <textarea className="input" rows={2} value={mortForm.notes}
+              onChange={e=>setM('notes',e.target.value)}
+              placeholder="Observations…" style={{resize:'vertical'}}/>
           </div>
         </>)}
       </div>
@@ -962,14 +1009,26 @@ function PenManagerDashboard({ pens, tasks, user, apiFetch }) {
   // ── Pending verifications (PM's action queue) ────────────────────────────────
   const [pendingVerifs, setPendingVerifs] = useState([]);
   const [verifLoading,  setVerifLoading]  = useState(false);
-  const [verifAction,   setVerifAction]   = useState(null); // { id, action }
-  const [verifSaving,   setVerifSaving]   = useState(false);
   const [verifToast,    setVerifToast]    = useState(null);
+  // Specialist modals — opened when PM clicks Verify on egg or mortality items
+  const [gradingModal,      setGradingModal]      = useState(null); // EggProduction item
+  const [mortalityModal,    setMortalityModal]    = useState(null); // MortalityRecord item
+  const [overrideModal,     setOverrideModal]     = useState(null); // egg or mortality override
+  // Reject modal state
+  const [rejectItem,        setRejectItem]        = useState(null);
+  const [rejectNote,        setRejectNote]        = useState('');
+  const [rejectErr,         setRejectErr]         = useState('');
+  const [rejectSaving,      setRejectSaving]      = useState(false);
 
   // Build a set of pen names this PM manages — used to scope verification records
   const myPenNames = new Set(pens.map(p => p.name));
 
-  useEffect(() => {
+  const showVerifToast = (msg, ok = true) => {
+    setVerifToast({ msg, ok });
+    setTimeout(() => setVerifToast(null), 3500);
+  };
+
+  const loadVerifs = useCallback(() => {
     if (!apiFetch || myPenNames.size === 0) return;
     setVerifLoading(true);
     apiFetch('/api/verification?pendingOnly=true')
@@ -979,16 +1038,10 @@ function PenManagerDashboard({ pens, tasks, user, apiFetch }) {
           setPendingVerifs(
             d.pendingQueue
               .filter(i => {
-                // Only types the PM can action
-                if (!['DAILY_PRODUCTION','MORTALITY_REPORT','FEED_RECEIPT'].includes(i.type)) return false;
-                // Scope to this PM's assigned pens using the context field
-                // context format: "Pen Name — Section Name | Flock: ..."
+                if (!['DAILY_PRODUCTION', 'MORTALITY_REPORT', 'FEED_RECEIPT'].includes(i.type)) return false;
                 if (i.context) {
-                  // context format: "Pen Name — Section Name | Flock: ..."
-                  // penName may contain ' — ' so check with startsWith, not split
                   const ctxPenSection = i.context.split(' | ')[0];
-                  const matchesPen = [...myPenNames].some(pn => ctxPenSection.startsWith(pn));
-                  if (!matchesPen) return false;
+                  return [...myPenNames].some(pn => ctxPenSection.startsWith(pn));
                 }
                 return true;
               })
@@ -1000,26 +1053,96 @@ function PenManagerDashboard({ pens, tasks, user, apiFetch }) {
       .finally(() => setVerifLoading(false));
   }, [apiFetch, pens.length]);
 
-  const handleVerif = async (item, action) => {
-    setVerifSaving(true);
+  useEffect(() => { loadVerifs(); }, [loadVerifs]);
+
+  // ── Verify click — intercept to specialist modal for eggs / mortality ─────
+  const handleVerifyClick = (item) => {
+    if (item.referenceType === 'EggProduction') {
+      setGradingModal(item);
+      return;
+    }
+    if (item.referenceType === 'MortalityRecord') {
+      setMortalityModal(item);
+      return;
+    }
+    // Feed / other: direct verify (PATCH if verificationId exists, else POST)
+    submitVerify(item);
+  };
+
+  // ── Direct verify for feed / store records ────────────────────────────────
+  const submitVerify = async (item) => {
     try {
-      const res = await apiFetch('/api/verification', {
-        method: 'POST',
-        body: JSON.stringify({
-          verificationType: item.type,
-          referenceId:      item.referenceId,
-          referenceType:    item.referenceType,
-          verificationDate: new Date().toISOString().slice(0, 10),
-          status: action === 'verify' ? 'VERIFIED' : 'DISCREPANCY_FOUND',
-          discrepancyNotes: action === 'flag' ? (verifAction?.notes || 'Flagged by pen manager') : null,
-        }),
-      });
-      if (res.ok) {
-        setPendingVerifs(prev => prev.filter(i => i.referenceId !== item.referenceId));
-        setVerifToast(action === 'verify' ? '✓ Record verified' : '⚠ Discrepancy flagged');
-        setTimeout(() => setVerifToast(null), 3000);
+      let res;
+      if (item.verificationId) {
+        res = await apiFetch(`/api/verification/${item.verificationId}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ status: 'VERIFIED' }),
+        });
+      } else {
+        res = await apiFetch('/api/verification', {
+          method: 'POST',
+          body: JSON.stringify({
+            verificationType: item.type,
+            referenceId:      item.referenceId,
+            referenceType:    item.referenceType,
+            verificationDate: new Date().toISOString().slice(0, 10),
+            status:           'VERIFIED',
+          }),
+        });
       }
-    } catch {} finally { setVerifSaving(false); setVerifAction(null); }
+      const d = await res.json();
+      if (!res.ok) {
+        if (d.coiBlocked) {
+          showVerifToast('🔒 ' + d.error, false);
+        } else {
+          showVerifToast(d.error || 'Verification failed', false);
+        }
+        return;
+      }
+      setPendingVerifs(prev => prev.filter(i => i.referenceId !== item.referenceId));
+      showVerifToast('✓ Record verified');
+    } catch { showVerifToast('Network error', false); }
+  };
+
+  // ── Reject submission ─────────────────────────────────────────────────────
+  const submitReject = async () => {
+    if (!rejectNote.trim()) { setRejectErr('Enter a reason for rejection'); return; }
+    setRejectSaving(true); setRejectErr('');
+    try {
+      let res;
+      if (rejectItem.verificationId) {
+        res = await apiFetch(`/api/verification/${rejectItem.verificationId}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ reject: true, rejectReason: rejectNote.trim() }),
+        });
+      } else {
+        // Create verification record first, then reject
+        const createRes = await apiFetch('/api/verification', {
+          method: 'POST',
+          body: JSON.stringify({
+            verificationType: rejectItem.type,
+            referenceId:      rejectItem.referenceId,
+            referenceType:    rejectItem.referenceType,
+            verificationDate: new Date().toISOString().slice(0, 10),
+            status:           'DISCREPANCY_FOUND',
+            discrepancyNotes: rejectNote.trim(),
+          }),
+        });
+        const created = await createRes.json();
+        if (!createRes.ok) { showVerifToast(created.error || 'Reject failed', false); return; }
+        res = await apiFetch(`/api/verification/${created.verification.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ reject: true, rejectReason: rejectNote.trim() }),
+        });
+      }
+      const d = await res.json();
+      if (!res.ok) { showVerifToast(d.error || 'Reject failed', false); return; }
+      setPendingVerifs(prev => prev.filter(i => i.referenceId !== rejectItem.referenceId));
+      setRejectItem(null);
+      setRejectNote('');
+      showVerifToast('↩️ Record rejected — worker notified');
+    } catch { showVerifToast('Network error', false); }
+    finally { setRejectSaving(false); }
   };
 
   const totBirds = pens.reduce((s,p)=>s+p.totalBirds,0);
@@ -1123,12 +1246,14 @@ function PenManagerDashboard({ pens, tasks, user, apiFetch }) {
         {broilerKpis.length > 0 && <OpKpiBlock title="Broiler Production" opIcon="🍗" isLayer={false} cards={broilerKpis} />}
       </div>
 
-      {/* ── Pending Verifications — compact table, max-height scrollable ── */}
+      {/* ── Toast ── */}
       {verifToast && (
-        <div style={{position:'fixed',bottom:24,right:24,zIndex:9999,background:'#166534',color:'#fff',padding:'11px 20px',borderRadius:10,fontSize:13,fontWeight:600,boxShadow:'0 4px 16px rgba(0,0,0,0.2)'}}>
-          {verifToast}
+        <div style={{position:'fixed',bottom:24,right:24,zIndex:9999,background:verifToast.ok?'#166534':'#991b1b',color:'#fff',padding:'11px 20px',borderRadius:10,fontSize:13,fontWeight:600,boxShadow:'0 4px 16px rgba(0,0,0,0.2)'}}>
+          {verifToast.msg}
         </div>
       )}
+
+      {/* ── Pending Verifications panel ── */}
       <div style={{marginBottom:20,background:'#fff',borderRadius:14,border:'1px solid var(--border-card)',overflow:'hidden'}}>
         {/* Panel header */}
         <div style={{display:'flex',alignItems:'center',gap:8,padding:'12px 16px',borderBottom:'1px solid var(--border-card)',background:'var(--bg-elevated)'}}>
@@ -1154,7 +1279,7 @@ function PenManagerDashboard({ pens, tasks, user, apiFetch }) {
             <span style={{fontSize:12,color:'#16a34a',fontWeight:600}}>All caught up — no records pending</span>
           </div>
         ) : (
-          <div style={{maxHeight:240,overflowY:'auto',padding:'8px 10px'}}>
+          <div style={{maxHeight:320,overflowY:'auto',padding:'8px 10px'}}>
             <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8}}>
               {pendingVerifs.map((item, idx) => {
                 const TYPE_META = {
@@ -1162,15 +1287,17 @@ function PenManagerDashboard({ pens, tasks, user, apiFetch }) {
                   MORTALITY_REPORT: { icon:'💀', color:'#ef4444', bg:'#fef2f2' },
                   FEED_RECEIPT:     { icon:'🌾', color:'#6c63ff', bg:'#f5f3ff' },
                 };
-                const meta   = TYPE_META[item.type] || { icon:'📋', color:'#64748b', bg:'#f8fafc' };
-                const penCtx = item.context ? item.context.split(' | ')[0].trim() : '—';
+                const meta    = TYPE_META[item.type] || { icon:'📋', color:'#64748b', bg:'#f8fafc' };
+                const penCtx  = item.context ? item.context.split(' | ')[0].trim() : '—';
                 const dateStr = item.date
                   ? new Date(item.date).toLocaleDateString('en-NG',{day:'numeric',month:'short'})
                   : '—';
+                const isBlocked = item.coiBlocked;
+
                 return (
                   <div key={item.id || idx} style={{
-                    background: meta.bg,
-                    border: `1px solid ${meta.color}30`,
+                    background: isBlocked ? '#fdf4ff' : meta.bg,
+                    border: `1px solid ${isBlocked ? '#e9d5ff' : meta.color + '30'}`,
                     borderRadius: 9,
                     padding: '9px 11px',
                     display: 'flex',
@@ -1180,36 +1307,60 @@ function PenManagerDashboard({ pens, tasks, user, apiFetch }) {
                     {/* Type + date row */}
                     <div style={{display:'flex',alignItems:'center',gap:5,justifyContent:'space-between'}}>
                       <div style={{display:'flex',alignItems:'center',gap:4}}>
-                        <span style={{fontSize:12}}>{meta.icon}</span>
-                        <span style={{fontSize:10,fontWeight:700,color:meta.color,textTransform:'uppercase',letterSpacing:'.04em'}}>
+                        <span style={{fontSize:12}}>{isBlocked ? '🔒' : meta.icon}</span>
+                        <span style={{fontSize:10,fontWeight:700,color:isBlocked?'#9333ea':meta.color,textTransform:'uppercase',letterSpacing:'.04em'}}>
                           {item.type === 'DAILY_PRODUCTION' ? 'Eggs' : item.type === 'MORTALITY_REPORT' ? 'Mortality' : 'Feed'}
                         </span>
                       </div>
                       <span style={{fontSize:9,color:'var(--text-muted)',flexShrink:0}}>{dateStr}</span>
                     </div>
+
                     {/* Summary */}
                     <div style={{fontSize:11,fontWeight:600,color:'var(--text-primary)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
                       {item.summary}
                     </div>
+
                     {/* Context */}
                     <div style={{fontSize:10,color:'var(--text-muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
                       {penCtx}
                     </div>
+
+                    {/* COI block reason */}
+                    {isBlocked && (
+                      <div style={{fontSize:9,color:'#7c3aed',fontWeight:600,lineHeight:1.4,background:'#ede9fe',borderRadius:5,padding:'4px 7px'}}>
+                        {item.coiReason}
+                      </div>
+                    )}
+
                     {/* Action buttons */}
-                    <div style={{display:'flex',gap:5,marginTop:2}}>
-                      <button
-                        onClick={() => handleVerif(item, 'verify')}
-                        disabled={verifSaving}
-                        style={{flex:1,padding:'4px 0',borderRadius:5,border:'1px solid #16a34a',background:'#f0fdf4',color:'#16a34a',fontSize:10,fontWeight:700,cursor:'pointer'}}>
-                        ✓ Verify
-                      </button>
-                      <button
-                        onClick={() => handleVerif(item, 'flag')}
-                        disabled={verifSaving}
-                        style={{flex:1,padding:'4px 0',borderRadius:5,border:'1px solid #d97706',background:'#fffbeb',color:'#d97706',fontSize:10,fontWeight:700,cursor:'pointer'}}>
-                        ⚠ Flag
-                      </button>
-                    </div>
+                    {isBlocked ? (
+                      <div style={{fontSize:9,color:'#9333ea',fontWeight:700,textAlign:'center',padding:'3px 0',background:'#ede9fe',borderRadius:5}}>
+                        Requires Farm Manager
+                      </div>
+                    ) : (
+                      <div style={{display:'flex',flexDirection:'column',gap:4,marginTop:2}}>
+                        <div style={{display:'flex',gap:5}}>
+                          <button
+                            onClick={() => handleVerifyClick(item)}
+                            style={{flex:1,padding:'5px 0',borderRadius:5,border:'1px solid #16a34a',background:'#f0fdf4',color:'#16a34a',fontSize:10,fontWeight:700,cursor:'pointer'}}>
+                            ✅ Verify
+                          </button>
+                          <button
+                            onClick={() => { setRejectItem(item); setRejectNote(''); setRejectErr(''); }}
+                            style={{flex:1,padding:'5px 0',borderRadius:5,border:'1px solid #dc2626',background:'#fef2f2',color:'#dc2626',fontSize:10,fontWeight:700,cursor:'pointer'}}>
+                            ↩️ Reject
+                          </button>
+                        </div>
+                        {/* Override — egg/mortality only */}
+                        {['EggProduction','MortalityRecord'].includes(item.referenceType) && (
+                          <button
+                            onClick={() => setOverrideModal(item)}
+                            style={{width:'100%',padding:'4px 0',borderRadius:5,border:'1px solid #fde68a',background:'#fffbeb',color:'#92400e',fontSize:9,fontWeight:700,cursor:'pointer'}}>
+                            ✏️ PM Override
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -1217,6 +1368,80 @@ function PenManagerDashboard({ pens, tasks, user, apiFetch }) {
           </div>
         )}
       </div>
+
+      {/* ── Reject modal ── */}
+      {rejectItem && (
+        <div style={{position:'fixed',inset:0,zIndex:1100,background:'rgba(0,0,0,0.4)',display:'flex',alignItems:'center',justifyContent:'center',padding:16}}
+          onClick={e => e.target === e.currentTarget && setRejectItem(null)}>
+          <div style={{background:'#fff',borderRadius:14,width:'100%',maxWidth:420,boxShadow:'0 12px 48px rgba(0,0,0,0.2)',padding:'20px 22px'}}>
+            <div style={{fontFamily:"'Poppins',sans-serif",fontWeight:800,fontSize:15,marginBottom:14}}>↩️ Reject & Return to Worker</div>
+            <div style={{background:'#f8fafc',borderRadius:8,padding:'10px 12px',marginBottom:14,fontSize:12}}>
+              <div style={{fontWeight:700,color:'#1e293b',marginBottom:2}}>{rejectItem.summary}</div>
+              <div style={{color:'#64748b'}}>{rejectItem.context?.split(' | ')[0]}</div>
+            </div>
+            {rejectErr && <div style={{background:'#fef2f2',borderRadius:7,padding:'7px 10px',fontSize:12,color:'#dc2626',marginBottom:10}}>{rejectErr}</div>}
+            <label style={{display:'block',fontSize:12,fontWeight:700,color:'#475569',marginBottom:5}}>Reason for rejection *</label>
+            <textarea
+              autoFocus
+              rows={3}
+              value={rejectNote}
+              onChange={e => { setRejectNote(e.target.value); setRejectErr(''); }}
+              placeholder="Explain what is incorrect — the worker will be notified to resubmit…"
+              style={{width:'100%',padding:'9px 12px',borderRadius:8,border:'1px solid #e2e8f0',fontSize:13,fontFamily:'inherit',resize:'vertical',outline:'none',boxSizing:'border-box'}}
+            />
+            <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:14}}>
+              <button onClick={() => setRejectItem(null)} style={{padding:'8px 16px',borderRadius:8,border:'1px solid #e2e8f0',background:'#fff',fontSize:13,fontWeight:600,cursor:'pointer',color:'#64748b'}}>
+                Cancel
+              </button>
+              <button onClick={submitReject} disabled={rejectSaving} style={{padding:'8px 18px',borderRadius:8,border:'none',background:rejectSaving?'#94a3b8':'#dc2626',color:'#fff',fontSize:13,fontWeight:700,cursor:rejectSaving?'not-allowed':'pointer'}}>
+                {rejectSaving ? 'Rejecting…' : 'Reject & Notify'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── GradingModal — Verify on EggProduction ── */}
+      {gradingModal && (
+        <GradingModal
+          record={gradingModal}
+          apiFetch={apiFetch}
+          onClose={() => setGradingModal(null)}
+          onSave={() => {
+            setPendingVerifs(prev => prev.filter(i => i.referenceId !== gradingModal.referenceId));
+            setGradingModal(null);
+            showVerifToast('✓ Egg record graded and approved');
+          }}
+        />
+      )}
+
+      {/* ── MortalityVerifyModal — Verify on MortalityRecord ── */}
+      {mortalityModal && (
+        <MortalityVerifyModal
+          item={mortalityModal}
+          apiFetch={apiFetch}
+          onClose={() => setMortalityModal(null)}
+          onSave={() => {
+            setPendingVerifs(prev => prev.filter(i => i.referenceId !== mortalityModal.referenceId));
+            setMortalityModal(null);
+            showVerifToast('✓ Mortality record verified');
+          }}
+        />
+      )}
+
+      {/* ── OverrideModal — PM corrects values with mandatory reason ── */}
+      {overrideModal && (
+        <OverrideModal
+          item={overrideModal}
+          apiFetch={apiFetch}
+          onClose={() => setOverrideModal(null)}
+          onSave={() => {
+            setPendingVerifs(prev => prev.filter(i => i.referenceId !== overrideModal.referenceId));
+            setOverrideModal(null);
+            showVerifToast('✓ Override applied — audit trail recorded');
+          }}
+        />
+      )}
       <div style={{fontSize:11,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:12,marginTop:8}}>My Pens</div>
       {pens.map(pen=><PenCard key={pen.id} pen={pen} autoOpen={navTarget?.penId===pen.id} highlightSection={navTarget?.penId===pen.id?navTarget.sectionName:null}/>)}
     </div>
@@ -1491,7 +1716,7 @@ function AttentionPill({ pens, onNavigate, mode = 'pens' }) {
 }
 
 // ── Farm Manager+ dashboard ───────────────────────────────────────────────────
-function ManagerDashboard({ pens, orgTotals, user }) {
+function ManagerDashboard({ pens, orgTotals, user, apiFetch }) {
   const router       = useRouter();
   const [navTarget, setNavTarget]       = useState(null); // { penId, sectionName, opType }
 
@@ -1611,8 +1836,10 @@ function ManagerDashboard({ pens, orgTotals, user }) {
       {/* Broiler block + harvest popover anchored below it */}
       <div>
         {broilerCards.length>0 && <OpKpiBlock title="Broiler Production" opIcon="🍗" isLayer={false} cards={broilerCards} />}
-
       </div>
+
+      {/* ── Spot-check tasks panel ── */}
+      <SpotCheckPanel apiFetch={apiFetch} user={user} />
 
       {/* ── Operation type tabs + pen list ── */}
       <div style={{marginTop:8}}>
@@ -2071,10 +2298,24 @@ function QCDashboard({ data }) {
 
 // ── IC Officer Dashboard ──────────────────────────────────────────────────────
 function IcDashboard({ user, apiFetch }) {
-  const [invSummary, setInvSummary] = useState(null);
-  const [recentInvs, setRecentInvs] = useState([]);
-  const [auditMeta,  setAuditMeta]  = useState(null);
-  const [loading,    setLoading]    = useState(true);
+  const [invSummary,    setInvSummary]    = useState(null);
+  const [investigations,setInvestigations]= useState([]);
+  const [auditMeta,     setAuditMeta]     = useState(null);
+  const [recentAudit,   setRecentAudit]   = useState([]);
+  const [overrides,     setOverrides]     = useState([]);
+  const [flaggedVerifs, setFlaggedVerifs] = useState([]);
+  const [loading,       setLoading]       = useState(true);
+  const [actionModal,   setActionModal]   = useState(null); // { inv, action }
+  const [actionNote,    setActionNote]    = useState('');
+  const [actionSaving,  setActionSaving]  = useState(false);
+  const [actionErr,     setActionErr]     = useState('');
+  const [activeTab,     setActiveTab]     = useState('queue'); // queue | overrides | audit | flagged
+  // Override review state: maps entityId → 'acknowledged' | 'flagged'
+  const [reviewedOverrides, setReviewedOverrides] = useState({});
+  const [overrideModal,     setOverrideModal]     = useState(null); // { log, action }
+  const [overrideNote,      setOverrideNote]      = useState('');
+  const [overrideSaving,    setOverrideSaving]    = useState(false);
+  const [overrideErr,       setOverrideErr]       = useState('');
 
   const timeAgo = d => {
     const mins = Math.floor((Date.now() - new Date(d)) / 60000);
@@ -2082,27 +2323,43 @@ function IcDashboard({ user, apiFetch }) {
     if (mins < 1440) return `${Math.floor(mins / 60)}h ago`;
     return `${Math.floor(mins / 1440)}d ago`;
   };
+  const fmtDate = d => new Date(d).toLocaleDateString('en-NG', { day:'numeric', month:'short', year:'numeric' });
 
-  useEffect(() => {
-    (async () => {
-      setLoading(true);
-      try {
-        const [invRes, auditRes] = await Promise.all([
-          apiFetch('/api/investigations?limit=5'),
-          apiFetch('/api/audit?limit=1'),
-        ]);
-        if (invRes.ok)   { const d = await invRes.json();   setInvSummary(d.summary || {}); setRecentInvs(d.investigations || []); }
-        if (auditRes.ok) { const d = await auditRes.json(); setAuditMeta(d.meta); }
-      } catch { /* silent */ }
-      finally { setLoading(false); }
-    })();
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [invRes, auditRes, auditFeedRes, verifRes] = await Promise.all([
+        apiFetch('/api/investigations?limit=20'),
+        apiFetch('/api/audit?limit=1'),
+        apiFetch('/api/audit?limit=15&action=APPROVE'),
+        apiFetch('/api/verification?status=DISCREPANCY_FOUND&limit=20'),
+      ]);
+      if (invRes.ok)      { const d = await invRes.json();      setInvSummary(d.summary||{}); setInvestigations(d.investigations||[]); }
+      if (auditRes.ok)    { const d = await auditRes.json();    setAuditMeta(d.meta); }
+      if (auditFeedRes.ok){ const d = await auditFeedRes.json();
+        // Separate overrides (PM_OVERRIDE in changes) from regular approvals
+        const all = d.logs || [];
+        setOverrides(all.filter(l => l.changes?.action === 'PM_OVERRIDE'));
+        setRecentAudit(all.filter(l => l.changes?.action !== 'PM_OVERRIDE').slice(0, 10));
+
+        // Pre-populate reviewed state for any overrides already acknowledged/flagged
+        const reviewed = {};
+        all.filter(l => l.changes?.action === 'IC_OVERRIDE_ACKNOWLEDGED' || l.changes?.action === 'IC_OVERRIDE_FLAGGED')
+          .forEach(l => { reviewed[l.entityId] = l.changes.action === 'IC_OVERRIDE_ACKNOWLEDGED' ? 'acknowledged' : 'flagged'; });
+        setReviewedOverrides(reviewed);
+      }
+      if (verifRes.ok)    { const d = await verifRes.json();    setFlaggedVerifs(d.pendingQueue || []); }
+    } catch { /* silent */ }
+    finally { setLoading(false); }
   }, [apiFetch]);
 
+  useEffect(() => { load(); }, [load]);
+
   const INV_STATUS_META = {
-    OPEN:         { label: 'Open',         color: '#d97706', bg: '#fffbeb', icon: '🔓' },
-    UNDER_REVIEW: { label: 'Under Review', color: '#6c63ff', bg: '#f5f3ff', icon: '🔍' },
-    ESCALATED:    { label: 'Escalated',    color: '#9333ea', bg: '#fdf4ff', icon: '🔺' },
-    CLOSED:       { label: 'Closed',       color: '#16a34a', bg: '#f0fdf4', icon: '✓'  },
+    OPEN:         { label:'Open',         color:'#d97706', bg:'#fffbeb', border:'#fde68a', icon:'🔓' },
+    UNDER_REVIEW: { label:'Under Review', color:'#6c63ff', bg:'#f5f3ff', border:'#ddd6fe', icon:'🔍' },
+    ESCALATED:    { label:'Escalated',    color:'#9333ea', bg:'#fdf4ff', border:'#e9d5ff', icon:'🔺' },
+    CLOSED:       { label:'Closed',       color:'#16a34a', bg:'#f0fdf4', border:'#bbf7d0', icon:'✓'  },
   };
 
   const openCount      = invSummary?.OPEN         || 0;
@@ -2110,6 +2367,82 @@ function IcDashboard({ user, apiFetch }) {
   const escalatedCount = invSummary?.ESCALATED     || 0;
   const closedCount    = invSummary?.CLOSED        || 0;
   const activeCount    = openCount + reviewCount + escalatedCount;
+
+  // ── Investigation inline actions ─────────────────────────────────────────────
+  const openAction = (inv, action) => {
+    setActionModal({ inv, action });
+    setActionNote('');
+    setActionErr('');
+  };
+
+  const submitAction = async () => {
+    const { inv, action } = actionModal;
+    if ((action === 'escalate' || action === 'close') && !actionNote.trim()) {
+      setActionErr(action === 'close' ? 'Findings are required to close an investigation' : 'Notes are required to escalate');
+      return;
+    }
+    setActionSaving(true); setActionErr('');
+    try {
+      const body = { action };
+      if (action === 'escalate') body.findings  = actionNote.trim();
+      if (action === 'close')    body.findings  = actionNote.trim();
+      const res = await apiFetch(`/api/investigations/${inv.id}`, {
+        method: 'PATCH', body: JSON.stringify(body),
+      });
+      let d = {};
+      try { d = await res.json(); } catch {}
+      if (!res.ok) { setActionErr(d.error || `Failed to ${action}`); return; }
+      setActionModal(null);
+      // Optimistically update local state
+      setInvestigations(prev => prev.map(i =>
+        i.id === inv.id ? { ...i, ...d.investigation } : i
+      ));
+      // Refresh summary counts
+      const sumRes = await apiFetch('/api/investigations?limit=1');
+      if (sumRes.ok) { const sd = await sumRes.json(); setInvSummary(sd.summary || {}); }
+    } catch { setActionErr('Network error — please try again'); }
+    finally  { setActionSaving(false); }
+  };
+
+  // ── Override review submit ───────────────────────────────────────────────────
+  const submitOverrideReview = async () => {
+    if (!overrideNote.trim()) { setOverrideErr('A review note is required'); return; }
+    setOverrideSaving(true); setOverrideErr('');
+    try {
+      const res = await apiFetch('/api/audit/acknowledge', {
+        method: 'POST',
+        body: JSON.stringify({
+          entityType: overrideModal.log.entityType,
+          entityId:   overrideModal.log.entityId,
+          action:     overrideModal.action, // 'IC_OVERRIDE_ACKNOWLEDGED' | 'IC_OVERRIDE_FLAGGED'
+          reviewNote: overrideNote.trim(),
+        }),
+      });
+      let d = {};
+      try { d = await res.json(); } catch {}
+      if (!res.ok) { setOverrideErr(d.error || 'Failed to record review'); return; }
+      // Mark this override as reviewed in local state
+      setReviewedOverrides(prev => ({
+        ...prev,
+        [overrideModal.log.entityId]: overrideModal.action === 'IC_OVERRIDE_ACKNOWLEDGED' ? 'acknowledged' : 'flagged',
+      }));
+      setOverrideModal(null);
+    } catch { setOverrideErr('Network error — please try again'); }
+    finally  { setOverrideSaving(false); }
+  };
+
+  const TABS = [
+    { key:'queue',    label:'🔍 Investigation Queue', badge: activeCount || null },
+    { key:'flagged',  label:'🚩 Flagged Records',     badge: flaggedVerifs.length || null },
+    { key:'overrides',label:'✏️ PM Overrides',         badge: overrides.length  || null },
+    { key:'audit',    label:'📋 Audit Feed',           badge: null },
+  ];
+
+  const ACTION_LABELS = {
+    review:   { title:'Mark Under Review',  btn:'Start Review',  color:'#6c63ff', needsNote:false },
+    escalate: { title:'Escalate to Chair',  btn:'Escalate',      color:'#9333ea', needsNote:true,  placeholder:'Summarise findings and reason for escalation…' },
+    close:    { title:'Close Investigation',btn:'Close & Record', color:'#16a34a', needsNote:true,  placeholder:'Record your findings and conclusion…' },
+  };
 
   if (loading) return (
     <div style={{display:'flex',flexDirection:'column',gap:14}}>
@@ -2119,7 +2452,8 @@ function IcDashboard({ user, apiFetch }) {
 
   return (
     <div style={{display:'flex',flexDirection:'column',gap:20}}>
-      {/* Header */}
+
+      {/* ── Header ── */}
       <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',flexWrap:'wrap',gap:12}}>
         <div>
           <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:4}}>
@@ -2135,128 +2469,457 @@ function IcDashboard({ user, apiFetch }) {
           </div>
         )}
       </div>
-      {/* KPI row */}
-      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',gap:14}}>
+
+      {/* ── KPI row ── */}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:12}}>
         {[
           { icon:'🔓', label:'Open',              value:openCount,      color:'#d97706', urgent:openCount>5 },
           { icon:'🔍', label:'Under Review',       value:reviewCount,    color:'#6c63ff', urgent:false },
           { icon:'🔺', label:'Escalated',          value:escalatedCount, color:'#9333ea', urgent:escalatedCount>0 },
-          { icon:'✓',  label:'Closed',             value:closedCount,    color:'#16a34a', urgent:false },
-          { icon:'📋', label:'Total Audit Events', value: auditMeta ? auditMeta.actionCounts.reduce((s,a)=>s+a.count,0).toLocaleString() : '—', color:'var(--purple)', urgent:false },
+          { icon:'✓',  label:'Closed (All Time)',  value:closedCount,    color:'#16a34a', urgent:false },
+          { icon:'✏️', label:'PM Overrides',        value:overrides.length, color:'#d97706', urgent:false },
+          { icon:'📋', label:'Total Audit Events', value:auditMeta ? auditMeta.actionCounts.reduce((s,a)=>s+a.count,0).toLocaleString():'—', color:'var(--purple)', urgent:false },
         ].map(k=>(
-          <div key={k.label} style={{background:k.urgent?'#fef2f2':'#fff',borderRadius:12,padding:'18px 20px',border:`1px solid ${k.urgent?'#fecaca':'var(--border-card)'}`,boxShadow:'0 1px 4px rgba(0,0,0,0.04)',display:'flex',alignItems:'flex-start',gap:14}}>
-            <div style={{width:42,height:42,borderRadius:10,flexShrink:0,background:`${k.urgent?'#ef4444':k.color}18`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:20}}>{k.icon}</div>
+          <div key={k.label} style={{background:k.urgent?'#fef2f2':'#fff',borderRadius:12,padding:'16px 18px',border:`1px solid ${k.urgent?'#fecaca':'var(--border-card)'}`,boxShadow:'0 1px 4px rgba(0,0,0,0.04)',display:'flex',alignItems:'flex-start',gap:12}}>
+            <div style={{width:38,height:38,borderRadius:9,flexShrink:0,background:`${k.urgent?'#ef4444':k.color}18`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:18}}>{k.icon}</div>
             <div>
-              <div style={{fontSize:22,fontWeight:800,color:k.urgent?'#dc2626':'var(--text-primary)',lineHeight:1.1}}>{k.value}</div>
-              <div style={{fontSize:12,fontWeight:600,color:'var(--text-secondary)',marginTop:2}}>{k.label}</div>
+              <div style={{fontSize:20,fontWeight:800,color:k.urgent?'#dc2626':'var(--text-primary)',lineHeight:1.1}}>{k.value}</div>
+              <div style={{fontSize:11,fontWeight:600,color:'var(--text-secondary)',marginTop:2}}>{k.label}</div>
             </div>
           </div>
         ))}
       </div>
-      {/* Active investigations banner */}
+
+      {/* ── Active investigations banner ── */}
       {activeCount > 0 && (
-        <div style={{padding:'14px 18px',background:'#fffbeb',border:'1px solid #fde68a',borderRadius:12,display:'flex',alignItems:'center',gap:14}}>
-          <span style={{fontSize:24}}>⚠️</span>
+        <div style={{padding:'13px 18px',background:'#fffbeb',border:'1px solid #fde68a',borderRadius:12,display:'flex',alignItems:'center',gap:14}}>
+          <span style={{fontSize:22}}>⚠️</span>
           <div style={{flex:1}}>
-            <div style={{fontSize:14,fontWeight:700,color:'#92400e'}}>{activeCount} active investigation{activeCount!==1?'s':''} require attention</div>
-            <div style={{fontSize:12,color:'#d97706',marginTop:2}}>
+            <div style={{fontSize:13,fontWeight:700,color:'#92400e'}}>{activeCount} active investigation{activeCount!==1?'s':''} require attention</div>
+            <div style={{fontSize:11,color:'#d97706',marginTop:2}}>
               {openCount>0&&`${openCount} open`}{openCount>0&&reviewCount>0?' · ':''}{reviewCount>0&&`${reviewCount} under review`}{escalatedCount>0&&` · ${escalatedCount} escalated`}
             </div>
           </div>
-          <a href="/audit" style={{padding:'8px 16px',borderRadius:8,border:'1px solid #fde68a',background:'#fff',color:'#d97706',fontSize:12,fontWeight:700,textDecoration:'none',whiteSpace:'nowrap'}}>View Investigations →</a>
         </div>
       )}
-      {/* Two-column section */}
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
-        {/* Recent investigations */}
-        <div style={{background:'#fff',borderRadius:14,border:'1px solid var(--border-card)',boxShadow:'0 1px 4px rgba(0,0,0,0.04)',overflow:'hidden'}}>
-          <div style={{padding:'16px 20px',borderBottom:'1px solid var(--border-card)',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-            <div style={{fontSize:13,fontWeight:800,color:'var(--text-primary)',fontFamily:"'Poppins',sans-serif"}}>🚩 Recent Investigations</div>
-            <a href="/audit" style={{fontSize:11,fontWeight:700,color:'var(--purple)',textDecoration:'none'}}>View all →</a>
-          </div>
-          {recentInvs.length===0 ? (
-            <div style={{padding:'40px 24px',textAlign:'center',color:'var(--text-muted)',fontSize:13}}>
-              <div style={{fontSize:32,marginBottom:8}}>🎉</div>No open investigations
-            </div>
-          ) : (
-            <div style={{display:'flex',flexDirection:'column'}}>
-              {recentInvs.map((inv,idx)=>{
-                const sm=INV_STATUS_META[inv.status]||INV_STATUS_META.OPEN;
-                return (
-                  <div key={inv.id} style={{padding:'14px 20px',borderBottom:idx<recentInvs.length-1?'1px solid var(--border-card)':'none',display:'flex',alignItems:'flex-start',gap:12}}>
-                    <div style={{width:32,height:32,borderRadius:8,flexShrink:0,background:sm.bg,display:'flex',alignItems:'center',justifyContent:'center',fontSize:15}}>{sm.icon}</div>
-                    <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontSize:12,fontWeight:700,color:'var(--text-primary)',marginBottom:2,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{inv.referenceType}</div>
-                      <div style={{fontSize:11,color:'var(--text-muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{inv.flagReason}</div>
-                      <div style={{fontSize:10,color:'var(--text-muted)',marginTop:2}}>{timeAgo(inv.createdAt)}</div>
-                    </div>
-                    <span style={{fontSize:10,fontWeight:700,padding:'3px 8px',borderRadius:99,background:sm.bg,color:sm.color,whiteSpace:'nowrap',flexShrink:0}}>{sm.label}</span>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-        {/* Audit activity breakdown */}
-        <div style={{background:'#fff',borderRadius:14,border:'1px solid var(--border-card)',boxShadow:'0 1px 4px rgba(0,0,0,0.04)',overflow:'hidden'}}>
-          <div style={{padding:'16px 20px',borderBottom:'1px solid var(--border-card)',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-            <div style={{fontSize:13,fontWeight:800,color:'var(--text-primary)',fontFamily:"'Poppins',sans-serif"}}>📋 Audit Activity Breakdown</div>
-            <a href="/audit" style={{fontSize:11,fontWeight:700,color:'var(--purple)',textDecoration:'none'}}>Open log →</a>
-          </div>
-          {!auditMeta ? (
-            <div style={{padding:'40px 24px',textAlign:'center',color:'var(--text-muted)',fontSize:13}}>No audit data</div>
-          ) : (
-            <div style={{padding:'16px 20px',display:'flex',flexDirection:'column',gap:10}}>
-              {auditMeta.actionCounts.slice(0,6).map(({action,count})=>{
-                const maxCount=Math.max(...auditMeta.actionCounts.map(a=>a.count));
-                const pct=maxCount>0?(count/maxCount)*100:0;
-                const colors={CREATE:'#16a34a',UPDATE:'#f59e0b',DELETE:'#ef4444',LOGIN:'#3b82f6',APPROVE:'#8b5cf6',REJECT:'#ef4444',ROLE_CHANGE:'#ec4899'};
-                const color=colors[action]||'#64748b';
-                return (
-                  <div key={action}>
-                    <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
-                      <span style={{fontSize:11,fontWeight:700,color:'var(--text-secondary)'}}>{action}</span>
-                      <span style={{fontSize:11,fontWeight:700,color}}>{count.toLocaleString()}</span>
-                    </div>
-                    <div style={{height:6,background:'var(--bg-elevated)',borderRadius:3,overflow:'hidden'}}>
-                      <div style={{height:'100%',width:`${pct}%`,background:color,borderRadius:3,transition:'width 0.5s ease'}}/>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
+
+      {/* ── Tab bar ── */}
+      <div style={{display:'flex',gap:4,background:'var(--bg-elevated)',borderRadius:11,padding:4,border:'1px solid var(--border)',width:'fit-content',flexWrap:'wrap'}}>
+        {TABS.map(t=>(
+          <button key={t.key} onClick={()=>setActiveTab(t.key)}
+            style={{display:'flex',alignItems:'center',gap:6,padding:'7px 14px',borderRadius:8,border:'none',fontFamily:"inherit",fontSize:12,fontWeight:700,cursor:'pointer',transition:'all 0.15s',
+              background:activeTab===t.key?'#fff':'transparent',
+              color:activeTab===t.key?'var(--purple)':'var(--text-muted)',
+              boxShadow:activeTab===t.key?'0 1px 4px rgba(0,0,0,0.08)':'none',
+            }}>
+            {t.label}
+            {t.badge > 0 && (
+              <span style={{background:activeTab===t.key?'var(--purple)':'#94a3b8',color:'#fff',borderRadius:99,fontSize:9,fontWeight:800,padding:'1px 6px',lineHeight:'14px'}}>
+                {t.badge}
+              </span>
+            )}
+          </button>
+        ))}
       </div>
-      {/* Quick access links */}
-      <div style={{background:'#fff',borderRadius:14,border:'1px solid var(--border-card)',padding:20,boxShadow:'0 1px 4px rgba(0,0,0,0.04)'}}>
-        <div style={{fontSize:13,fontWeight:800,color:'var(--text-primary)',fontFamily:"'Poppins',sans-serif",marginBottom:14}}>🔗 Quick Actions</div>
-        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',gap:10}}>
+
+      {/* ══════════ TAB: INVESTIGATION QUEUE ══════════ */}
+      {activeTab === 'queue' && (
+        <div style={{background:'#fff',borderRadius:14,border:'1px solid var(--border-card)',overflow:'hidden'}}>
+          <div style={{padding:'14px 20px',borderBottom:'1px solid var(--border-card)',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+            <div style={{fontFamily:"'Poppins',sans-serif",fontSize:13,fontWeight:800,color:'var(--text-primary)'}}>🚩 Investigation Queue</div>
+            <a href="/audit" style={{fontSize:11,fontWeight:700,color:'var(--purple)',textDecoration:'none'}}>Full audit page →</a>
+          </div>
+          {investigations.length === 0 ? (
+            <div style={{padding:'48px 24px',textAlign:'center',color:'var(--text-muted)'}}>
+              <div style={{fontSize:36,marginBottom:10}}>🎉</div>
+              <div style={{fontSize:14,fontWeight:600,color:'#16a34a'}}>No open investigations</div>
+              <div style={{fontSize:12,marginTop:4}}>All records clear</div>
+            </div>
+          ) : (
+            <div>
+              {investigations.map((inv, idx) => {
+                const sm  = INV_STATUS_META[inv.status] || INV_STATUS_META.OPEN;
+                const isActive = ['OPEN','UNDER_REVIEW'].includes(inv.status);
+                return (
+                  <div key={inv.id} style={{padding:'14px 20px',borderBottom:idx<investigations.length-1?'1px solid var(--border-card)':'none',display:'flex',alignItems:'flex-start',gap:14,background:inv.status==='ESCALATED'?'#fdf4ff':'#fff'}}>
+                    {/* Status icon */}
+                    <div style={{width:34,height:34,borderRadius:9,flexShrink:0,background:sm.bg,border:`1px solid ${sm.border}`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:16}}>{sm.icon}</div>
+
+                    {/* Content */}
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4,flexWrap:'wrap'}}>
+                        <span style={{fontSize:12,fontWeight:700,color:'var(--text-primary)'}}>{inv.referenceType}</span>
+                        <span style={{fontSize:10,fontWeight:700,padding:'2px 8px',borderRadius:99,background:sm.bg,color:sm.color,border:`1px solid ${sm.border}`}}>{sm.label}</span>
+                        <span style={{fontSize:10,color:'var(--text-muted)'}}>{timeAgo(inv.createdAt)}</span>
+                      </div>
+                      <div style={{fontSize:12,color:'var(--text-secondary)',marginBottom:4,lineHeight:1.4}}>{inv.flagReason}</div>
+                      {inv.findings && (
+                        <div style={{fontSize:11,color:'var(--text-muted)',background:'var(--bg-elevated)',padding:'5px 9px',borderRadius:6,marginBottom:4,fontStyle:'italic'}}>
+                          Findings: {inv.findings}
+                        </div>
+                      )}
+                      <div style={{fontSize:10,color:'var(--text-muted)'}}>
+                        Flagged by {inv.flaggedBy?.firstName} {inv.flaggedBy?.lastName}
+                        {inv.escalatedTo && ` · Escalated to ${inv.escalatedTo.firstName} ${inv.escalatedTo.lastName}`}
+                      </div>
+                    </div>
+
+                    {/* Action buttons — only for active investigations */}
+                    {isActive && (
+                      <div style={{display:'flex',flexDirection:'column',gap:5,flexShrink:0}}>
+                        {inv.status === 'OPEN' && (
+                          <button onClick={() => openAction(inv, 'review')}
+                            style={{padding:'5px 11px',borderRadius:7,border:'1px solid #ddd6fe',background:'#f5f3ff',color:'#6c63ff',fontSize:10,fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}}>
+                            🔍 Review
+                          </button>
+                        )}
+                        <button onClick={() => openAction(inv, 'escalate')}
+                          style={{padding:'5px 11px',borderRadius:7,border:'1px solid #e9d5ff',background:'#fdf4ff',color:'#9333ea',fontSize:10,fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}}>
+                          🔺 Escalate
+                        </button>
+                        <button onClick={() => openAction(inv, 'close')}
+                          style={{padding:'5px 11px',borderRadius:7,border:'1px solid #bbf7d0',background:'#f0fdf4',color:'#16a34a',fontSize:10,fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}}>
+                          ✓ Close
+                        </button>
+                      </div>
+                    )}
+                    {inv.status === 'CLOSED' && (
+                      <span style={{fontSize:9,fontWeight:700,color:'#16a34a',background:'#f0fdf4',border:'1px solid #bbf7d0',borderRadius:99,padding:'3px 8px',flexShrink:0,alignSelf:'flex-start'}}>CLOSED</span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ══════════ TAB: FLAGGED RECORDS ══════════ */}
+      {activeTab === 'flagged' && (
+        <div style={{background:'#fff',borderRadius:14,border:'1px solid var(--border-card)',overflow:'hidden'}}>
+          <div style={{padding:'14px 20px',borderBottom:'1px solid var(--border-card)',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+            <div style={{fontFamily:"'Poppins',sans-serif",fontSize:13,fontWeight:800,color:'var(--text-primary)'}}>🚩 Flagged Records (Verification Queue)</div>
+            <a href="/verification" style={{fontSize:11,fontWeight:700,color:'var(--purple)',textDecoration:'none'}}>Go to verification →</a>
+          </div>
+          {flaggedVerifs.length === 0 ? (
+            <div style={{padding:'48px 24px',textAlign:'center',color:'var(--text-muted)'}}>
+              <div style={{fontSize:36,marginBottom:10}}>✅</div>
+              <div style={{fontSize:14,fontWeight:600,color:'#16a34a'}}>No flagged records</div>
+            </div>
+          ) : (
+            <div>
+              {flaggedVerifs.map((item, idx) => (
+                <div key={item.id||idx} style={{padding:'13px 20px',borderBottom:idx<flaggedVerifs.length-1?'1px solid var(--border-card)':'none',display:'flex',alignItems:'flex-start',gap:12}}>
+                  <div style={{width:8,height:8,borderRadius:'50%',background:'#9333ea',flexShrink:0,marginTop:5}}/>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:12,fontWeight:700,color:'var(--text-primary)',marginBottom:2}}>{item.summary}</div>
+                    <div style={{fontSize:11,color:'var(--text-muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{item.context}</div>
+                    {item.discrepancyNotes && (
+                      <div style={{fontSize:11,color:'#9333ea',marginTop:3,fontStyle:'italic'}}>⚑ {item.discrepancyNotes}</div>
+                    )}
+                    <div style={{fontSize:10,color:'var(--text-muted)',marginTop:3}}>
+                      Submitted by {item.submittedBy} · {item.date ? fmtDate(item.date) : ''}
+                    </div>
+                  </div>
+                  <span style={{fontSize:10,fontWeight:700,padding:'3px 8px',borderRadius:99,background:'#fdf4ff',color:'#9333ea',border:'1px solid #e9d5ff',flexShrink:0}}>
+                    Flagged
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ══════════ TAB: PM OVERRIDES ══════════ */}
+      {activeTab === 'overrides' && (
+        <div style={{background:'#fff',borderRadius:14,border:'1px solid var(--border-card)',overflow:'hidden'}}>
+          <div style={{padding:'14px 20px',borderBottom:'1px solid var(--border-card)',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+            <div style={{fontFamily:"'Poppins',sans-serif",fontSize:13,fontWeight:800,color:'var(--text-primary)'}}>✏️ Recent PM Overrides</div>
+            <a href="/audit" style={{fontSize:11,fontWeight:700,color:'var(--purple)',textDecoration:'none'}}>Full audit log →</a>
+          </div>
+          {overrides.length === 0 ? (
+            <div style={{padding:'48px 24px',textAlign:'center',color:'var(--text-muted)'}}>
+              <div style={{fontSize:36,marginBottom:10}}>✅</div>
+              <div style={{fontSize:14,fontWeight:600,color:'#16a34a'}}>No PM overrides recorded</div>
+            </div>
+          ) : (
+            <div>
+              {overrides.map((log, idx) => {
+                const orig = log.changes?.originalValues  || {};
+                const corr = log.changes?.overriddenValues || {};
+                const reason = log.changes?.overrideReason || '—';
+                const isEgg = log.entityType === 'EggProduction';
+                return (
+                  <div key={log.id} style={{padding:'14px 20px',borderBottom:idx<overrides.length-1?'1px solid var(--border-card)':'none'}}>
+                    <div style={{display:'flex',alignItems:'flex-start',gap:12}}>
+                      <div style={{width:34,height:34,borderRadius:9,flexShrink:0,background:'#fffbeb',border:'1px solid #fde68a',display:'flex',alignItems:'center',justifyContent:'center',fontSize:16}}>✏️</div>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4,flexWrap:'wrap'}}>
+                          <span style={{fontSize:12,fontWeight:700,color:'var(--text-primary)'}}>{log.entityType} Override</span>
+                          <span style={{fontSize:10,color:'var(--text-muted)'}}>{timeAgo(log.createdAt)}</span>
+                        </div>
+                        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}>
+                          <div style={{padding:'8px 10px',background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:7,fontSize:11}}>
+                            <div style={{fontWeight:700,color:'var(--text-muted)',marginBottom:4,fontSize:9,textTransform:'uppercase',letterSpacing:'0.05em'}}>📋 Original</div>
+                            {isEgg ? (<>
+                              <div>Crates: <strong>{orig.cratesCollected ?? '—'}</strong></div>
+                              <div>Loose: <strong>{orig.looseEggs ?? '—'}</strong> · Cracked: <strong>{orig.crackedCount ?? '—'}</strong></div>
+                              <div style={{marginTop:3,fontWeight:700}}>Total: {orig.totalEggs ?? '—'} eggs</div>
+                            </>) : (<>
+                              <div>Deaths: <strong>{orig.count ?? '—'}</strong></div>
+                              <div>Cause: <strong>{orig.causeCode?.replace(/_/g,' ') ?? '—'}</strong></div>
+                            </>)}
+                          </div>
+                          <div style={{padding:'8px 10px',background:'#fffbeb',border:'1px solid #fde68a',borderRadius:7,fontSize:11}}>
+                            <div style={{fontWeight:700,color:'#92400e',marginBottom:4,fontSize:9,textTransform:'uppercase',letterSpacing:'0.05em'}}>✏️ Corrected</div>
+                            {isEgg ? (<>
+                              <div>Crates: <strong>{corr.cratesCollected ?? '—'}</strong></div>
+                              <div>Loose: <strong>{corr.looseEggs ?? '—'}</strong> · Cracked: <strong>{corr.crackedCount ?? '—'}</strong></div>
+                              <div style={{marginTop:3,fontWeight:700,color:'#d97706'}}>Total: {corr.totalEggs ?? '—'} eggs</div>
+                            </>) : (<>
+                              <div>Deaths: <strong>{corr.count ?? '—'}</strong></div>
+                              <div>Cause: <strong>{corr.causeCode?.replace(/_/g,' ') ?? '—'}</strong></div>
+                            </>)}
+                          </div>
+                        </div>
+                        <div style={{padding:'7px 10px',background:'#f5f3ff',border:'1px solid #ddd6fe',borderRadius:7,fontSize:11,color:'var(--text-secondary)'}}>
+                          <span style={{fontWeight:700,color:'var(--purple)'}}>Override Reason: </span>{reason}
+                        </div>
+                        <div style={{fontSize:10,color:'var(--text-muted)',marginTop:6}}>
+                          By {log.user?.firstName} {log.user?.lastName} ({log.user?.role?.replace(/_/g,' ')})
+                        </div>
+                      </div>
+
+                      {/* Action buttons — right side, vertically centred */}
+                      <div style={{display:'flex',flexDirection:'column',gap:5,flexShrink:0,alignSelf:'center'}}>
+                        {reviewedOverrides[log.entityId] === 'acknowledged' && (
+                          <span style={{fontSize:9,fontWeight:700,padding:'4px 9px',borderRadius:99,background:'#f0fdf4',color:'#16a34a',border:'1px solid #bbf7d0',textAlign:'center'}}>✓ Acknowledged</span>
+                        )}
+                        {reviewedOverrides[log.entityId] === 'flagged' && (
+                          <span style={{fontSize:9,fontWeight:700,padding:'4px 9px',borderRadius:99,background:'#fdf4ff',color:'#9333ea',border:'1px solid #e9d5ff',textAlign:'center'}}>🚩 Flagged</span>
+                        )}
+                        {!reviewedOverrides[log.entityId] && (<>
+                          <button
+                            onClick={() => { setOverrideModal({ log, action:'IC_OVERRIDE_ACKNOWLEDGED' }); setOverrideNote(''); setOverrideErr(''); }}
+                            style={{padding:'5px 11px',borderRadius:7,border:'1px solid #bbf7d0',background:'#f0fdf4',color:'#16a34a',fontSize:10,fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}}>
+                            ✓ Acknowledge
+                          </button>
+                          <button
+                            onClick={() => { setOverrideModal({ log, action:'IC_OVERRIDE_FLAGGED' }); setOverrideNote(''); setOverrideErr(''); }}
+                            style={{padding:'5px 11px',borderRadius:7,border:'1px solid #e9d5ff',background:'#fdf4ff',color:'#9333ea',fontSize:10,fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}}>
+                            🚩 Flag
+                          </button>
+                        </>)}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ══════════ TAB: AUDIT FEED ══════════ */}
+      {activeTab === 'audit' && (
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+          {/* Recent approvals feed */}
+          <div style={{background:'#fff',borderRadius:14,border:'1px solid var(--border-card)',overflow:'hidden'}}>
+            <div style={{padding:'14px 20px',borderBottom:'1px solid var(--border-card)',fontFamily:"'Poppins',sans-serif",fontSize:13,fontWeight:800,color:'var(--text-primary)'}}>
+              ✅ Recent Approvals
+            </div>
+            {recentAudit.length === 0 ? (
+              <div style={{padding:'32px',textAlign:'center',color:'var(--text-muted)',fontSize:12}}>No recent approvals</div>
+            ) : (
+              <div style={{maxHeight:340,overflowY:'auto'}}>
+                {recentAudit.map((log, idx) => (
+                  <div key={log.id} style={{padding:'10px 16px',borderBottom:idx<recentAudit.length-1?'1px solid var(--border-card)':'none',display:'flex',alignItems:'flex-start',gap:10}}>
+                    <div style={{width:7,height:7,borderRadius:'50%',background:'#16a34a',flexShrink:0,marginTop:5}}/>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:12,fontWeight:600,color:'var(--text-primary)'}}>{log.entityType}</div>
+                      <div style={{fontSize:10,color:'var(--text-muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                        {log.user?.firstName} {log.user?.lastName} · {timeAgo(log.createdAt)}
+                      </div>
+                    </div>
+                    <span style={{fontSize:9,fontWeight:700,padding:'2px 7px',borderRadius:99,background:'#f0fdf4',color:'#16a34a',border:'1px solid #bbf7d0',flexShrink:0}}>
+                      {log.action}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Audit action breakdown */}
+          <div style={{background:'#fff',borderRadius:14,border:'1px solid var(--border-card)',overflow:'hidden'}}>
+            <div style={{padding:'14px 20px',borderBottom:'1px solid var(--border-card)',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+              <div style={{fontFamily:"'Poppins',sans-serif",fontSize:13,fontWeight:800,color:'var(--text-primary)'}}>📊 Audit Breakdown</div>
+              <a href="/audit" style={{fontSize:11,fontWeight:700,color:'var(--purple)',textDecoration:'none'}}>Full log →</a>
+            </div>
+            {!auditMeta ? (
+              <div style={{padding:'32px',textAlign:'center',color:'var(--text-muted)',fontSize:12}}>No audit data</div>
+            ) : (
+              <div style={{padding:'16px 20px',display:'flex',flexDirection:'column',gap:10}}>
+                {auditMeta.actionCounts.slice(0,6).map(({action,count})=>{
+                  const maxCount=Math.max(...auditMeta.actionCounts.map(a=>a.count));
+                  const pct=maxCount>0?(count/maxCount)*100:0;
+                  const colors={CREATE:'#16a34a',UPDATE:'#f59e0b',DELETE:'#ef4444',LOGIN:'#3b82f6',APPROVE:'#8b5cf6',REJECT:'#ef4444',ROLE_CHANGE:'#ec4899'};
+                  const color=colors[action]||'#64748b';
+                  return (
+                    <div key={action}>
+                      <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
+                        <span style={{fontSize:11,fontWeight:700,color:'var(--text-secondary)'}}>{action}</span>
+                        <span style={{fontSize:11,fontWeight:700,color}}>{count.toLocaleString()}</span>
+                      </div>
+                      <div style={{height:6,background:'var(--bg-elevated)',borderRadius:3,overflow:'hidden'}}>
+                        <div style={{height:'100%',width:`${pct}%`,background:color,borderRadius:3,transition:'width 0.5s ease'}}/>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Spot-check panel ── */}
+      <SpotCheckPanel apiFetch={apiFetch} user={user} />
+
+      {/* ── Quick links ── */}
+      <div style={{background:'#fff',borderRadius:14,border:'1px solid var(--border-card)',padding:'16px 20px'}}>
+        <div style={{fontSize:12,fontWeight:800,color:'var(--text-primary)',fontFamily:"'Poppins',sans-serif",marginBottom:12}}>🔗 Quick Actions</div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(140px,1fr))',gap:8}}>
           {[
             {href:'/audit',        icon:'📋', label:'Audit Log',      sub:'Browse all events'},
             {href:'/audit',        icon:'🚩', label:'Investigations', sub:'Manage flags'},
-            {href:'/verification', icon:'✅', label:'Verifications',  sub:'View verified records'},
+            {href:'/verification', icon:'✅', label:'Verifications',  sub:'Flagged records'},
             {href:'/feed',         icon:'🌾', label:'Feed Records',   sub:'Receipts & issuances'},
             {href:'/farm',         icon:'🐦', label:'Flock Records',  sub:'Production & health'},
           ].map(link=>(
             <a key={link.label} href={link.href}
-              style={{display:'flex',flexDirection:'column',gap:4,padding:'14px 16px',borderRadius:10,border:'1px solid var(--border-card)',textDecoration:'none',background:'#fafafa'}}
+              style={{display:'flex',flexDirection:'column',gap:3,padding:'12px 14px',borderRadius:9,border:'1px solid var(--border-card)',textDecoration:'none',background:'#fafafa'}}
               onMouseEnter={e=>{e.currentTarget.style.borderColor='var(--purple)';e.currentTarget.style.background='#f5f3ff';}}
               onMouseLeave={e=>{e.currentTarget.style.borderColor='var(--border-card)';e.currentTarget.style.background='#fafafa';}}>
-              <span style={{fontSize:20}}>{link.icon}</span>
-              <span style={{fontSize:12,fontWeight:700,color:'var(--text-primary)'}}>{link.label}</span>
-              <span style={{fontSize:11,color:'var(--text-muted)'}}>{link.sub}</span>
+              <span style={{fontSize:18}}>{link.icon}</span>
+              <span style={{fontSize:11,fontWeight:700,color:'var(--text-primary)'}}>{link.label}</span>
+              <span style={{fontSize:10,color:'var(--text-muted)'}}>{link.sub}</span>
             </a>
           ))}
         </div>
       </div>
+
+      {/* ── Investigation action modal ── */}
+      {actionModal && (() => {
+        const meta = ACTION_LABELS[actionModal.action];
+        return createPortal(
+          <div style={{position:'fixed',inset:0,zIndex:1200,background:'rgba(0,0,0,0.45)',display:'flex',alignItems:'center',justifyContent:'center',padding:16}}
+            onClick={e=>e.target===e.currentTarget&&setActionModal(null)}>
+            <div style={{background:'#fff',borderRadius:14,width:'100%',maxWidth:440,boxShadow:'0 12px 48px rgba(0,0,0,0.2)'}}>
+              <div style={{padding:'16px 20px',borderBottom:'1px solid var(--border-card)',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                <span style={{fontFamily:"'Poppins',sans-serif",fontWeight:800,fontSize:14,color:'var(--text-primary)'}}>{meta.title}</span>
+                <button onClick={()=>setActionModal(null)} style={{background:'none',border:'none',fontSize:20,cursor:'pointer',color:'var(--text-muted)'}}>×</button>
+              </div>
+              <div style={{padding:'16px 20px'}}>
+                {/* Investigation summary */}
+                <div style={{padding:'10px 14px',background:'var(--bg-elevated)',borderRadius:9,marginBottom:14,fontSize:12}}>
+                  <div style={{fontWeight:700,color:'var(--text-primary)',marginBottom:2}}>{actionModal.inv.referenceType}</div>
+                  <div style={{color:'var(--text-muted)'}}>{actionModal.inv.flagReason}</div>
+                </div>
+                {actionErr && (
+                  <div style={{padding:'8px 12px',background:'#fef2f2',border:'1px solid #fecaca',borderRadius:8,fontSize:12,color:'#dc2626',marginBottom:12}}>⚠ {actionErr}</div>
+                )}
+                {meta.needsNote && (
+                  <div style={{marginBottom:4}}>
+                    <label style={{display:'block',fontSize:11,fontWeight:700,color:'var(--text-secondary)',marginBottom:5}}>
+                      {actionModal.action === 'close' ? 'Findings *' : 'Notes *'}
+                    </label>
+                    <textarea autoFocus rows={3} value={actionNote}
+                      onChange={e=>{setActionNote(e.target.value);setActionErr('');}}
+                      placeholder={meta.placeholder}
+                      style={{width:'100%',padding:'9px 12px',borderRadius:8,border:'1px solid #e2e8f0',fontSize:12,fontFamily:'inherit',resize:'vertical',outline:'none',boxSizing:'border-box'}}
+                    />
+                  </div>
+                )}
+              </div>
+              <div style={{padding:'12px 20px',borderTop:'1px solid var(--border-card)',display:'flex',gap:10,justifyContent:'flex-end'}}>
+                <button onClick={()=>setActionModal(null)} style={{padding:'8px 16px',borderRadius:8,border:'1px solid var(--border-card)',background:'#fff',color:'var(--text-secondary)',fontSize:12,fontWeight:600,cursor:'pointer'}}>
+                  Cancel
+                </button>
+                <button onClick={submitAction} disabled={actionSaving}
+                  style={{padding:'8px 18px',borderRadius:8,border:'none',background:actionSaving?'#94a3b8':meta.color,color:'#fff',fontSize:12,fontWeight:700,cursor:actionSaving?'not-allowed':'pointer'}}>
+                  {actionSaving ? 'Saving…' : meta.btn}
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        );
+      })()}
+      {/* ── Override review modal ── */}
+      {overrideModal && (() => {
+        const isFlag = overrideModal.action === 'IC_OVERRIDE_FLAGGED';
+        return createPortal(
+          <div style={{position:'fixed',inset:0,zIndex:1200,background:'rgba(0,0,0,0.45)',display:'flex',alignItems:'center',justifyContent:'center',padding:16}}
+            onClick={e=>e.target===e.currentTarget&&setOverrideModal(null)}>
+            <div style={{background:'#fff',borderRadius:14,width:'100%',maxWidth:460,boxShadow:'0 12px 48px rgba(0,0,0,0.2)'}}>
+              <div style={{padding:'16px 20px',borderBottom:'1px solid var(--border-card)',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                <span style={{fontFamily:"'Poppins',sans-serif",fontWeight:800,fontSize:14,color:'var(--text-primary)'}}>
+                  {isFlag ? '🚩 Flag Override for Investigation' : '✓ Acknowledge Override'}
+                </span>
+                <button onClick={()=>setOverrideModal(null)} style={{background:'none',border:'none',fontSize:20,cursor:'pointer',color:'var(--text-muted)'}}>×</button>
+              </div>
+              <div style={{padding:'16px 20px'}}>
+                {/* Context */}
+                <div style={{padding:'10px 14px',background:isFlag?'#fdf4ff':'#f0fdf4',border:`1px solid ${isFlag?'#e9d5ff':'#bbf7d0'}`,borderRadius:9,marginBottom:14,fontSize:12}}>
+                  <div style={{fontWeight:700,color:isFlag?'#9333ea':'#16a34a',marginBottom:3}}>
+                    {isFlag ? '⚠️ You are flagging this override for investigation' : '✅ You are acknowledging this override as reviewed'}
+                  </div>
+                  <div style={{color:'var(--text-secondary)',lineHeight:1.5}}>
+                    {isFlag
+                      ? 'A formal investigation will be opened linked to this record. The override reason and your findings will be recorded in the audit trail.'
+                      : 'Your review will be permanently recorded in the audit trail confirming this override was independently checked by IC.'}
+                  </div>
+                </div>
+                {/* Override reason reminder */}
+                <div style={{padding:'8px 12px',background:'var(--bg-elevated)',borderRadius:8,marginBottom:14,fontSize:11}}>
+                  <span style={{fontWeight:700,color:'var(--purple)'}}>PM's override reason: </span>
+                  <span style={{color:'var(--text-secondary)'}}>{overrideModal.log.changes?.overrideReason || '—'}</span>
+                </div>
+                {overrideErr && (
+                  <div style={{padding:'8px 12px',background:'#fef2f2',border:'1px solid #fecaca',borderRadius:8,fontSize:12,color:'#dc2626',marginBottom:12}}>⚠ {overrideErr}</div>
+                )}
+                <div>
+                  <label style={{display:'block',fontSize:11,fontWeight:700,color:'var(--text-secondary)',marginBottom:5}}>
+                    {isFlag ? 'Reason for flagging *' : 'Review note *'}
+                  </label>
+                  <textarea autoFocus rows={3} value={overrideNote}
+                    onChange={e=>{setOverrideNote(e.target.value);setOverrideErr('');}}
+                    placeholder={isFlag
+                      ? 'State why this override appears suspicious or requires investigation…'
+                      : 'Note your findings — e.g. recount verified, reason accepted…'}
+                    style={{width:'100%',padding:'9px 12px',borderRadius:8,border:'1px solid #e2e8f0',fontSize:12,fontFamily:'inherit',resize:'vertical',outline:'none',boxSizing:'border-box'}}
+                  />
+                </div>
+              </div>
+              <div style={{padding:'12px 20px',borderTop:'1px solid var(--border-card)',display:'flex',gap:10,justifyContent:'flex-end'}}>
+                <button onClick={()=>setOverrideModal(null)} style={{padding:'8px 16px',borderRadius:8,border:'1px solid var(--border-card)',background:'#fff',color:'var(--text-secondary)',fontSize:12,fontWeight:600,cursor:'pointer'}}>
+                  Cancel
+                </button>
+                <button onClick={submitOverrideReview} disabled={overrideSaving}
+                  style={{padding:'8px 18px',borderRadius:8,border:'none',background:overrideSaving?'#94a3b8':isFlag?'#9333ea':'#16a34a',color:'#fff',fontSize:12,fontWeight:700,cursor:overrideSaving?'not-allowed':'pointer'}}>
+                  {overrideSaving ? 'Saving…' : isFlag ? '🚩 Flag for Investigation' : '✓ Acknowledge & Record'}
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        );
+      })()}
     </div>
   );
 }
-
-// ── Main ───────────────────────────────────────────────────────────────────────
-
-// ── Accountant Dashboard ──────────────────────────────────────────────────────
 function AccountantDashboard({ user, apiFetch }) {
   const [arSummary,  setArSummary]  = useState(null);
   const [apSummary,  setApSummary]  = useState(null);
@@ -2616,7 +3279,7 @@ export default function DashboardPage() {
         )}
         {isPenWorker && sections.length>0 && <WorkerDashboard sections={sections} tasks={tasks} user={user} apiFetch={apiFetch}/>}
         {isPenMgr    && <PenManagerDashboard pens={pens} tasks={tasks} user={user} apiFetch={apiFetch}/>}
-        {isManager   && <ManagerDashboard pens={pens} orgTotals={orgTotals} user={user}/>}
+        {isManager   && <ManagerDashboard pens={pens} orgTotals={orgTotals} user={user} apiFetch={apiFetch}/>}
       </div>
     </AppShell>
   );

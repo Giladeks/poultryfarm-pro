@@ -1,3 +1,5 @@
+//FILE: app/api/tasks/route.js
+//================================================
 // app/api/tasks/route.js — Task assignment and completion
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
@@ -30,7 +32,8 @@ export async function GET(request) {
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { searchParams } = new URL(request.url);
-  const myTasks = searchParams.get('mine') === 'true';
+  const myTasks    = searchParams.get('mine') === 'true';
+  const sectionIds  = searchParams.get('sectionIds');
   const date = searchParams.get('date');
   const status = searchParams.get('status');
 
@@ -47,8 +50,19 @@ export async function GET(request) {
       ...(status && { status }),
     };
 
-    // Workers only see their own tasks
-    if (user.role === 'PEN_WORKER') where.assignedToId = user.sub;
+    // Workers: if sectionIds provided, show all tasks for those sections;
+    // otherwise fall back to tasks assigned to this worker only.
+    // This ensures all section tasks show regardless of which worker was assigned.
+    if (user.role === 'PEN_WORKER') {
+      if (sectionIds) {
+        const ids = sectionIds.split(',').map(id => id.trim()).filter(Boolean);
+        where.penSectionId = { in: ids };
+        // Remove the assignedToId restriction so all section tasks are visible
+        delete where.assignedToId;
+      } else {
+        where.assignedToId = user.sub;
+      }
+    }
 
     const tasks = await prisma.task.findMany({
       where,
@@ -169,5 +183,3 @@ export async function POST(request) {
     return NextResponse.json({ error: 'Task operation failed' }, { status: 500 });
   }
 }
-
-

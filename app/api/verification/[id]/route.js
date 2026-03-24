@@ -1,12 +1,20 @@
-// app/api/verification/[id]/route.js — Single verification: GET + PATCH (escalate / resolve)
+// app/api/verification/[id]/route.js — Single verification: GET + PATCH
+// Update: PATCH now enforces the conflict-of-interest guard before allowing
+// VERIFIED status. A PM who submitted records in the same section on the same
+// day cannot verify those records — they are automatically blocked.
 import { NextResponse } from 'next/server';
 import { sendRejectionAlert } from '@/lib/services/sms';
 import { sendVerificationRejectedEmail, resolveEmailSettings } from '@/lib/services/notifications';
-import { prisma } from '@/lib/db/prisma';
+import { prisma }      from '@/lib/db/prisma';
 import { verifyToken } from '@/lib/middleware/auth';
-import { z } from 'zod';
+import { z }           from 'zod';
+import { checkConflictOfInterest } from '@/lib/utils/conflictOfInterest';
 
-const VERIFIER_ROLES = ['PEN_MANAGER', 'STORE_MANAGER', 'STORE_CLERK', 'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
+const VERIFIER_ROLES = [
+  'PEN_MANAGER', 'STORE_MANAGER', 'STORE_CLERK',
+  'INTERNAL_CONTROL', 'ACCOUNTANT',
+  'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN',
+];
 const MANAGER_ROLES  = ['FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
 const REJECT_ROLES   = ['PEN_MANAGER', 'STORE_MANAGER', 'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
 
@@ -23,13 +31,12 @@ function canVerifyRecordType(role, referenceType) {
   return !allowed || allowed.includes(role);
 }
 
-// Valid status transitions
 const STATUS_TRANSITIONS = {
   PENDING:           ['VERIFIED', 'DISCREPANCY_FOUND'],
   DISCREPANCY_FOUND: ['ESCALATED', 'RESOLVED'],
   ESCALATED:         ['RESOLVED'],
-  VERIFIED:          [],   // terminal
-  RESOLVED:          [],   // terminal
+  VERIFIED:          [],
+  RESOLVED:          [],
 };
 
 const patchSchema = z.object({
@@ -38,7 +45,6 @@ const patchSchema = z.object({
   discrepancyNotes:  z.string().nullable().optional(),
   resolution:        z.string().nullable().optional(),
   escalatedToId:     z.string().min(1).nullable().optional(),
-  // When rejecting (sending back to worker for resubmission)
   reject:            z.boolean().optional(),
   rejectReason:      z.string().optional(),
 });
@@ -64,11 +70,7 @@ export async function GET(request, { params: rawParams }) {
     if (!verification)
       return NextResponse.json({ error: 'Verification not found' }, { status: 404 });
 
-    const sourceRecord = await fetchSourceRecord(
-      verification.referenceType,
-      verification.referenceId
-    );
-
+    const sourceRecord = await fetchSourceRecord(verification.referenceType, verification.referenceId);
     return NextResponse.json({ verification, sourceRecord });
   } catch (error) {
     console.error('Verification get error:', error);
@@ -79,7 +81,7 @@ export async function GET(request, { params: rawParams }) {
 // ─── PATCH /api/verification/[id] ────────────────────────────────────────────
 export async function PATCH(request, { params: rawParams }) {
   const params = await rawParams;
-  const user = await verifyToken(request);
+  const user   = await verifyToken(request);
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   if (!VERIFIER_ROLES.includes(user.role))
     return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 });
@@ -94,7 +96,6 @@ export async function PATCH(request, { params: rawParams }) {
     if (!existing)
       return NextResponse.json({ error: 'Verification not found' }, { status: 404 });
 
-    // Typed verification gate
     if (!canVerifyRecordType(user.role, existing.referenceType)) {
       return NextResponse.json({
         error: `Your role (${user.role}) is not authorised to act on ${existing.referenceType} records.`,
@@ -102,11 +103,42 @@ export async function PATCH(request, { params: rawParams }) {
       }, { status: 403 });
     }
 
+    // ── Conflict-of-interest guard ────────────────────────────────────────────
+    // Applied when setting status to VERIFIED (not for flag/reject/escalate/resolve)
+    const targetStatus = data.status ?? (data.reject ? 'DISCREPANCY_FOUND' : null);
+    if (targetStatus === 'VERIFIED') {
+      const coi = await checkConflictOfInterest(
+        prisma, user, existing.referenceType, existing.referenceId
+      );
+      if (coi.blocked) {
+        await prisma.auditLog.create({
+          data: {
+            tenantId:   user.tenantId,
+            userId:     user.sub,
+            action:     'UPDATE',
+            entityType: 'Verification',
+            entityId:   params.id,
+            changes: {
+              blocked:       true,
+              coiType:       coi.coiType,
+              reason:        coi.reason,
+              referenceType: existing.referenceType,
+              referenceId:   existing.referenceId,
+            },
+          },
+        }).catch(() => {});
+        return NextResponse.json(
+          { error: coi.reason, coiBlocked: true, coiType: coi.coiType },
+          { status: 403 }
+        );
+      }
+    }
+
     if (data.status === 'ESCALATED' && !VERIFIER_ROLES.includes(user.role))
       return NextResponse.json({ error: 'Insufficient permissions to escalate' }, { status: 403 });
 
     if (data.status === 'RESOLVED' && !MANAGER_ROLES.includes(user.role))
-      return NextResponse.json({ error: 'Only managers can mark discrepancies as resolved' }, { status: 403 });
+      return NextResponse.json({ error: 'Only managers can mark records as resolved' }, { status: 403 });
 
     if (data.status && data.status !== existing.status) {
       const allowed = STATUS_TRANSITIONS[existing.status] || [];
@@ -118,18 +150,14 @@ export async function PATCH(request, { params: rawParams }) {
       }
     }
 
-    // ── Handle rejection (send back to worker) ─────────────────────────────────
+    // ── Rejection path (send back to worker) ──────────────────────────────────
     if (data.reject) {
       if (!REJECT_ROLES.includes(user.role))
         return NextResponse.json({ error: 'Insufficient permissions to reject records' }, { status: 403 });
 
       await rejectSourceRecord(existing.referenceType, existing.referenceId, data.rejectReason);
-
-      // In-app notification (existing)
       await notifyRejection(existing, data.rejectReason, user.tenantId).catch(() => {});
-      // SMS (existing)
       await sendRejectionSms(existing, data.rejectReason, user.tenantId).catch(() => {});
-      // Phase 5.2: Email notification
       await sendRejectionEmail(existing, data.rejectReason, user, user.tenantId).catch(() => {});
 
       const updated = await prisma.verification.update({
@@ -138,15 +166,30 @@ export async function PATCH(request, { params: rawParams }) {
         include: { verifiedBy: { select: { id: true, firstName: true, lastName: true } } },
       });
 
+      await prisma.auditLog.create({
+        data: {
+          tenantId:   user.tenantId,
+          userId:     user.sub,
+          action:     'REJECT',
+          entityType: 'Verification',
+          entityId:   params.id,
+          changes:    { rejectReason: data.rejectReason, referenceType: existing.referenceType },
+        },
+      }).catch(() => {});
+
       return NextResponse.json({ verification: updated });
     }
 
-    // ── Standard status update ─────────────────────────────────────────────────
+    // ── Standard status update ────────────────────────────────────────────────
     const updateData = {
       ...(data.status            !== undefined && { status: data.status }),
       ...(data.discrepancyAmount !== undefined && { discrepancyAmount: data.discrepancyAmount }),
       ...(data.discrepancyNotes  !== undefined && { discrepancyNotes: data.discrepancyNotes }),
       ...(data.resolution        !== undefined && { resolution: data.resolution }),
+      ...(data.status === 'VERIFIED' && {
+        verifiedById:    user.sub,
+        verificationDate: new Date(),
+      }),
       ...(data.status === 'ESCALATED' && {
         escalatedAt:   new Date(),
         escalatedToId: data.escalatedToId ?? null,
@@ -167,12 +210,13 @@ export async function PATCH(request, { params: rawParams }) {
       },
     });
 
+    if (data.status === 'VERIFIED') {
+      await updateSourceRecord(existing.referenceType, existing.referenceId, 'APPROVED', user.sub).catch(() => {});
+    }
     if (data.status === 'RESOLVED') {
       await updateSourceRecord(existing.referenceType, existing.referenceId, 'APPROVED', user.sub).catch(() => {});
-      // Notify: person who escalated + original record submitter
       await notifyResolution(existing, updated, user, user.tenantId).catch(() => {});
     }
-
     if (data.status === 'ESCALATED' && data.escalatedToId) {
       await notifyEscalation(updated, data.escalatedToId, user.tenantId).catch(() => {});
     }
@@ -254,9 +298,7 @@ async function fetchSourceRecord(referenceType, referenceId) {
       default:
         return null;
     }
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
 async function updateSourceRecord(referenceType, referenceId, status, approverId) {
@@ -309,10 +351,8 @@ async function rejectSourceRecord(referenceType, referenceId, reason) {
 async function notifyRejection(verification, reason, tenantId) {
   const sourceRecord = await fetchSourceRecord(verification.referenceType, verification.referenceId);
   if (!sourceRecord) return;
-
   const submitterId = sourceRecord.recordedById || sourceRecord.submittedById;
   if (!submitterId) return;
-
   await prisma.notification.create({
     data: {
       tenantId,
@@ -320,11 +360,7 @@ async function notifyRejection(verification, reason, tenantId) {
       type:        'REPORT_REJECTED',
       title:       `Record Rejected: ${verification.referenceType.replace(/([A-Z])/g, ' $1').trim()}`,
       message:     reason || 'Your submission was rejected. Please review and resubmit.',
-      data: {
-        verificationId: verification.id,
-        referenceType:  verification.referenceType,
-        referenceId:    verification.referenceId,
-      },
+      data: { verificationId: verification.id, referenceType: verification.referenceType, referenceId: verification.referenceId },
       channel: 'IN_APP',
     },
   });
@@ -332,30 +368,17 @@ async function notifyRejection(verification, reason, tenantId) {
 
 async function sendRejectionSms(verification, reason, tenantId) {
   try {
-    const tenant = await prisma.tenant.findUnique({
-      where: { id: tenantId },
-      select: { settings: true },
-    });
+    const tenant = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { settings: true } });
     const smsSettings = tenant?.settings?.sms;
     if (!smsSettings?.enabled || !smsSettings?.rejectionAlert?.enabled) return;
-
     const sourceRecord = await fetchSourceRecord(verification.referenceType, verification.referenceId);
     if (!sourceRecord) return;
-
     const submitterId = sourceRecord.recordedById || sourceRecord.submittedById;
     if (!submitterId) return;
-
-    const worker = await prisma.user.findUnique({
-      where: { id: submitterId },
-      select: { phone: true, firstName: true },
-    });
+    const worker = await prisma.user.findUnique({ where: { id: submitterId }, select: { phone: true, firstName: true } });
     if (!worker?.phone) return;
-
     let penName = 'your pen';
-    if (sourceRecord.penSection?.pen?.name) {
-      penName = `${sourceRecord.penSection.pen.name} › ${sourceRecord.penSection.name}`;
-    }
-
+    if (sourceRecord.penSection?.pen?.name) penName = `${sourceRecord.penSection.pen.name} › ${sourceRecord.penSection.name}`;
     await sendRejectionAlert({
       workerName:  worker.firstName || 'Worker',
       recordType:  verification.referenceType,
@@ -363,56 +386,27 @@ async function sendRejectionSms(verification, reason, tenantId) {
       reason,
       recipients:  [{ phone: worker.phone }],
     });
-  } catch (err) {
-    console.error('[SMS] Rejection alert error:', err.message);
-  }
+  } catch (err) { console.error('[SMS] Rejection alert error:', err.message); }
 }
 
-// ── Phase 5.2: Email rejection notification ────────────────────────────────────
-
 async function sendRejectionEmail(verification, reason, rejector, tenantId) {
-  const tenant = await prisma.tenant.findUnique({
-    where: { id: tenantId },
-    select: { farmName: true, settings: true },
-  });
-
+  const tenant = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { farmName: true, settings: true } });
   const emailSettings = resolveEmailSettings(tenant?.settings);
   if (!emailSettings?.enabled || !emailSettings?.verificationRejected?.enabled) return;
-
-  // Find the original submitter
   const sourceRecord = await fetchSourceRecord(verification.referenceType, verification.referenceId);
   if (!sourceRecord) return;
-
   const submitterId = sourceRecord.recordedById || sourceRecord.submittedById;
   if (!submitterId) return;
-
-  const worker = await prisma.user.findUnique({
-    where: { id: submitterId },
-    select: { email: true, firstName: true },
-  });
+  const worker = await prisma.user.findUnique({ where: { id: submitterId }, select: { email: true, firstName: true } });
   if (!worker?.email) return;
-
-  // Resolve pen name
   let penName = null;
-  if (sourceRecord.penSection?.pen?.name) {
-    penName = `${sourceRecord.penSection.pen.name} › ${sourceRecord.penSection.name}`;
-  } else if (sourceRecord.penSection?.name) {
-    penName = sourceRecord.penSection.name;
-  }
-
-  // Rejector display name
-  const rejectorName = rejector
-    ? [rejector.firstName, rejector.lastName].filter(Boolean).join(' ') || null
-    : null;
-
+  if (sourceRecord.penSection?.pen?.name) penName = `${sourceRecord.penSection.pen.name} › ${sourceRecord.penSection.name}`;
+  else if (sourceRecord.penSection?.name) penName = sourceRecord.penSection.name;
+  const rejectorName = rejector ? [rejector.firstName, rejector.lastName].filter(Boolean).join(' ') || null : null;
   await sendVerificationRejectedEmail({
-    to:           worker.email,
-    workerName:   worker.firstName || 'Team member',
-    farmName:     tenant?.farmName || 'Farm',
-    recordType:   verification.referenceType,
-    penName,
-    rejectorName,
-    reason,
+    to: worker.email, workerName: worker.firstName || 'Team member',
+    farmName: tenant?.farmName || 'Farm', recordType: verification.referenceType,
+    penName, rejectorName, reason,
   });
 }
 
@@ -420,43 +414,23 @@ async function notifyResolution(existing, updated, resolver, tenantId) {
   const sourceRecord = await fetchSourceRecord(existing.referenceType, existing.referenceId);
   const resolverName = [resolver.firstName, resolver.lastName].filter(Boolean).join(' ');
   const recordLabel  = existing.referenceType.replace(/([A-Z])/g, ' $1').trim();
-
   const title   = `Discrepancy Resolved: ${recordLabel}`;
   const message = `${resolverName} has resolved the discrepancy.${updated.resolution ? ` Resolution: ${updated.resolution}` : ''}`;
-
   const recipientIds = new Set();
-
-  // 1. Person who originally flagged it (verifiedBy = the one who created the verification)
   if (existing.verifiedById) recipientIds.add(existing.verifiedById);
-
-  // 2. Original record submitter
   if (sourceRecord) {
     const submitterId = sourceRecord.recordedById || sourceRecord.submittedById;
     if (submitterId) recipientIds.add(submitterId);
   }
-
-  // Remove the resolver themselves from notifications
   recipientIds.delete(resolver.sub);
-
   if (recipientIds.size === 0) return;
-
   await prisma.notification.createMany({
-    data: [...recipientIds].map(recipientId => ({
-      tenantId,
-      recipientId,
-      type:    'ALERT',
-      title,
-      message,
-      data: {
-        verificationId:   existing.id,
-        verificationType: existing.verificationType,
-        referenceType:    existing.referenceType,
-        referenceId:      existing.referenceId,
-        resolution:       updated.resolution,
-      },
+    data: [...recipientIds].map(id => ({
+      tenantId, recipientId: id, type: 'REPORT_APPROVED',
+      title, message,
+      data: { verificationId: existing.id, referenceType: existing.referenceType },
       channel: 'IN_APP',
     })),
-    skipDuplicates: true,
   });
 }
 
@@ -466,13 +440,10 @@ async function notifyEscalation(verification, escalatedToId, tenantId) {
       tenantId,
       recipientId: escalatedToId,
       type:        'ALERT',
-      title:       `Verification Escalated to You`,
-      message:     `A ${verification.verificationType.replace(/_/g, ' ')} discrepancy has been escalated and requires your review.`,
-      data: {
-        verificationId:   verification.id,
-        verificationType: verification.verificationType,
-      },
+      title:       `Escalated: ${verification.referenceType?.replace(/([A-Z])/g, ' $1').trim()}`,
+      message:     `A ${verification.verificationType?.replace(/_/g, ' ')} discrepancy has been escalated and requires your review.`,
+      data: { verificationId: verification.id, verificationType: verification.verificationType, referenceId: verification.referenceId },
       channel: 'IN_APP',
     },
-  });
+  }).catch(() => {});
 }

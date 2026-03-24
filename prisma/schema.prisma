@@ -115,12 +115,11 @@ model User {
   broilerHarvestRecords      BroilerHarvest[]
   dailyReportsApproved       DailyReport[]         @relation("ReportApprovedBy")
   dailyReports               DailyReport[]         @relation("ReportSubmittedBy")
-  eggProductionRecords       EggProduction[]
-  eggProductionApprovals     EggProduction[]       @relation("EggProductionApprovedBy")
-  feedConsumptionRecords     FeedConsumption[]
-  feedConsumptionApprovals   FeedConsumption[]     @relation("FeedConsumptionApprovedBy")
   dailySummaryReviews        DailySummary[]        @relation("DailySummaryReviewedBy")
-  waterMeterReadings         WaterMeterReading[]
+  eggProductionApprovals     EggProduction[]       @relation("EggProductionApprovedBy")
+  eggProductionRecords       EggProduction[]
+  feedConsumptionApprovals   FeedConsumption[]     @relation("FeedConsumptionApprovedBy")
+  feedConsumptionRecords     FeedConsumption[]
   feedMillBatches            FeedMillBatch[]
   healthObservations         HealthObservation[]
   investigationsEscalated    Investigation[]       @relation("InvestigationEscalatedTo")
@@ -161,9 +160,17 @@ model User {
   verificationsResolved      Verification[]        @relation("VerificationResolvedBy")
   verifications              Verification[]        @relation("VerificationVerifiedBy")
   vetVisits                  VetVisit[]
+  waterMeterReadings         WaterMeterReading[]
   weightRecords              WeightRecord[]
+  weight_samples             weight_samples[]
   workOrders                 WorkOrder[]           @relation("WOAssignedTo")
   workOrdersCreated          WorkOrder[]           @relation("WOCreatedBy")
+  submittedRequisitions      FeedRequisition[]     @relation("RequisitionSubmittedBy")
+  approvedRequisitions       FeedRequisition[]     @relation("RequisitionApprovedBy")
+  rejectedRequisitions       FeedRequisition[]     @relation("RequisitionRejectedBy")
+  issuedRequisitions         FeedRequisition[]     @relation("RequisitionIssuedBy")
+  acknowledgedRequisitions   FeedRequisition[]     @relation("RequisitionAcknowledgedBy")
+  closedRequisitions         FeedRequisition[]     @relation("RequisitionClosedBy")
 
   @@unique([tenantId, email])
   @@map("users")
@@ -192,9 +199,9 @@ model Farm {
   email             String?
   managerId         String?
   isActive          Boolean            @default(true)
-  autoSummaryTime   String             @default("19:00")   // HH:MM, farm-configurable auto-submit time
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
+  autoSummaryTime   String             @default("19:00")
   dailyReports      DailyReport[]
   dailySummaries    DailySummary[]
   tenant            Tenant             @relation(fields: [tenantId], references: [id])
@@ -231,6 +238,7 @@ model PenSection {
   isActive           Boolean               @default(true)
   broilerHarvests    BroilerHarvest[]
   dailyReports       DailyReport[]
+  dailySummaries     DailySummary[]
   eggProduction      EggProduction[]
   feedConsumption    FeedConsumption[]
   flocks             Flock[]
@@ -242,7 +250,8 @@ model PenSection {
   tasks              Task[]
   waterMeterReadings WaterMeterReading[]
   weightRecords      WeightRecord[]
-  dailySummaries     DailySummary[]
+  weight_samples     weight_samples[]
+  requisitions       FeedRequisition[]
 
   @@map("pen_sections")
 }
@@ -282,49 +291,47 @@ model Flock {
   vaccinations            Vaccination[]
   waterMeterReadings      WaterMeterReading[]
   weightRecords           WeightRecord[]
+  weight_samples          weight_samples[]
+  requisitions            FeedRequisition[]
 
   @@unique([tenantId, batchCode])
   @@map("flocks")
 }
 
 model EggProduction {
-  id               String           @id @default(uuid())
-  flockId          String
-  penSectionId     String
-  collectionDate   DateTime         @db.Date
-  collectionSession  Int              @default(1)   // 1 = morning, 2 = afternoon, always max 2
-
-  // Worker-entered fields
-  cratesCollected  Int                             // full crates collected
-  looseEggs        Int              @default(0)   // sub-crate remainder
-  crackedCount     Int              @default(0)   // always individual, no crates
-
-  // System-calculated on worker submission
-  totalEggs        Int                             // (cratesCollected×30) + looseEggs + crackedCount
-  layingRatePct    Decimal          @db.Decimal(5, 2)
-
-  // PM-entered fields on verification
-  gradeBCrates     Int?                            // PM enters after physical count
-  gradeBLoose      Int?                            // PM enters after physical count
-  crackedConfirmed Int?                            // PM confirms/adjusts worker cracked count
-
-  // System-calculated on PM verification
-  gradeBCount      Int?                            // (gradeBCrates×30) + gradeBLoose
-  gradeACount      Int?                            // totalEggs − gradeBCount − crackedConfirmed
-  gradeAPct        Decimal?         @db.Decimal(5, 2)  // gradeACount / totalEggs × 100
-
-  recordedById     String
-  approvedById     String?
-  approvedAt       DateTime?
-  submissionStatus SubmissionStatus @default(PENDING)
-  notes            String?
-  rejectionReason  String?
-  createdAt        DateTime         @default(now())
-  updatedAt        DateTime         @updatedAt
-  flock            Flock            @relation(fields: [flockId], references: [id])
-  penSection       PenSection       @relation(fields: [penSectionId], references: [id])
-  recordedBy       User             @relation(fields: [recordedById], references: [id])
-  approvedBy       User?            @relation("EggProductionApprovedBy", fields: [approvedById], references: [id])
+  id                  String           @id @default(uuid())
+  flockId             String
+  penSectionId        String
+  collectionDate      DateTime         @db.Date
+  totalEggs           Int
+  gradeACount_old     Int              @default(0)
+  gradeBCount_old     Int              @default(0)
+  crackedCount        Int              @default(0)
+  dirtyCount          Int              @default(0)
+  layingRatePct       Decimal          @db.Decimal(5, 2)
+  cratesCount         Int?
+  recordedById        String
+  approvedById        String?
+  approvedAt          DateTime?
+  submissionStatus    SubmissionStatus @default(PENDING)
+  notes               String?
+  createdAt           DateTime         @default(now())
+  rejectionReason     String?
+  collectionSession   Int              @default(1)
+  cratesCollected     Int?
+  looseEggs           Int              @default(0)
+  gradeBCrates        Int?
+  gradeBLoose         Int?
+  crackedConfirmed    Int?
+  gradeBCount         Int?
+  gradeACount         Int?
+  gradeAPct           Decimal?         @db.Decimal(5, 2)
+  cratesCollected_new Int?
+  updatedAt           DateTime         @default(now()) @updatedAt @db.Timestamptz(6)
+  approvedBy          User?            @relation("EggProductionApprovedBy", fields: [approvedById], references: [id], onUpdate: NoAction)
+  flock               Flock            @relation(fields: [flockId], references: [id])
+  penSection          PenSection       @relation(fields: [penSectionId], references: [id])
+  recordedBy          User             @relation(fields: [recordedById], references: [id])
 
   @@map("egg_production")
 }
@@ -469,114 +476,183 @@ model FeedInventory {
   reorderLevelKg Decimal           @db.Decimal(10, 2)
   maxStockKg     Decimal?          @db.Decimal(12, 2)
   costPerKg      Decimal           @db.Decimal(10, 4)
-  bagWeightKg    Decimal           @default(25) @db.Decimal(6, 2)   // standard bag weight, configurable per farm
   currency       Currency          @default(NGN)
   supplierId     String?
   batchNumber    String?
   expiryDate     DateTime?         @db.Date
   updatedAt      DateTime          @updatedAt
   createdAt      DateTime          @default(now())
+  bagWeightKg    Decimal           @default(25) @db.Decimal(6, 2)
   consumption    FeedConsumption[]
   formula        FeedFormula?      @relation(fields: [formulaId], references: [id])
   store          Store             @relation(fields: [storeId], references: [id])
   supplier       Supplier?         @relation(fields: [supplierId], references: [id])
   issuances      StoreIssuance[]   @relation("FeedIssuances")
   storeReceipts  StoreReceipt[]    @relation("FeedReceipts")
+  requisitions   FeedRequisition[]
 
   @@map("feed_inventory")
 }
 
 model FeedConsumption {
-  id              String        @id @default(uuid())
-  flockId         String
-  penSectionId    String
-  feedInventoryId String
-  recordedDate    DateTime      @db.Date
-  feedTime        DateTime      @default(now())    // timestamp of distribution; sequence derived by ordering
-  bagsUsed        Int                              // full bags emptied completely
-  remainingKg     Decimal       @db.Decimal(6, 2)  // kg left in the last opened bag
-  bagWeightKg     Decimal       @db.Decimal(6, 2)  // captured from feed inventory at time of logging
-  quantityKg      Decimal       @db.Decimal(10, 2)  // system-calculated: (bagsUsed × bagWeightKg) + (bagWeightKg − remainingKg)
-  gramsPerBird    Decimal?      @db.Decimal(6, 2)
-  costAtTime      Decimal       @db.Decimal(10, 4)
-  currency        Currency      @default(NGN)
-  recordedById    String
-  approvedById    String?
-  approvedAt      DateTime?
-  submissionStatus SubmissionStatus @default(PENDING)
-  notes           String?
-  rejectionReason String?
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
-  feedInventory   FeedInventory @relation(fields: [feedInventoryId], references: [id])
-  flock           Flock         @relation(fields: [flockId], references: [id])
-  penSection      PenSection    @relation(fields: [penSectionId], references: [id])
-  recordedBy      User          @relation(fields: [recordedById], references: [id])
-  approvedBy      User?         @relation("FeedConsumptionApprovedBy", fields: [approvedById], references: [id])
+  id               String        @id @default(uuid())
+  flockId          String
+  penSectionId     String
+  feedInventoryId  String
+  recordedDate     DateTime      @db.Date
+  quantityKg       Decimal       @db.Decimal(10, 2)
+  gramsPerBird     Decimal?      @db.Decimal(6, 2)
+  costAtTime       Decimal       @db.Decimal(10, 4)
+  currency         Currency      @default(NGN)
+  recordedById     String
+  notes            String?
+  createdAt        DateTime      @default(now())
+  feedTime         DateTime      @default(now()) @db.Timestamptz(6)
+  bagsUsed         Int?
+  remainingKg      Decimal?      @db.Decimal(6, 2)
+  bagWeightKg      Decimal?      @db.Decimal(6, 2)
+  approvedById     String?
+  approvedAt       DateTime?     @db.Timestamptz(6)
+  submissionStatus String        @default("PENDING")
+  rejectionReason  String?
+  updatedAt        DateTime      @default(now()) @updatedAt @db.Timestamptz(6)
+  approvedBy       User?         @relation("FeedConsumptionApprovedBy", fields: [approvedById], references: [id], onUpdate: NoAction)
+  feedInventory    FeedInventory @relation(fields: [feedInventoryId], references: [id])
+  flock            Flock         @relation(fields: [flockId], references: [id])
+  penSection       PenSection    @relation(fields: [penSectionId], references: [id])
+  recordedBy       User          @relation(fields: [recordedById], references: [id])
 
   @@map("feed_consumption")
 }
 
-model WaterMeterReading {
-  id              String     @id @default(uuid())
-  tenantId        String
-  penSectionId    String
-  flockId         String?
-  readingDate     DateTime   @db.Date
-  meterReading    Decimal    @db.Decimal(12, 2)   // raw odometer value in litres
-  consumptionL    Decimal?   @db.Decimal(12, 2)   // system-calculated: today − yesterday
-  consumptionLPB  Decimal?   @db.Decimal(8, 4)    // consumptionL / currentBirdCount
-  recordedById    String
-  createdAt       DateTime   @default(now())
-  flock           Flock?     @relation(fields: [flockId],      references: [id])
-  penSection      PenSection @relation(fields: [penSectionId], references: [id])
-  recordedBy      User       @relation(fields: [recordedById], references: [id])
+model FeedRequisition {
+  id                    String                 @id @default(uuid())
+  tenantId              String
+  requisitionNumber     String                 // e.g. REQ-2026-00042, unique per tenant
+  feedForDate           DateTime               @db.Date   // date the feed is needed FOR
+  triggerLogId          String?                // FeedConsumption.id that triggered this
 
-  @@unique([penSectionId, readingDate])   // one reading per section per day
+  // Context
+  penSectionId          String
+  flockId               String
+  feedInventoryId       String
+  storeId               String?
+
+  // System calculation basis
+  calculatedQtyKg       Decimal                @db.Decimal(10, 2)
+  avgConsumptionPerBirdG Decimal?              @db.Decimal(8, 4)  // grams/bird/day 7d avg
+  currentBirdCount      Int?
+  calculationDays       Int                    @default(7)
+
+  // PM submission
+  requestedQtyKg        Decimal?               @db.Decimal(10, 2)
+  pmNotes               String?
+  submittedById         String?
+  submittedAt           DateTime?
+  deviationPct          Decimal?               @db.Decimal(6, 2)  // (requested-calculated)/calculated*100
+
+  // IC approval/rejection
+  approvedQtyKg         Decimal?               @db.Decimal(10, 2)
+  icNotes               String?
+  approvedById          String?
+  approvedAt            DateTime?
+  rejectionReason       String?
+  rejectedById          String?
+  rejectedAt            DateTime?
+
+  // Store issuance
+  issuedQtyKg           Decimal?               @db.Decimal(10, 2)
+  issuedById            String?
+  issuedAt              DateTime?
+  storeIssuanceId       String?
+  issuanceNotes         String?
+
+  // PM acknowledgement
+  acknowledgedQtyKg     Decimal?               @db.Decimal(10, 2)
+  acknowledgedById      String?
+  acknowledgedAt        DateTime?
+  discrepancyQtyKg      Decimal?               @db.Decimal(10, 2)  // issuedQty - acknowledgedQty
+  acknowledgementNotes  String?
+
+  // Closure
+  closedById            String?
+  closedAt              DateTime?
+  closeNotes            String?
+
+  status                FeedRequisitionStatus  @default(DRAFT)
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+
+  // Relations
+  penSection            PenSection             @relation(fields: [penSectionId], references: [id])
+  flock                 Flock                  @relation(fields: [flockId], references: [id])
+  feedInventory         FeedInventory          @relation(fields: [feedInventoryId], references: [id])
+  store                 Store?                 @relation(fields: [storeId], references: [id])
+  submittedBy           User?                  @relation("RequisitionSubmittedBy", fields: [submittedById], references: [id])
+  approvedBy            User?                  @relation("RequisitionApprovedBy", fields: [approvedById], references: [id])
+  rejectedBy            User?                  @relation("RequisitionRejectedBy", fields: [rejectedById], references: [id])
+  issuedBy              User?                  @relation("RequisitionIssuedBy", fields: [issuedById], references: [id])
+  acknowledgedBy        User?                  @relation("RequisitionAcknowledgedBy", fields: [acknowledgedById], references: [id])
+  closedBy              User?                  @relation("RequisitionClosedBy", fields: [closedById], references: [id])
+
+  @@unique([tenantId, requisitionNumber])
+  @@unique([penSectionId, feedInventoryId, feedForDate])  // one per section/feedtype/date
+  @@index([tenantId, status])
+  @@index([penSectionId, feedForDate(sort: Desc)])
+  @@map("feed_requisitions")
+}
+
+model WaterMeterReading {
+  id             String     @id @default(dbgenerated("(gen_random_uuid())::text"))
+  tenantId       String
+  penSectionId   String
+  flockId        String?
+  readingDate    DateTime   @db.Date
+  meterReading   Decimal    @db.Decimal(12, 2)
+  consumptionL   Decimal?   @db.Decimal(12, 2)
+  consumptionLPB Decimal?   @db.Decimal(8, 4)
+  recordedById   String
+  createdAt      DateTime   @default(now()) @db.Timestamptz(6)
+  flock          Flock?     @relation(fields: [flockId], references: [id], onUpdate: NoAction)
+  penSection     PenSection @relation(fields: [penSectionId], references: [id], onUpdate: NoAction)
+  recordedBy     User       @relation(fields: [recordedById], references: [id], onUpdate: NoAction)
+
+  @@unique([penSectionId, readingDate])
   @@index([tenantId])
   @@index([penSectionId, readingDate(sort: Desc)])
   @@map("water_meter_readings")
 }
 
 model DailySummary {
-  id                  String          @id @default(uuid())
-  tenantId            String
-  farmId              String
-  penSectionId        String
-  summaryDate         DateTime        @db.Date
-  submittedAt         DateTime?                     // set when auto-submitted
-  status              SummaryStatus   @default(PENDING)
+  id                            String        @id @default(dbgenerated("(gen_random_uuid())::text"))
+  tenantId                      String
+  farmId                        String
+  penSectionId                  String
+  summaryDate                   DateTime      @db.Date
+  submittedAt                   DateTime?     @db.Timestamptz(6)
+  status                        SummaryStatus @default(PENDING)
+  totalEggsCollected            Int           @default(0)
+  totalFeedKg                   Decimal       @default(0) @db.Decimal(10, 2)
+  totalMortality                Int           @default(0)
+  waterConsumptionL             Decimal?      @db.Decimal(12, 2)
+  waterNipplesChecked           Boolean       @default(false)
+  manureBeltsRun                Boolean       @default(false)
+  aislesSwept                   Boolean       @default(false)
+  cageDoorsInspected            Boolean       @default(false)
+  closingObservation            String?
+  pendingEggVerifications       Int           @default(0)
+  pendingFeedVerifications      Int           @default(0)
+  pendingMortalityVerifications Int           @default(0)
+  reviewedById                  String?
+  reviewedAt                    DateTime?     @db.Timestamptz(6)
+  reviewNotes                   String?
+  createdAt                     DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt                     DateTime      @default(now()) @updatedAt @db.Timestamptz(6)
+  farm                          Farm          @relation(fields: [farmId], references: [id], onUpdate: NoAction)
+  penSection                    PenSection    @relation(fields: [penSectionId], references: [id], onUpdate: NoAction)
+  reviewedBy                    User?         @relation("DailySummaryReviewedBy", fields: [reviewedById], references: [id], onUpdate: NoAction)
 
-  // Aggregated production totals (system-populated)
-  totalEggsCollected  Int             @default(0)
-  totalFeedKg         Decimal         @default(0) @db.Decimal(10, 2)
-  totalMortality      Int             @default(0)
-  waterConsumptionL   Decimal?        @db.Decimal(12, 2)
-
-  // Checklist items (worker-entered during day)
-  waterNipplesChecked Boolean         @default(false)
-  manureBeltsRun      Boolean         @default(false)
-  aislesSwept         Boolean         @default(false)
-  cageDoorsInspected  Boolean         @default(false)
-  closingObservation  String?                       // worker's 6PM note
-
-  // Pending verification flags (system-populated at auto-submit)
-  pendingEggVerifications     Int     @default(0)
-  pendingFeedVerifications    Int     @default(0)
-  pendingMortalityVerifications Int   @default(0)
-
-  // PM review
-  reviewedById        String?
-  reviewedAt          DateTime?
-  reviewNotes         String?
-
-  createdAt           DateTime        @default(now())
-  updatedAt           DateTime        @updatedAt
-  farm                Farm            @relation(fields: [farmId],        references: [id])
-  penSection          PenSection      @relation(fields: [penSectionId],  references: [id])
-  reviewedBy          User?           @relation("DailySummaryReviewedBy", fields: [reviewedById], references: [id])
-
-  @@unique([penSectionId, summaryDate])   // one summary per section per day
+  @@unique([penSectionId, summaryDate])
   @@index([tenantId])
   @@index([farmId, summaryDate(sort: Desc)])
   @@map("daily_summaries")
@@ -642,6 +718,7 @@ model Store {
   receipts      StoreReceipt[]
   farm          Farm            @relation(fields: [farmId], references: [id])
   verifications Verification[]
+  requisitions  FeedRequisition[]
 
   @@map("stores")
 }
@@ -1625,6 +1702,33 @@ model BankTransaction {
   @@map("bank_transactions")
 }
 
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model weight_samples {
+  id            String      @id @default(dbgenerated("(gen_random_uuid())::text"))
+  tenantId      String
+  flockId       String
+  penSectionId  String?
+  sampleDate    DateTime    @db.Date
+  sampleCount   Int
+  meanWeightG   Decimal     @db.Decimal(8, 1)
+  minWeightG    Decimal?    @db.Decimal(8, 1)
+  maxWeightG    Decimal?    @db.Decimal(8, 1)
+  uniformityPct Decimal?    @db.Decimal(5, 2)
+  estimatedFCR  Decimal?    @db.Decimal(6, 3)
+  recordedById  String
+  createdAt     DateTime    @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime    @default(now()) @db.Timestamptz(6)
+  flocks        Flock       @relation(fields: [flockId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  pen_sections  PenSection? @relation(fields: [penSectionId], references: [id], onUpdate: NoAction)
+  users         User        @relation(fields: [recordedById], references: [id], onUpdate: NoAction)
+
+  @@index([flockId])
+  @@index([penSectionId])
+  @@index([sampleDate(sort: Desc)])
+  @@index([tenantId])
+  @@index([tenantId, sampleDate(sort: Desc)])
+}
+
 enum TenantStatus {
   ACTIVE
   SUSPENDED
@@ -1712,10 +1816,10 @@ enum SubmissionStatus {
 }
 
 enum SummaryStatus {
-  PENDING            // not yet auto-submitted
-  SUBMITTED          // auto-submitted, awaiting PM review
-  REVIEWED           // PM has reviewed
-  FLAGGED            // has pending verifications at submission time
+  PENDING
+  SUBMITTED
+  REVIEWED
+  FLAGGED
 }
 
 enum FeedMillStatus {
@@ -2080,3 +2184,16 @@ enum SupplierInvoiceStatus {
   DISPUTED
   VOID
 }
+
+enum FeedRequisitionStatus {
+  DRAFT           // system-created draft, awaiting PM review
+  SUBMITTED       // PM confirmed and submitted to IC
+  APPROVED        // IC approved, ready for store to issue
+  REJECTED        // IC rejected, returned to PM for revision
+  ISSUED          // store issued full approved quantity
+  ISSUED_PARTIAL  // store issued partial (stock shortage) — flagged to IC
+  ACKNOWLEDGED    // PM confirmed receipt of feed
+  DISCREPANCY     // PM acknowledged quantity differs from what was issued
+  CLOSED          // IC or Farm Manager closed the loop
+}
+

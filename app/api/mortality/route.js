@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
 import { verifyToken } from '@/lib/middleware/auth';
 import { z } from 'zod';
+import { autoSubmitSummary } from '@/lib/utils/autoSubmitSummary';
 import { sendMortalityAlert } from '@/lib/services/sms';
 import { sendMortaltySpikeEmail, resolveEmailSettings } from '@/lib/services/notifications';
 
@@ -127,6 +128,16 @@ export async function POST(request) {
     // Fire-and-forget spike check (SMS + email)
     checkMortalitySpike(user.tenantId, data.flockId, data.count, data.causeCode).catch(console.error);
 
+    // Auto-submit daily summary if past farm's autoSummaryTime (fire-and-forget)
+    prisma.penSection.findUnique({
+      where:   { id: data.penSectionId },
+      include: { pen: { include: { farm: { select: { id: true, autoSummaryTime: true } } } } },
+    }).then(sec => {
+      if (sec)
+        autoSubmitSummary(user.tenantId, data.penSectionId, sec.pen.farmId, sec.pen.farm.autoSummaryTime)
+          .catch(() => {});
+    }).catch(() => {});
+
     return NextResponse.json({ record }, { status: 201 });
   } catch (error) {
     if (error.name === 'ZodError')
@@ -227,3 +238,6 @@ async function checkMortalitySpike(tenantId, flockId, count, causeCode) {
     }).catch(err => console.error('[EMAIL] Mortality spike error:', err.message));
   }
 }
+
+
+

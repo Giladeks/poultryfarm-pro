@@ -1,23 +1,49 @@
 'use client';
-// app/verification/page.js — Full page with enhanced Discrepancy resolution flow
-// Pending: grouped swim-lane sections (4-col grid per lane, as user has set)
-// Discrepancies: full source-record context, escalation target picker, resolution notes
+// app/verification/page.js
+// Permission model (revised):
+//   PEN_MANAGER / STORE_MANAGER / STORE_CLERK  → Verify + Reject only
+//   INTERNAL_CONTROL / ACCOUNTANT              → Flag + Escalate only (read the record, trigger investigation)
+//   FARM_MANAGER / FARM_ADMIN / CHAIRPERSON /
+//   SUPER_ADMIN                                → Verify + Reject + Flag + Resolve escalations
 import { useState, useEffect, useCallback } from 'react';
 import AppShell from '@/components/layout/AppShell';
 import { useAuth } from '@/components/layout/AuthProvider';
+import GradingModal from '@/components/eggs/GradingModal';
+import MortalityVerifyModal from '@/components/verification/MortalityVerifyModal';
+import OverrideModal from '@/components/verification/OverrideModal';
 
 // ─── Role helpers ─────────────────────────────────────────────────────────────
-const VERIFIER_ROLES     = ['PEN_MANAGER','STORE_MANAGER','STORE_CLERK','FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN'];
-const MANAGER_ROLES      = ['FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN'];
-const REJECT_ROLES       = ['PEN_MANAGER','STORE_MANAGER','FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN'];
-const MANAGEMENT_OVERRIDE= ['FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN'];
+// Who can access this page at all
+const PAGE_ROLES = [
+  'PEN_MANAGER','STORE_MANAGER','STORE_CLERK',
+  'INTERNAL_CONTROL','ACCOUNTANT',
+  'FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN',
+];
+// Who can Verify / Reject (operational check)
+const VERIFIER_ROLES = [
+  'PEN_MANAGER','STORE_MANAGER','STORE_CLERK',
+  'FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN',
+];
+// Who can Reject specifically
+const REJECT_ROLES = [
+  'PEN_MANAGER','STORE_MANAGER',
+  'FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN',
+];
+// Who can Flag as suspicious (integrity / audit function — NOT operational verifiers)
+const FLAG_ROLES = [
+  'INTERNAL_CONTROL','ACCOUNTANT',
+  'FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN',
+];
+// Who can Escalate and Resolve investigations
+const MANAGER_ROLES = ['FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN'];
+const MANAGEMENT_OVERRIDE = ['FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN'];
 
 const RECORD_TYPE_VERIFIERS = {
-  EggProduction:   [...new Set(['PEN_MANAGER',                  ...MANAGEMENT_OVERRIDE])],
-  MortalityRecord: [...new Set(['PEN_MANAGER',                  ...MANAGEMENT_OVERRIDE])],
-  FeedConsumption: [...new Set(['STORE_MANAGER','STORE_CLERK',  ...MANAGEMENT_OVERRIDE])],
-  StoreReceipt:    [...new Set(['STORE_MANAGER',                ...MANAGEMENT_OVERRIDE])],
-  DailyReport:     [...new Set(['PEN_MANAGER',                  ...MANAGEMENT_OVERRIDE])],
+  EggProduction:   [...new Set(['PEN_MANAGER',                    ...MANAGEMENT_OVERRIDE])],
+  MortalityRecord: [...new Set(['PEN_MANAGER',                    ...MANAGEMENT_OVERRIDE])],
+  FeedConsumption: [...new Set(['STORE_MANAGER', 'STORE_CLERK',   ...MANAGEMENT_OVERRIDE])],
+  StoreReceipt:    [...new Set(['STORE_MANAGER',                  ...MANAGEMENT_OVERRIDE])],
+  DailyReport:     [...new Set(['PEN_MANAGER',                    ...MANAGEMENT_OVERRIDE])],
 };
 const RECORD_TYPE_OWNER = {
   EggProduction:   'Pen Manager',
@@ -33,7 +59,7 @@ function isPrimaryVerifier(role, referenceType) {
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-const TABS = ['pending', 'verified', 'discrepancies'];
+const TABS = ['pending', 'verified', 'flagged'];
 
 const TYPE_META = {
   DAILY_PRODUCTION: { icon: '📋', label: 'Daily Production', color: '#6c63ff' },
@@ -54,7 +80,7 @@ const SWIM_LANES = [
 const STATUS_META = {
   PENDING:           { bg: '#fffbeb', color: '#d97706', border: '#fde68a', label: 'Pending'     },
   VERIFIED:          { bg: '#f0fdf4', color: '#16a34a', border: '#bbf7d0', label: 'Verified'    },
-  DISCREPANCY_FOUND: { bg: '#fef2f2', color: '#dc2626', border: '#fecaca', label: 'Discrepancy' },
+  DISCREPANCY_FOUND: { bg: '#fef2f2', color: '#dc2626', border: '#fecaca', label: 'Flagged'     },
   ESCALATED:         { bg: '#fdf4ff', color: '#9333ea', border: '#e9d5ff', label: 'Escalated'   },
   RESOLVED:          { bg: '#f0fdf4', color: '#16a34a', border: '#bbf7d0', label: 'Resolved'    },
 };
@@ -137,8 +163,8 @@ function ActionModal({ item, action, onClose, onConfirm, managers }) {
   const isEscalate    = action === 'escalate';
   const isResolve     = action === 'resolve';
 
-  const title = isVerify ? '✅ Confirm Verification' : isDiscrepancy ? '⚠️ Flag Discrepancy' : isReject ? '↩️ Reject & Return' : isEscalate ? '🔺 Escalate to Manager' : '✓ Mark as Resolved';
-  const confirmLabel = isVerify ? 'Verify Record' : isDiscrepancy ? 'Flag Discrepancy' : isReject ? 'Reject & Notify Worker' : isEscalate ? 'Escalate' : 'Mark Resolved';
+  const title = isVerify ? '✅ Confirm Verification' : isDiscrepancy ? '🚩 Flag for Investigation' : isReject ? '↩️ Reject & Return' : isEscalate ? '🔺 Escalate to Manager' : '✓ Mark as Resolved';
+  const confirmLabel = isVerify ? 'Verify Record' : isDiscrepancy ? 'Flag for Investigation' : isReject ? 'Reject & Notify Worker' : isEscalate ? 'Escalate' : 'Mark Resolved';
   const confirmColor = isVerify || isResolve ? '#16a34a' : isDiscrepancy || isEscalate ? '#d97706' : '#dc2626';
 
   const handleConfirm = async () => {
@@ -219,14 +245,14 @@ function ActionModal({ item, action, onClose, onConfirm, managers }) {
 
           <div style={{ marginBottom: 6 }}>
             <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#475569', marginBottom: 5 }}>
-              {isVerify ? 'Verification Notes (optional)' : isResolve ? 'Resolution Notes *' : 'Notes *'}
+              {isVerify ? 'Verification Notes (optional)' : isResolve ? 'Resolution Notes *' : isDiscrepancy ? 'Investigation Notes *' : 'Notes *'}
             </label>
             <textarea rows={3} placeholder={
               isVerify      ? 'Any observations during verification…'
-              : isDiscrepancy ? 'Describe what was found vs. what was logged…'
+              : isDiscrepancy ? 'Describe why this record looks suspicious and what should be investigated…'
               : isReject    ? 'Reason for rejection — worker will be notified…'
               : isEscalate  ? 'Describe the issue and why it needs escalation…'
-              : 'How was this discrepancy resolved? What action was taken?'
+              : 'How was this investigation resolved? What action was taken?'
             }
               value={notes} onChange={e => setNotes(e.target.value)}
               style={{ width: '100%', padding: '9px 12px', borderRadius: 8, border: '1px solid #e2e8f0', fontSize: 13, fontFamily: 'inherit', outline: 'none', resize: 'vertical', boxSizing: 'border-box' }}
@@ -246,26 +272,60 @@ function ActionModal({ item, action, onClose, onConfirm, managers }) {
 }
 
 // ─── Pending Item Card ─────────────────────────────────────────────────────────
-function PendingCard({ item, userRole, canReject, onAction, laneColor }) {
-  const canVerify  = item.canVerify !== undefined ? item.canVerify : isPrimaryVerifier(userRole, item.referenceType);
-  const isOverride = MANAGEMENT_OVERRIDE.includes(userRole) && RECORD_TYPE_OWNER[item.referenceType] && !['PEN_MANAGER','STORE_MANAGER','STORE_CLERK'].includes(userRole);
+// Button visibility by role:
+//   PEN_MANAGER / STORE_MANAGER / STORE_CLERK → Verify + Reject
+//   INTERNAL_CONTROL / ACCOUNTANT             → Flag only
+//   FARM_MANAGER / FARM_ADMIN / CHAIRPERSON / SUPER_ADMIN → Verify + Reject + Flag
+function PendingCard({ item, userRole, onAction, laneColor }) {
+  const canVerifyThis = item.canVerify !== undefined
+    ? item.canVerify
+    : isPrimaryVerifier(userRole, item.referenceType);
+
+  const canRejectThis = REJECT_ROLES.includes(userRole) && canVerifyThis;
+  const canFlagThis   = FLAG_ROLES.includes(userRole);
+  // Pure IC/Audit roles can ONLY flag — they cannot verify or reject
+  const icOnly        = ['INTERNAL_CONTROL', 'ACCOUNTANT'].includes(userRole);
+
+  const isOverride = MANAGEMENT_OVERRIDE.includes(userRole)
+    && RECORD_TYPE_OWNER[item.referenceType]
+    && !['PEN_MANAGER','STORE_MANAGER','STORE_CLERK'].includes(userRole);
   const isHighRisk = item.severity === 'HIGH';
 
   return (
     <div style={{ background: '#fff', borderRadius: 11, border: `1px solid ${isHighRisk ? laneColor + '55' : 'var(--border-card)'}`, boxShadow: isHighRisk ? `0 0 0 3px ${laneColor}18, 0 2px 8px rgba(0,0,0,0.06)` : '0 1px 4px rgba(0,0,0,0.04)', overflow: 'hidden', animation: 'fadeIn 0.2s ease', display: 'flex', flexDirection: 'column' }}>
       <div style={{ height: 3, background: `linear-gradient(90deg, ${laneColor}, ${laneColor}88)` }} />
       <div style={{ padding: '14px 16px', flex: 1, display: 'flex', flexDirection: 'column' }}>
+
+        {/* Management override notice */}
         {isOverride && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, padding: '7px 11px', marginBottom: 12, fontSize: 11 }}>
             <span>⚠️</span>
             <span style={{ color: '#92400e', fontWeight: 600 }}>Primary verifier: <strong>{RECORD_TYPE_OWNER[item.referenceType]}</strong>. You are verifying as a management override.</span>
           </div>
         )}
+
+        {/* Conflict-of-interest warning */}
+        {item.coiBlocked && !isOverride && (
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, background: '#fdf4ff', border: '1px solid #e9d5ff', borderRadius: 8, padding: '8px 11px', marginBottom: 12, fontSize: 11 }}>
+            <span style={{ flexShrink: 0, marginTop: 1 }}>🔒</span>
+            <span style={{ color: '#7c3aed', fontWeight: 600, lineHeight: 1.4 }}>{item.coiReason}</span>
+          </div>
+        )}
+
+        {/* IC read-only notice */}
+        {icOnly && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#fdf4ff', border: '1px solid #e9d5ff', borderRadius: 8, padding: '7px 11px', marginBottom: 12, fontSize: 11 }}>
+            <span>🔍</span>
+            <span style={{ color: '#7c3aed', fontWeight: 600 }}>Audit view — you can flag suspicious records for investigation</span>
+          </div>
+        )}
+
         {item.resubmitted && (
           <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, marginBottom: 10, padding: '3px 9px', borderRadius: 99, background: '#ede9fe', color: '#7c3aed', fontSize: 11, fontWeight: 700, alignSelf: 'flex-start' }}>
             🔄 RESUBMITTED
           </div>
         )}
+
         <div style={{ marginBottom: 10 }}>
           <div style={{ fontSize: 14, fontWeight: 800, color: '#1e293b', lineHeight: 1.4 }}>{item.summary}</div>
           <div style={{ fontSize: 12, color: '#64748b', marginTop: 3 }}>{item.context}</div>
@@ -274,20 +334,70 @@ function PendingCard({ item, userRole, canReject, onAction, laneColor }) {
           <span style={{ fontSize: 11, padding: '3px 8px', borderRadius: 6, background: '#f1f5f9', color: '#475569', fontWeight: 500 }}>👤 {item.submittedBy}</span>
           <span style={{ fontSize: 11, padding: '3px 8px', borderRadius: 6, background: '#f1f5f9', color: '#475569', fontWeight: 500 }}>📅 {fmtDate(item.date)}</span>
           <span style={{ fontSize: 11, padding: '3px 8px', borderRadius: 6, background: '#f1f5f9', color: '#475569', fontWeight: 500 }}>🕐 {timeAgo(item.date)}</span>
-          {item.costAtTime  && <span style={{ fontSize: 11, padding: '3px 8px', borderRadius: 6, background: '#f0fdf4', color: '#16a34a', fontWeight: 600 }}>💰 {fmtCur(item.costAtTime)}</span>}
-          {item.layingRate  && <span style={{ fontSize: 11, padding: '3px 8px', borderRadius: 6, background: '#fefce8', color: '#a16207', fontWeight: 600 }}>🥚 {Number(item.layingRate).toFixed(1)}% lay rate</span>}
-          {isHighRisk       && <span style={{ fontSize: 11, padding: '3px 8px', borderRadius: 6, background: '#fef2f2', color: '#dc2626', fontWeight: 700 }}>⚠ HIGH RISK</span>}
+          {item.costAtTime && <span style={{ fontSize: 11, padding: '3px 8px', borderRadius: 6, background: '#f0fdf4', color: '#16a34a', fontWeight: 600 }}>💰 {fmtCur(item.costAtTime)}</span>}
+          {item.layingRate && <span style={{ fontSize: 11, padding: '3px 8px', borderRadius: 6, background: '#fefce8', color: '#a16207', fontWeight: 600 }}>🥚 {Number(item.layingRate).toFixed(1)}% lay rate</span>}
+          {isHighRisk      && <span style={{ fontSize: 11, padding: '3px 8px', borderRadius: 6, background: '#fef2f2', color: '#dc2626', fontWeight: 700 }}>⚠ HIGH RISK</span>}
         </div>
+
         <div style={{ flex: 1 }} />
-        {canVerify ? (
-          <div style={{ display: 'flex', gap: 7 }}>
-            <button onClick={() => onAction(item, 'verify')}      style={{ flex: 1, padding: '8px 0', borderRadius: 8, border: '1.5px solid #16a34a', background: '#f0fdf4', color: '#16a34a', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>✅ Verify</button>
-            <button onClick={() => onAction(item, 'discrepancy')} style={{ flex: 1, padding: '8px 0', borderRadius: 8, border: '1.5px solid #d97706', background: '#fffbeb', color: '#d97706', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>⚠️ Flag</button>
-            {canReject && (
-              <button onClick={() => onAction(item, 'reject')} style={{ flex: 1, padding: '8px 0', borderRadius: 8, border: '1.5px solid #dc2626', background: '#fef2f2', color: '#dc2626', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>↩️ Reject</button>
+
+        {/* ── Action buttons — role-gated ─────────────────────────────────── */}
+        {icOnly ? (
+          // Internal Control / Accountant: Flag only
+          <button
+            onClick={() => onAction(item, 'flag')}
+            style={{ width: '100%', padding: '8px 0', borderRadius: 8, border: '1.5px solid #9333ea', background: '#fdf4ff', color: '#9333ea', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+            🚩 Flag for Investigation
+          </button>
+
+        ) : canVerifyThis ? (
+          // PM / Store / Management: Verify + Reject + (Flag for management)
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div style={{ display: 'flex', gap: 7 }}>
+              <button
+                onClick={() => onAction(item, 'verify')}
+                disabled={item.coiBlocked && !isOverride}
+                title={item.coiBlocked && !isOverride ? item.coiReason : undefined}
+                style={{
+                  flex: 1, padding: '8px 0', borderRadius: 8, fontSize: 12, fontWeight: 700,
+                  cursor: (item.coiBlocked && !isOverride) ? 'not-allowed' : 'pointer',
+                  border: `1.5px solid ${(item.coiBlocked && !isOverride) ? '#e9d5ff' : '#16a34a'}`,
+                  background: (item.coiBlocked && !isOverride) ? '#fdf4ff' : '#f0fdf4',
+                  color: (item.coiBlocked && !isOverride) ? '#a78bfa' : '#16a34a',
+                  opacity: (item.coiBlocked && !isOverride) ? 0.7 : 1,
+                }}>
+                {(item.coiBlocked && !isOverride) ? '🔒 COI' : '✅ Verify'}
+              </button>
+              {canRejectThis && (
+                <button
+                  onClick={() => onAction(item, 'reject')}
+                  style={{ flex: 1, padding: '8px 0', borderRadius: 8, border: '1.5px solid #dc2626', background: '#fef2f2', color: '#dc2626', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+                  ↩️ Reject
+                </button>
+              )}
+            </div>
+            {/* Flag available to management only — separate row */}
+            {canFlagThis && !icOnly && (
+              <button
+                onClick={() => onAction(item, 'flag')}
+                style={{ width: '100%', padding: '7px 0', borderRadius: 8, border: '1px solid #e9d5ff', background: '#fdf4ff', color: '#9333ea', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
+                🚩 Flag for Investigation
+              </button>
+            )}
+            {/* PM Override — egg/mortality only, COI-aware, PM+ roles */}
+            {['EggProduction', 'MortalityRecord'].includes(item.referenceType) &&
+             REJECT_ROLES.includes(userRole) &&
+             !(item.coiBlocked && !isOverride) && (
+              <button
+                onClick={() => onAction(item, 'override')}
+                style={{ width: '100%', padding: '7px 0', borderRadius: 8, border: '1px solid #fde68a', background: '#fffbeb', color: '#92400e', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
+                ✏️ PM Override
+              </button>
             )}
           </div>
+
         ) : (
+          // No permission
           <div style={{ padding: '8px 10px', borderRadius: 8, background: '#f8fafc', border: '1px solid #e2e8f0', fontSize: 11, color: '#94a3b8', textAlign: 'center', fontWeight: 600 }}>
             🔒 Requires {RECORD_TYPE_OWNER[item.referenceType] || 'authorised role'}
           </div>
@@ -298,7 +408,7 @@ function PendingCard({ item, userRole, canReject, onAction, laneColor }) {
 }
 
 // ─── Swim Lane ─────────────────────────────────────────────────────────────────
-function SwimLane({ lane, items, userRole, canReject, onAction, collapsed, onToggle }) {
+function SwimLane({ lane, items, userRole, onAction, collapsed, onToggle }) {
   const count    = items.length;
   const hasItems = count > 0;
 
@@ -320,7 +430,7 @@ function SwimLane({ lane, items, userRole, canReject, onAction, collapsed, onTog
       {!collapsed && hasItems && (
         <div style={{ padding: 16, background: '#fff', display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14 }} className="lane-grid">
           {items.map(item => (
-            <PendingCard key={item.id} item={item} userRole={userRole} canReject={canReject} onAction={onAction} laneColor={lane.color} />
+            <PendingCard key={item.id} item={item} userRole={userRole} onAction={onAction} laneColor={lane.color} />
           ))}
         </div>
       )}
@@ -497,14 +607,17 @@ export default function VerificationPage() {
   const [summary,      setSummary]      = useState(null);
   const [loading,      setLoading]      = useState(true);
   const [tabLoading,   setTabLoading]   = useState(false);
-  const [actionModal,    setActionModal]    = useState(null);
-  const [toast,          setToast]          = useState(null);
+  const [actionModal,          setActionModal]          = useState(null);
+  const [gradingModal,         setGradingModal]         = useState(null); // EggProduction item
+  const [mortalityVerifyModal, setMortalityVerifyModal] = useState(null); // MortalityRecord item
+  const [overrideModal,        setOverrideModal]        = useState(null); // egg or mortality item
+  const [toast,                setToast]                = useState(null);
   const [collapsed,      setCollapsed]      = useState(() => Object.fromEntries(SWIM_LANES.map(l => [l.type, true])));
   const [managers,       setManagers]       = useState([]);
   const [discrepFilter,  setDiscrepFilter]  = useState('all'); // 'all' | 'escalated' | 'open' | 'resolved'
 
   const canVerify = VERIFIER_ROLES.includes(user?.role);
-  const canReject = REJECT_ROLES.includes(user?.role);
+  const canFlag   = FLAG_ROLES.includes(user?.role);
   const canManage = MANAGER_ROLES.includes(user?.role);
 
   const showToast = (msg, type = 'success') => {
@@ -514,14 +627,14 @@ export default function VerificationPage() {
 
   // ── Fetch managers list (for escalation target picker) ──────────────────────
   useEffect(() => {
-    if (!canVerify) return;
+    if (!canVerify && !canFlag) return;  // IC can flag and needs managers for escalation
     apiFetch('/api/users?roles=FARM_MANAGER,FARM_ADMIN,CHAIRPERSON').then(async res => {
       if (res.ok) {
         const d = await res.json();
         setManagers((d.users || []).filter(u => MANAGER_ROLES.includes(u.role)));
       }
     }).catch(() => {});
-  }, [canVerify, apiFetch]);
+  }, [canVerify, canFlag, apiFetch]);
 
   const fetchPending = useCallback(async () => {
     try {
@@ -560,7 +673,7 @@ export default function VerificationPage() {
   useEffect(() => {
     if (activeTab === 'pending') return;
     setTabLoading(true);
-    const statusMap = { verified: 'VERIFIED', discrepancies: 'DISCREPANCY_FOUND,ESCALATED,RESOLVED' };
+    const statusMap = { verified: 'VERIFIED', flagged: 'DISCREPANCY_FOUND,ESCALATED,RESOLVED' };
     fetchVerifications(statusMap[activeTab]).finally(() => setTabLoading(false));
   }, [activeTab, fetchVerifications]);
 
@@ -581,21 +694,35 @@ export default function VerificationPage() {
   // ── Action handlers ─────────────────────────────────────────────────────────
   const handleAction = async (item, action, { notes, amount, escalatedToId } = {}) => {
     if (action === 'verify' || action === 'discrepancy') {
-      const res = await apiFetch('/api/verification', {
-        method: 'POST',
-        body: JSON.stringify({
-          verificationType:  item.type,
-          referenceId:       item.referenceId,
-          referenceType:     item.referenceType,
-          verificationDate:  new Date().toISOString().slice(0, 10),
-          status:            action === 'verify' ? 'VERIFIED' : 'DISCREPANCY_FOUND',
-          discrepancyAmount: amount || null,
-          discrepancyNotes:  notes || null,
-        }),
-      });
+      let res;
+      if (item.verificationId) {
+        // PATCH the existing pending verification record (Bug #1 fix)
+        res = await apiFetch(`/api/verification/${item.verificationId}`, {
+          method: 'PATCH',
+          body: JSON.stringify({
+            status:            action === 'verify' ? 'VERIFIED' : 'DISCREPANCY_FOUND',
+            discrepancyAmount: amount || null,
+            discrepancyNotes:  notes || null,
+          }),
+        });
+      } else {
+        // POST — first-time verification for this record
+        res = await apiFetch('/api/verification', {
+          method: 'POST',
+          body: JSON.stringify({
+            verificationType:  item.type,
+            referenceId:       item.referenceId,
+            referenceType:     item.referenceType,
+            verificationDate:  new Date().toISOString().slice(0, 10),
+            status:            action === 'verify' ? 'VERIFIED' : 'DISCREPANCY_FOUND',
+            discrepancyAmount: amount || null,
+            discrepancyNotes:  notes || null,
+          }),
+        });
+      }
       const d = await res.json();
       if (!res.ok) throw new Error(typeof d.error === 'string' ? d.error : 'Action failed');
-      showToast(action === 'verify' ? 'Record verified successfully' : 'Discrepancy flagged — managers notified');
+      showToast(action === 'verify' ? 'Record verified successfully' : 'Record flagged for investigation — managers notified');
     } else if (action === 'reject') {
       if (item.verificationId) {
         const res = await apiFetch(`/api/verification/${item.verificationId}`, { method: 'PATCH', body: JSON.stringify({ reject: true, rejectReason: notes }) });
@@ -662,6 +789,36 @@ export default function VerificationPage() {
     fetchVerifications('DISCREPANCY_FOUND,ESCALATED,RESOLVED');
   };
 
+  // ── Action interceptor ───────────────────────────────────────────────────────
+  // 'verify'  on eggs     → GradingModal
+  // 'verify'  on mort     → MortalityVerifyModal
+  // 'verify'  on others   → ActionModal (standard)
+  // 'reject'              → ActionModal (reject variant)
+  // 'flag'                → ActionModal (flag/discrepancy variant — IC/Audit/Management only)
+  // 'escalate' / 'resolve'→ ActionModal (from discrepancy tab)
+  const interceptAction = (item, action) => {
+    if (action === 'verify') {
+      if (item.referenceType === 'EggProduction') {
+        setGradingModal(item);
+        return;
+      }
+      if (item.referenceType === 'MortalityRecord') {
+        setMortalityVerifyModal(item);
+        return;
+      }
+    }
+    if (action === 'override') {
+      setOverrideModal(item);
+      return;
+    }
+    // 'flag' is treated as 'discrepancy' in the backend — renamed here for clarity
+    setActionModal({
+      item,
+      action: action === 'flag' ? 'discrepancy' : action,
+      verificationId: item.verificationId || null,
+    });
+  };
+
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
     <AppShell>
@@ -702,7 +859,7 @@ export default function VerificationPage() {
       {!loading && summary && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))', gap: 14, marginBottom: 24 }}>
           <StatCard icon="⏳" label="Pending Review"     value={summary.totalPending}                  sub="Across all modules"      accent="#d97706" urgent={summary.totalPending > 10} />
-          <StatCard icon="⚠️" label="Discrepancies"      value={summary.discrepancies}                 sub="Needs attention"         accent="#dc2626" urgent={summary.discrepancies > 0} />
+          <StatCard icon="🚩" label="Flagged Records"    value={summary.discrepancies}                 sub="Under investigation"     accent="#dc2626" urgent={summary.discrepancies > 0} />
           <StatCard icon="🔺" label="Escalated"          value={summary.escalated}                     sub="Awaiting manager"        accent="#9333ea" urgent={summary.escalated > 0} />
           <StatCard icon="🥚" label="Production Pending" value={summary.byType?.DAILY_PRODUCTION || 0} sub="Daily reports"           accent="#6c63ff" />
           <StatCard icon="💀" label="Mortality Pending"  value={summary.byType?.MORTALITY_REPORT || 0} sub="Needs review"            accent="#ef4444" urgent={(summary.byType?.MORTALITY_REPORT || 0) > 0} />
@@ -717,9 +874,9 @@ export default function VerificationPage() {
         <div style={{ display: 'flex', borderBottom: '1px solid var(--border-card)', padding: '0 6px', gap: 2 }}>
           {TABS.map(tab => {
             const labels = {
-              pending:       `⏳ Pending${summary?.totalPending ? ` (${summary.totalPending})` : ''}`,
-              verified:      '✅ Verified',
-              discrepancies: `⚠️ Discrepancies${summary?.discrepancies ? ` (${summary.discrepancies})` : ''}`,
+              pending:  `⏳ Pending${summary?.totalPending ? ` (${summary.totalPending})` : ''}`,
+              verified: '✅ Verified',
+              flagged:  `🚩 Flagged${summary?.discrepancies ? ` (${summary.discrepancies})` : ''}`,
             };
             const active = activeTab === tab;
             return (
@@ -756,7 +913,7 @@ export default function VerificationPage() {
                   </button>
                 </div>
                 {SWIM_LANES.map(lane => (
-                  <SwimLane key={lane.type} lane={lane} items={itemsByLane[lane.type]} userRole={user?.role} canReject={canReject} onAction={(item, action) => setActionModal({ item, action })} collapsed={!!collapsed[lane.type]} onToggle={() => toggleLane(lane.type)} />
+                  <SwimLane key={lane.type} lane={lane} items={itemsByLane[lane.type]} userRole={user?.role} onAction={interceptAction} collapsed={!!collapsed[lane.type]} onToggle={() => toggleLane(lane.type)} />
                 ))}
               </>
             )}
@@ -793,16 +950,16 @@ export default function VerificationPage() {
           </div>
         )}
 
-        {/* ── DISCREPANCIES TAB ── Enhanced with inline detail expansion + manager escalation ── */}
-        {activeTab === 'discrepancies' && (
+        {/* ── FLAGGED TAB ── Owned by Internal Control / Audit — Escalate & Resolve ── */}
+        {activeTab === 'flagged' && (
           <div>
             {/* Sub-filter tabs */}
             <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid var(--border-card)', padding: '0 4px', overflowX: 'auto' }}>
               {[
-                { key: 'all',       label: 'All',             color: '#64748b' },
+                { key: 'all',       label: 'All',               color: '#64748b' },
                 { key: 'escalated', label: '🔺 Escalated to Me', color: '#9333ea' },
-                { key: 'open',      label: '⚠️ Open',          color: '#dc2626' },
-                { key: 'resolved',  label: '✓ Resolved',      color: '#16a34a' },
+                { key: 'open',      label: '🚩 Open Flags',      color: '#dc2626' },
+                { key: 'resolved',  label: '✓ Resolved',         color: '#16a34a' },
               ].map(f => {
                 const active = discrepFilter === f.key;
                 const count = f.key === 'all'       ? verifications.length
@@ -827,13 +984,13 @@ export default function VerificationPage() {
               </div>
             </div>
 
-            {/* Escalated-to-me banner — shown when there are items escalated to the current user */}
+            {/* Escalated-to-me banner */}
             {canManage && !tabLoading && verifications.some(v => v.status === 'ESCALATED') && discrepFilter !== 'resolved' && (
               <div style={{ margin: '12px 16px 0', padding: '12px 16px', background: '#fdf4ff', border: '1px solid #e9d5ff', borderRadius: 10, display: 'flex', alignItems: 'center', gap: 12 }}>
                 <span style={{ fontSize: 22 }}>🔺</span>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 13, fontWeight: 700, color: '#7c3aed' }}>
-                    {verifications.filter(v => v.status === 'ESCALATED').length} escalated discrepanc{verifications.filter(v => v.status === 'ESCALATED').length === 1 ? 'y' : 'ies'} require your attention
+                    {verifications.filter(v => v.status === 'ESCALATED').length} escalated flag{verifications.filter(v => v.status === 'ESCALATED').length === 1 ? '' : 's'} require your attention
                   </div>
                   <div style={{ fontSize: 11, color: '#9333ea', marginTop: 2 }}>
                     Review each one, expand the details, and click ✓ Resolve once addressed
@@ -863,7 +1020,7 @@ export default function VerificationPage() {
                       return true;
                     });
                     if (filtered.length === 0) return (
-                      <tr><td colSpan={6}><EmptyState icon="🎉" title={discrepFilter === 'escalated' ? 'No escalated items' : discrepFilter === 'open' ? 'No open discrepancies' : 'No resolved discrepancies'} sub={discrepFilter === 'all' ? 'All records are clean' : 'Nothing in this filter'} /></td></tr>
+                      <tr><td colSpan={6}><EmptyState icon="🎉" title={discrepFilter === 'escalated' ? 'No escalated items' : discrepFilter === 'open' ? 'No open flags' : 'No resolved flags'} sub={discrepFilter === 'all' ? 'No records have been flagged' : 'Nothing in this filter'} /></td></tr>
                     );
                     return filtered.map(v => (
                     <DiscrepancyRow
@@ -896,7 +1053,49 @@ export default function VerificationPage() {
         )}
       </div>
 
-      {/* Action Modal */}
+      {/* Grading Modal — opens when PM clicks Verify on an EggProduction item */}
+      {gradingModal && (
+        <GradingModal
+          record={gradingModal}
+          apiFetch={apiFetch}
+          onClose={() => setGradingModal(null)}
+          onSave={() => {
+            setGradingModal(null);
+            showToast('Egg record graded and approved ✓');
+            fetchPending();
+          }}
+        />
+      )}
+
+      {/* Mortality Verify Modal — opens when PM clicks Verify on a MortalityRecord item */}
+      {mortalityVerifyModal && (
+        <MortalityVerifyModal
+          item={mortalityVerifyModal}
+          apiFetch={apiFetch}
+          onClose={() => setMortalityVerifyModal(null)}
+          onSave={() => {
+            setMortalityVerifyModal(null);
+            showToast('Mortality record verified ✓');
+            fetchPending();
+          }}
+        />
+      )}
+
+      {/* Override Modal — PM corrects worker values with mandatory reason */}
+      {overrideModal && (
+        <OverrideModal
+          item={overrideModal}
+          apiFetch={apiFetch}
+          onClose={() => setOverrideModal(null)}
+          onSave={() => {
+            setOverrideModal(null);
+            showToast('Override applied and audit trail recorded ✓');
+            fetchPending();
+          }}
+        />
+      )}
+
+      {/* Action Modal — Flag, Reject, Escalate, Resolve */}
       {actionModal && (
         <ActionModal
           item={actionModal.item}

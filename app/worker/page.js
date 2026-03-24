@@ -1,8 +1,13 @@
 'use client';
 // app/worker/page.js — Pen Worker Daily Dashboard
+// Updated: added 💧 Water Meter + 🍽️ Feed Log modal integration
 import { useState, useEffect, useCallback } from 'react';
 import AppShell from '@/components/layout/AppShell';
 import { useAuth } from '@/components/layout/AuthProvider';
+import WaterMeterModal from '@/components/water/WaterMeterModal';
+import WorkerFeedModal from '@/components/feed/WorkerFeedModal';
+import SpotCheckCompleteModal from '@/components/tasks/SpotCheckCompleteModal';
+import DailySummaryCard from '@/components/daily/DailySummaryCard';
 
 const fmt    = n => Number(n || 0).toLocaleString('en-NG');
 const fmtPct = n => `${Number(n || 0).toFixed(1)}%`;
@@ -30,14 +35,15 @@ function KpiChip({ label, value, color = 'var(--purple)' }) {
 
 function Toast({ msg, type }) {
   if (!msg) return null;
+  const bg    = type === 'error' ? '#991b1b' : type === 'warn' ? '#92400e' : '#166534';
+  const icon  = type === 'error' ? '✕ '      : type === 'warn' ? '⚠️ '     : '✓ ';
   return (
     <div style={{
       position: 'fixed', bottom: 24, right: 24, zIndex: 9999,
-      background: type === 'error' ? '#991b1b' : '#166534',
-      color: '#fff', padding: '12px 20px', borderRadius: 10,
+      background: bg, color: '#fff', padding: '12px 20px', borderRadius: 10,
       fontSize: 13, fontWeight: 600, boxShadow: '0 4px 16px rgba(0,0,0,0.2)',
-      animation: 'fadeIn 0.25s ease',
-    }}>{type === 'error' ? '✕ ' : '✓ '}{msg}</div>
+      animation: 'fadeIn 0.25s ease', maxWidth: 340,
+    }}>{icon}{msg}</div>
   );
 }
 
@@ -252,8 +258,9 @@ function ModalShell({ title, onClose, footer, children }) {
 }
 
 // ── Section Card ──────────────────────────────────────────────────────────────
+// Updated: accepts onLogWater prop; adds 💧 Water button in the action row
 
-function SectionCard({ sec, onLogEggs, onLogMortality }) {
+function SectionCard({ sec, onLogEggs, onLogMortality, onLogWater, onLogFeed, apiFetch }) {
   const [expanded, setExpanded] = useState(false);
   const flock     = sec.flocks?.[0] || null;
   const isLayer   = sec.pen?.operationType === 'LAYER';
@@ -314,19 +321,32 @@ function SectionCard({ sec, onLogEggs, onLogMortality }) {
                 {isLayer && <KpiChip label="7d Eggs" value={fmt(metrics.weekEggs || 0)} color="var(--amber)" />}
               </div>
 
-              {/* Action buttons */}
-              <div style={{ display: 'flex', gap: 8 }}>
+              {/* Action buttons row */}
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 {isLayer && (
                   <button onClick={() => onLogEggs(sec)}
-                    style={{ flex: 1, padding: '10px', borderRadius: 9, border: 'none', background: '#fffbeb', color: '#d97706', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+                    style={{ flex: 1, minWidth: 100, padding: '10px', borderRadius: 9, border: 'none', background: '#fffbeb', color: '#d97706', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
                     🥚 Log Eggs
                   </button>
                 )}
                 <button onClick={() => onLogMortality(sec)}
-                  style={{ flex: 1, padding: '10px', borderRadius: 9, border: 'none', background: '#fef2f2', color: '#dc2626', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+                  style={{ flex: 1, minWidth: 100, padding: '10px', borderRadius: 9, border: 'none', background: '#fef2f2', color: '#dc2626', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
                   💀 Log Mortality
                 </button>
+                {/* NEW — Water meter reading button */}
+                <button onClick={() => onLogWater(sec)}
+                  style={{ flex: 1, minWidth: 100, padding: '10px', borderRadius: 9, border: 'none', background: '#eff6ff', color: '#2563eb', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+                  💧 Log Water
+                </button>
+                {/* NEW — Feed distribution button */}
+                <button onClick={() => onLogFeed(sec)}
+                  style={{ flex: 1, minWidth: 100, padding: '10px', borderRadius: 9, border: 'none', background: '#f0fdf4', color: '#16a34a', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+                  🍽️ Log Feed
+                </button>
               </div>
+
+              {/* Daily summary checklist */}
+              <DailySummaryCard penSectionId={sec.id} apiFetch={apiFetch} />
             </>
           )}
         </div>
@@ -530,15 +550,17 @@ function EditRecordModal({ item, sections, apiFetch, onClose, onSave }) {
 
 export default function WorkerPage() {
   const { apiFetch, user } = useAuth();
-  const [sections,   setSections]   = useState([]);
-  const [tasks,      setTasks]      = useState([]);
-  const [loading,    setLoading]    = useState(true);
-  const [eggModal,   setEggModal]   = useState(null);   // section
-  const [mortModal,  setMortModal]  = useState(null);   // section
-  const [editRecord, setEditRecord] = useState(null);   // { record, type, section }
-  const [rejected,   setRejected]   = useState([]);
-  const [toast,      setToast]      = useState(null);
-  const [saving,     setSaving]     = useState(false);
+  const [sections,    setSections]    = useState([]);
+  const [tasks,       setTasks]       = useState([]);
+  const [loading,     setLoading]     = useState(true);
+  const [eggModal,    setEggModal]    = useState(null);   // section
+  const [mortModal,   setMortModal]   = useState(null);   // section
+  const [waterModal,  setWaterModal]  = useState(null);   // section
+  const [feedModal,   setFeedModal]   = useState(null);   // section ← NEW
+  const [editRecord,  setEditRecord]  = useState(null);   // { record, type, section }
+  const [rejected,    setRejected]    = useState([]);
+  const [toast,       setToast]       = useState(null);
+  const [saving,      setSaving]      = useState(false);
 
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type });
@@ -548,21 +570,23 @@ export default function WorkerPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [dashRes, taskRes, eggRes, mortRes] = await Promise.all([
+      const [dashRes, eggRes, mortRes] = await Promise.all([
         apiFetch('/api/dashboard'),
-        apiFetch('/api/tasks'),
         apiFetch('/api/eggs?rejected=true'),
         apiFetch('/api/mortality?rejected=true'),
       ]);
+      let loadedSections = [];
       if (dashRes.ok) {
         const d = await dashRes.json();
-        setSections(d.sections || []);
+        loadedSections = d.sections || [];
+        setSections(loadedSections);
       }
-      if (taskRes.ok) {
-        const d = await taskRes.json();
-        setTasks(d.tasks || []);
+      // Fetch tasks scoped to all assigned sections so layer + broiler tasks all appear
+      if (loadedSections.length > 0) {
+        const ids = loadedSections.map(s => s.id).join(',');
+        const taskRes = await apiFetch(`/api/tasks?sectionIds=${ids}`);
+        if (taskRes.ok) { const d = await taskRes.json(); setTasks(d.tasks || []); }
       }
-      // Collect records returned for correction (have a rejectionReason)
       const rejectedList = [];
       if (eggRes.ok) {
         const d = await eggRes.json();
@@ -580,14 +604,76 @@ export default function WorkerPage() {
     } finally { setLoading(false); }
   }, [apiFetch]);
 
-  useEffect(() => { load(); }, [load]);
+  // ── Generate daily + weekly tasks on first load of the day ───────────────────
+  const generateTasksIfNeeded = useCallback(async () => {
+    try {
+      const res = await apiFetch('/api/tasks/generate');
+      if (!res.ok) return;
+      const { dailyGenerated, weeklyGenerated } = await res.json();
+      const promises = [];
+      if (!dailyGenerated)  promises.push(apiFetch('/api/tasks/generate', { method: 'POST', body: JSON.stringify({ frequency: 'daily' }) }));
+      if (!weeklyGenerated) promises.push(apiFetch('/api/tasks/generate', { method: 'POST', body: JSON.stringify({ frequency: 'weekly' }) }));
+      if (promises.length > 0) {
+        await Promise.all(promises);
+        load(); // reload everything including tasks after generation
+      }
+    } catch { /* silent */ }
+  }, [apiFetch, load]);
 
-  const handleComplete = async (taskId) => {
+  useEffect(() => {
+    load();
+    generateTasksIfNeeded();
+  }, [load, generateTasksIfNeeded]);
+
+  const [spotCheckTask, setSpotCheckTask] = useState(null);
+  // taskLinkedModal: { task, section } — tracks which task triggered a data-entry modal
+  const [taskLinkedModal, setTaskLinkedModal] = useState(null);
+
+  // ── Complete a task after a linked data-entry form is saved ──────────────────
+  const completeLinkedTask = useCallback(async (taskId) => {
+    if (!taskId) return;
+    await apiFetch('/api/tasks?action=complete', {
+      method: 'POST',
+      body: JSON.stringify({ taskId, completionNotes: 'Completed via task data entry' }),
+    }).catch(() => {});
+    setTaskLinkedModal(null);
+  }, [apiFetch]);
+
+  const handleComplete = async (task) => {
+    // Spot-check tasks — open specialist completion modal
+    const isSpotCheck = task.description?.includes('SPOT-CHECK');
+    if (isSpotCheck && (task.taskType === 'WEIGHT_RECORDING' || task.taskType === 'INSPECTION')) {
+      setSpotCheckTask(task);
+      return;
+    }
+
+    // Data-entry tasks — find the section and open the relevant log modal,
+    // then auto-complete the task when the record is saved
+    const section = sections.find(s => s.id === task.penSectionId);
+    if (section) {
+      if (task.taskType === 'EGG_COLLECTION') {
+        setTaskLinkedModal({ task, type: 'egg' });
+        setEggModal(section);
+        return;
+      }
+      if (task.taskType === 'FEEDING') {
+        setTaskLinkedModal({ task, type: 'feed' });
+        setFeedModal(section);
+        return;
+      }
+      if (task.taskType === 'MORTALITY_CHECK') {
+        setTaskLinkedModal({ task, type: 'mortality' });
+        setMortModal(section);
+        return;
+      }
+    }
+
+    // Generic / checklist tasks — mark complete immediately
     setSaving(true);
     try {
       const res = await apiFetch('/api/tasks?action=complete', {
         method: 'POST',
-        body: JSON.stringify({ taskId, completionNotes: 'Completed via worker dashboard' }),
+        body: JSON.stringify({ taskId: task.id, completionNotes: 'Completed via worker dashboard' }),
       });
       if (res.ok) { load(); showToast('Task marked complete'); }
     } finally { setSaving(false); }
@@ -597,7 +683,28 @@ export default function WorkerPage() {
   const totalCount     = tasks.length;
   const pct            = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
 
-  const layerSections  = sections.filter(s => s.pen?.operationType === 'LAYER');
+  // Group tasks by penSectionId for inline display
+  const tasksBySection = tasks.reduce((acc, t) => {
+    if (!acc[t.penSectionId]) acc[t.penSectionId] = [];
+    acc[t.penSectionId].push(t);
+    return acc;
+  }, {});
+
+  const TYPE_META = {
+    EGG_COLLECTION:    { icon: '🥚', action: 'Log Eggs' },
+    FEEDING:           { icon: '🍽️', action: 'Log Feed' },
+    MORTALITY_CHECK:   { icon: '💀', action: 'Log Mortality' },
+    WEIGHT_RECORDING:  { icon: '⚖️', action: 'Weigh' },
+    CLEANING:          { icon: '🧹', action: 'Mark Done' },
+    BIOSECURITY:       { icon: '🛡️', action: 'Mark Done' },
+    STORE_COUNT:       { icon: '📦', action: 'Mark Done' },
+    REPORT_SUBMISSION: { icon: '📋', action: 'Complete' },
+    INSPECTION:        { icon: '🔍', action: 'Inspect' },
+    VACCINATION:       { icon: '💉', action: 'Mark Done' },
+    OTHER:             { icon: '📌', action: 'Mark Done' },
+  };
+
+  const layerSections   = sections.filter(s => s.pen?.operationType === 'LAYER');
   const broilerSections = sections.filter(s => s.pen?.operationType === 'BROILER');
 
   return (
@@ -693,8 +800,11 @@ export default function WorkerPage() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                   {layerSections.map(sec => (
                     <SectionCard key={sec.id} sec={sec}
+                      apiFetch={apiFetch}
                       onLogEggs={() => setEggModal(sec)}
-                      onLogMortality={() => setMortModal(sec)} />
+                      onLogMortality={() => setMortModal(sec)}
+                      onLogWater={() => setWaterModal(sec)}
+                      onLogFeed={() => setFeedModal(sec)} />
                   ))}
                 </div>
               </div>
@@ -709,8 +819,11 @@ export default function WorkerPage() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                   {broilerSections.map(sec => (
                     <SectionCard key={sec.id} sec={sec}
+                      apiFetch={apiFetch}
                       onLogEggs={() => setEggModal(sec)}
-                      onLogMortality={() => setMortModal(sec)} />
+                      onLogMortality={() => setMortModal(sec)}
+                      onLogWater={() => setWaterModal(sec)}
+                      onLogFeed={() => setFeedModal(sec)} />
                   ))}
                 </div>
               </div>
@@ -720,26 +833,77 @@ export default function WorkerPage() {
           {/* ── Right: Tasks ── */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             <div style={{ background: '#fff', borderRadius: 12, border: '1px solid var(--border-card)', padding: '16px 18px' }}>
-              <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text-primary)', marginBottom: 12 }}>My Tasks Today ({totalCount})</div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text-primary)' }}>My Tasks Today ({totalCount})</div>
+                {totalCount > 0 && (
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                    <span style={{ color: '#16a34a', fontWeight: 700 }}>{completedCount}</span>/{totalCount} done
+                  </div>
+                )}
+              </div>
               {tasks.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '20px 0', color: 'var(--text-muted)', fontSize: 13 }}>✅ No tasks assigned today</div>
+                <div style={{ textAlign: 'center', padding: '20px 0', color: 'var(--text-muted)', fontSize: 13 }}>
+                  <div style={{ fontSize: 24, marginBottom: 6 }}>✅</div>
+                  No tasks assigned today
+                </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {tasks.map(t => {
-                    const statusColor = t.status === 'COMPLETED' ? '#16a34a' : t.status === 'OVERDUE' ? '#dc2626' : t.status === 'IN_PROGRESS' ? '#3b82f6' : '#64748b';
+                  {tasks.map(task => {
+                    const done    = task.status === 'COMPLETED';
+                    const overdue = task.status === 'OVERDUE';
+                    const inProg  = task.status === 'IN_PROGRESS';
+
+                    // Task type → icon + action label
+                    const TYPE_META = {
+                      EGG_COLLECTION:    { icon: '🥚', action: 'Log Eggs' },
+                      FEEDING:           { icon: '🍽️', action: 'Log Feed' },
+                      MORTALITY_CHECK:   { icon: '💀', action: 'Log Mortality' },
+                      WEIGHT_RECORDING:  { icon: '⚖️', action: 'Weigh' },
+                      CLEANING:          { icon: '🧹', action: 'Mark Done' },
+                      BIOSECURITY:       { icon: '🛡️', action: 'Mark Done' },
+                      STORE_COUNT:       { icon: '📦', action: 'Mark Done' },
+                      REPORT_SUBMISSION: { icon: '📋', action: 'Complete' },
+                      INSPECTION:        { icon: '🔍', action: 'Inspect' },
+                      VACCINATION:       { icon: '💉', action: 'Mark Done' },
+                      OTHER:             { icon: '📌', action: 'Mark Done' },
+                    };
+                    const meta = TYPE_META[task.taskType] || { icon: '📌', action: 'Mark Done' };
+
                     return (
-                      <div key={t.id} style={{ padding: '12px', background: 'var(--bg-elevated)', borderRadius: 9, border: `1px solid ${t.status === 'OVERDUE' ? '#fecaca' : 'var(--border)'}` }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4, gap: 8 }}>
-                          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1.3 }}>{t.title}</div>
-                          <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 99, background: `${statusColor}15`, color: statusColor, flexShrink: 0 }}>{t.status}</span>
+                      <div key={task.id} style={{
+                        padding: '10px 12px', borderRadius: 9,
+                        border: `1px solid ${done ? 'var(--green-border)' : overdue ? 'var(--red-border)' : inProg ? '#ddd6fe' : 'var(--border)'}`,
+                        background: done ? 'var(--green-bg)' : overdue ? 'var(--red-bg)' : inProg ? '#f5f3ff' : '#fff',
+                        display: 'flex', gap: 10, alignItems: 'flex-start',
+                        opacity: done ? 0.75 : 1,
+                      }}>
+                        <span style={{ fontSize: 16, lineHeight: 1.4, flexShrink: 0 }}>
+                          {done ? '✅' : overdue ? '🔴' : meta.icon}
+                        </span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: done ? '#166534' : 'var(--text-primary)', textDecoration: done ? 'line-through' : 'none' }}>
+                            {task.title}
+                          </div>
+                          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
+                            {task.penSection?.pen?.name} › {task.penSection?.name}
+                            {task.dueDate && (
+                              <span style={{ marginLeft: 6, color: overdue ? '#dc2626' : 'var(--text-muted)' }}>
+                                · {overdue ? '⚠ Overdue ' : ''}Due {new Date(task.dueDate).toLocaleTimeString('en-NG', { hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            )}
+                          </div>
                         </div>
-                        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: t.status !== 'COMPLETED' ? 8 : 0 }}>
-                          {t.penSection?.pen?.name} · {t.penSection?.name}
-                        </div>
-                        {t.status !== 'COMPLETED' && (
-                          <button onClick={() => handleComplete(t.id)} disabled={saving}
-                            style={{ width: '100%', padding: '6px', borderRadius: 7, border: 'none', background: 'var(--purple)', color: '#fff', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
-                            ✓ Mark Done
+                        {!done && (
+                          <button
+                            onClick={() => handleComplete(task)}
+                            disabled={saving}
+                            style={{
+                              flexShrink: 0, padding: '4px 10px', borderRadius: 6, border: 'none',
+                              background: overdue ? '#dc2626' : 'var(--purple)',
+                              color: '#fff', fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                              whiteSpace: 'nowrap',
+                            }}>
+                            {meta.action}
                           </button>
                         )}
                       </div>
@@ -749,25 +913,86 @@ export default function WorkerPage() {
               )}
             </div>
           </div>
+
         </div>
       )}
 
-      {/* Modals */}
+      {/* ── Modals ── */}
       {eggModal && (
         <LogEggModal section={eggModal} apiFetch={apiFetch}
-          onClose={() => setEggModal(null)}
-          onSave={() => { setEggModal(null); load(); showToast('Egg collection recorded — pending verification'); }} />
+          onClose={() => { setEggModal(null); setTaskLinkedModal(null); }}
+          onSave={() => {
+            setEggModal(null);
+            load();
+            showToast('Egg collection recorded ✓');
+            if (taskLinkedModal?.type === 'egg') completeLinkedTask(taskLinkedModal.task.id);
+          }} />
       )}
       {mortModal && (
         <LogMortalityModal section={mortModal} apiFetch={apiFetch}
-          onClose={() => setMortModal(null)}
-          onSave={() => { setMortModal(null); load(); showToast('Mortality recorded — pending verification'); }} />
+          onClose={() => { setMortModal(null); setTaskLinkedModal(null); }}
+          onSave={() => {
+            setMortModal(null);
+            load();
+            showToast('Mortality recorded ✓');
+            if (taskLinkedModal?.type === 'mortality') completeLinkedTask(taskLinkedModal.task.id);
+          }} />
       )}
+
+      {/* ── NEW: Water meter modal ── */}
+      {waterModal && (
+        <WaterMeterModal
+          section={waterModal}
+          apiFetch={apiFetch}
+          onClose={() => setWaterModal(null)}
+          onSave={() => { setWaterModal(null); showToast('Water meter reading saved ✓'); }}
+        />
+      )}
+
+      {/* ── NEW: Feed distribution modal ── */}
+      {feedModal && (
+        <WorkerFeedModal
+          section={feedModal}
+          apiFetch={apiFetch}
+          onClose={() => { setFeedModal(null); setTaskLinkedModal(null); }}
+          onSave={() => {
+            setFeedModal(null);
+            load();
+            showToast('Feed distribution logged ✓');
+            if (taskLinkedModal?.type === 'feed') completeLinkedTask(taskLinkedModal.task.id);
+          }}
+        />
+      )}
+
       {editRecord && (
         <EditRecordModal item={editRecord} sections={sections} apiFetch={apiFetch}
           onClose={() => setEditRecord(null)}
           onSave={() => { setEditRecord(null); load(); showToast('Record corrected and resubmitted for verification ✓'); }} />
       )}
+
+      {spotCheckTask && (
+        <SpotCheckCompleteModal
+          task={spotCheckTask}
+          apiFetch={apiFetch}
+          onClose={() => setSpotCheckTask(null)}
+          onSave={({ deviationFlag, failCount }) => {
+            setSpotCheckTask(null);
+            load();
+            if (deviationFlag) showToast('Weight recorded — deviation flagged to IC ⚠️', 'warn');
+            else if (failCount > 0) showToast('Inspection submitted — IC notified of failures ⚠️', 'warn');
+            else showToast('Spot check completed ✓');
+          }}
+        />
+      )}
     </AppShell>
   );
+}
+
+function quickBtnStyle(color) {
+  return {
+    width: 28, height: 28, borderRadius: 7, border: `1px solid ${color}30`,
+    background: `${color}12`, fontSize: 13, cursor: 'pointer',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    padding: 0,
+  };
 }

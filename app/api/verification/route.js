@@ -1,8 +1,12 @@
 // app/api/verification/route.js — List pending items + create verifications
+// Update: pending EggProduction items now carry needsGrading flag + worker fields
+// so the GradingModal can be opened directly from the verification queue.
+// Update: POST and GET now enforce the conflict-of-interest guard.
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
 import { verifyToken } from '@/lib/middleware/auth';
 import { z } from 'zod';
+import { checkConflictOfInterest } from '@/lib/utils/conflictOfInterest';
 
 const VERIFIER_ROLES  = ['PEN_MANAGER', 'STORE_MANAGER', 'STORE_CLERK', 'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
 const MANAGER_ROLES   = ['STORE_MANAGER', 'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
@@ -30,7 +34,7 @@ function canVerifyRecordType(role, referenceType) {
 }
 
 const createVerificationSchema = z.object({
-  storeId:           z.string().uuid().optional().nullable(),  // optional — resolved server-side if omitted
+  storeId:           z.string().uuid().optional().nullable(),
   verificationType:  z.enum(['DAILY_PRODUCTION', 'FEED_RECEIPT', 'INVENTORY_COUNT', 'FINANCIAL_RECORD', 'MORTALITY_REPORT']),
   referenceId:       z.string(),
   referenceType:     z.string(),
@@ -50,7 +54,6 @@ export async function GET(request) {
 
   const { searchParams } = new URL(request.url);
   const type        = searchParams.get('type');
-  // Support multiple status values: ?status=X&status=Y
   const statusParam = searchParams.getAll('status');
   const status      = statusParam.length > 0 ? statusParam : null;
   const from        = searchParams.get('from');
@@ -88,8 +91,6 @@ export async function GET(request) {
       take: Math.min(limit, 200),
     });
 
-    // Only exclude records that are fully resolved — DISCREPANCY_FOUND means
-    // the worker may resubmit, so those should reappear in the pending queue
     const existingVerifications = await prisma.verification.findMany({
       where: { tenantId: user.tenantId },
       select: { id: true, referenceId: true, status: true },
@@ -99,7 +100,6 @@ export async function GET(request) {
         .filter(v => ['VERIFIED', 'RESOLVED'].includes(v.status))
         .map(v => v.referenceId)
     );
-    // Map referenceId -> verification id for pending items (so frontend can PATCH directly)
     const verificationIdByRef = Object.fromEntries(
       existingVerifications.map(v => [v.referenceId, v.id])
     );
@@ -107,13 +107,46 @@ export async function GET(request) {
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
-    // Egg production — PENDING
+    // ── PM section scoping ────────────────────────────────────────────────────
+    // PEN_MANAGER should only see pending items from their assigned sections.
+    // Management roles (FARM_MANAGER+) see all sections.
+    const PM_SCOPED_ROLES = ['PEN_MANAGER'];
+    let allowedSectionIds = null;
+
+    if (PM_SCOPED_ROLES.includes(user.role)) {
+      const assignments = await prisma.penWorkerAssignment.findMany({
+        where:  { userId: user.sub },
+        select: { penSectionId: true },
+      });
+      allowedSectionIds = assignments.map(a => a.penSectionId);
+      // If a PM has no assignments, return empty pending queue
+      if (allowedSectionIds.length === 0) {
+        const [discrepancyCount, escalatedCount] = await Promise.all([
+          prisma.verification.count({ where: { tenantId: user.tenantId, status: 'DISCREPANCY_FOUND' } }),
+          prisma.verification.count({ where: { tenantId: user.tenantId, status: 'ESCALATED' } }),
+        ]);
+        return NextResponse.json({
+          verifications: [],
+          pendingQueue:  [],
+          summary: { totalPending: 0, byType: { DAILY_PRODUCTION: 0, FEED_RECEIPT: 0, MORTALITY_REPORT: 0, INVENTORY_COUNT: 0, FINANCIAL_RECORD: 0 }, discrepancies: discrepancyCount, escalated: escalatedCount },
+          viewerRole: user.role,
+        });
+      }
+    }
+
+    // Helper: build Prisma where clause filtered by allowed sections
+    const withSectionScope = (baseWhere) => ({
+      ...baseWhere,
+      ...(allowedSectionIds && { penSectionId: { in: allowedSectionIds } }),
+    });
+
+    // ── Egg production — PENDING ───────────────────────────────────────────────
     const pendingEggs = await prisma.eggProduction.findMany({
-      where: {
+      where: withSectionScope({
         submissionStatus: 'PENDING',
         collectionDate:   { gte: sevenDaysAgo },
         flock: { penSection: { pen: { farm: { tenantId: user.tenantId } } } },
-      },
+      }),
       include: {
         flock:      { select: { id: true, batchCode: true } },
         penSection: { select: { id: true, name: true, pen: { select: { name: true } } } },
@@ -129,23 +162,39 @@ export async function GET(request) {
         referenceType: 'EggProduction',
         type:          'DAILY_PRODUCTION',
         date:          r.collectionDate,
-        summary:       `${r.totalEggs} eggs (${r.gradeACount} Grade A, ${r.gradeBCount} Grade B, ${r.crackedCount} cracked)`,
+        // Show grading-pending label when PM hasn't entered Grade B yet
+        summary: r.gradeACount !== null
+          ? `${r.totalEggs} eggs (${r.gradeACount} Grade A, ${r.gradeBCount} Grade B, ${r.crackedCount} cracked)`
+          : `${r.totalEggs} eggs — awaiting Grade B entry`,
         submittedBy:   `${r.recordedBy.firstName} ${r.recordedBy.lastName}`,
         context:       `${r.penSection.pen?.name} — ${r.penSection.name} | Flock: ${r.flock.batchCode}`,
         layingRate:    r.layingRatePct,
-        storeId:        null,
-        resubmitted:    !!r.rejectionReason,
+        storeId:       null,
+        resubmitted:   !!r.rejectionReason,
         verificationId: verificationIdByRef[r.id] || null,
+        // ── Grading fields — consumed by GradingModal ──────────────────────
+        needsGrading:      r.gradeACount === null,
+        totalEggs:         r.totalEggs,
+        cratesCollected:   r.cratesCollected,
+        looseEggs:         r.looseEggs,
+        crackedCount:      r.crackedCount,
+        collectionDate:    r.collectionDate,
+        collectionSession: r.collectionSession,
+        penSection:        { name: r.penSection.name, pen: { name: r.penSection.pen?.name } },
+        flock:             { batchCode: r.flock.batchCode },
+        // ── COI detection fields ───────────────────────────────────────────
+        penSectionId:  r.penSectionId,
+        recordedById:  r.recordedBy.id,
       }))
     );
 
-    // Mortality records — PENDING
+    // ── Mortality records — PENDING ───────────────────────────────────────────
     const pendingMortality = await prisma.mortalityRecord.findMany({
-      where: {
+      where: withSectionScope({
         submissionStatus: 'PENDING',
         recordDate:       { gte: sevenDaysAgo },
         flock: { penSection: { pen: { farm: { tenantId: user.tenantId } } } },
-      },
+      }),
       include: {
         flock:      { select: { id: true, batchCode: true, operationType: true } },
         penSection: { select: { id: true, name: true, pen: { select: { name: true } } } },
@@ -165,22 +214,25 @@ export async function GET(request) {
         submittedBy:   `${r.recordedBy.firstName} ${r.recordedBy.lastName}`,
         context:       `${r.penSection.pen?.name} — ${r.penSection.name} | Flock: ${r.flock.batchCode} (${r.flock.operationType})`,
         severity:       r.count >= 10 ? 'HIGH' : r.count >= 5 ? 'MEDIUM' : 'LOW',
-        storeId:        null,
-        resubmitted:    !!r.rejectionReason,
+        storeId:       null,
+        resubmitted:   !!r.rejectionReason,
         verificationId: verificationIdByRef[r.id] || null,
+        // ── COI detection fields ───────────────────────────────────────────
+        penSectionId:  r.penSectionId,
+        recordedById:  r.recordedBy.id,
       }))
     );
 
-    // Feed consumption — unverified
+    // ── Feed consumption — unverified ─────────────────────────────────────────
     const pendingFeed = await prisma.feedConsumption.findMany({
-      where: {
+      where: withSectionScope({
         recordedDate: { gte: sevenDaysAgo },
         flock: { penSection: { pen: { farm: { tenantId: user.tenantId } } } },
-      },
+      }),
       include: {
         flock:         { select: { id: true, batchCode: true } },
         penSection:    { select: { id: true, name: true, pen: { select: { name: true } } } },
-        feedInventory: { select: { id: true, feedType: true, costPerKg: true } },
+        feedInventory: { select: { id: true, feedType: true, costPerKg: true, storeId: true } },
         recordedBy:    { select: { id: true, firstName: true, lastName: true } },
       },
       orderBy: { recordedDate: 'desc' },
@@ -197,11 +249,14 @@ export async function GET(request) {
         submittedBy:   `${r.recordedBy.firstName} ${r.recordedBy.lastName}`,
         context:       `${r.penSection.pen?.name} — ${r.penSection.name} | Flock: ${r.flock.batchCode}`,
         costAtTime:    Number(r.quantityKg) * Number(r.costAtTime),
-        storeId:       null,
+        storeId:       r.feedInventory?.storeId || null,
+        recordedById:  r.recordedBy.id,
+        penSectionId:  r.penSectionId,
+        verificationId: verificationIdByRef[r.id] || null,
       }))
     );
 
-    // Feed store receipts — PENDING QC
+    // ── Feed store receipts — PENDING QC ──────────────────────────────────────
     const pendingReceipts = await prisma.storeReceipt.findMany({
       where: {
         storeId:         { in: storeIds },
@@ -229,16 +284,18 @@ export async function GET(request) {
         submittedBy:   `${r.receivedBy.firstName} ${r.receivedBy.lastName}`,
         context:       `${r.feedInventory?.feedType} | Supplier: ${r.supplier?.name || '—'} | Ref: ${r.referenceNumber || '—'}`,
         storeId:       r.storeId,
+        recordedById:  r.receivedBy.id,
+        verificationId: verificationIdByRef[r.id] || null,
       }))
     );
 
-    // Daily reports — PENDING approval
+    // ── Daily reports — PENDING approval ─────────────────────────────────────
     const pendingReports = await prisma.dailyReport.findMany({
-      where: {
+      where: withSectionScope({
         status:     'PENDING',
         reportDate: { gte: sevenDaysAgo },
         farm:       { tenantId: user.tenantId },
-      },
+      }),
       include: {
         farm:        { select: { id: true, name: true } },
         penSection:  { select: { id: true, name: true } },
@@ -259,6 +316,7 @@ export async function GET(request) {
         submittedBy:   `${r.submittedBy.firstName} ${r.submittedBy.lastName}`,
         context:       `${r.farm.name} — ${r.penSection.name}${r.flock ? ` | Flock: ${r.flock.batchCode}` : ''}`,
         storeId:       null,
+        verificationId: verificationIdByRef[r.id] || null,
       }))
     );
 
@@ -270,7 +328,7 @@ export async function GET(request) {
       ...pendingReports,
     ].sort((a, b) => new Date(b.date) - new Date(a.date));
 
-    // Typed filtering: scope pending queue to what this role can act on
+    // Scope pending queue to what this role can act on
     const visibleTypes = ROLE_VISIBLE_TYPES[user.role]; // null = see all
     if (visibleTypes) {
       pendingQueue = pendingQueue.filter(i => visibleTypes.includes(i.referenceType));
@@ -280,18 +338,120 @@ export async function GET(request) {
       canVerify: canVerifyRecordType(user.role, i.referenceType),
     }));
 
+    // ── Conflict-of-interest check for each pending item ──────────────────────
+    const COI_EXEMPT       = ['FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN'];
+    const STORE_SCOPED_COI = ['STORE_MANAGER','STORE_CLERK'];
+
+    if (!COI_EXEMPT.includes(user.role)) {
+      // ── Store-scoped COI (Store Manager / Store Clerk) ────────────────────
+      if (STORE_SCOPED_COI.includes(user.role)) {
+        // Collect all store receipts and feed consumption the user logged in the last 7 days
+        const [ownReceipts, ownStoreFeed] = await Promise.all([
+          prisma.storeReceipt.findMany({
+            where:  { receivedById: user.sub, receiptDate: { gte: sevenDaysAgo } },
+            select: { storeId: true, receiptDate: true },
+          }),
+          prisma.feedConsumption.findMany({
+            where:  { recordedById: user.sub, recordedDate: { gte: sevenDaysAgo } },
+            select: { feedInventory: { select: { storeId: true } }, recordedDate: true },
+          }),
+        ]);
+
+        // Build set of "storeId|YYYY-MM-DD" strings the user submitted
+        const ownStoreSubmissions = new Set();
+        const toStoreKey = (storeId, date) =>
+          `${storeId}|${new Date(date).toISOString().slice(0, 10)}`;
+
+        ownReceipts.forEach(r => ownStoreSubmissions.add(toStoreKey(r.storeId, r.receiptDate)));
+        ownStoreFeed.forEach(r => {
+          if (r.feedInventory?.storeId)
+            ownStoreSubmissions.add(toStoreKey(r.feedInventory.storeId, r.recordedDate));
+        });
+
+        pendingQueue = pendingQueue.map(item => {
+          const selfSubmitted = item.recordedById === user.sub;
+          const itemDate  = item.date ? new Date(item.date).toISOString().slice(0, 10) : null;
+          const sameStore = item.storeId && itemDate
+            ? ownStoreSubmissions.has(toStoreKey(item.storeId, itemDate))
+            : false;
+
+          const coiBlocked = selfSubmitted || sameStore;
+          const coiReason  = selfSubmitted
+            ? 'You logged this record — a different Store Manager must verify it'
+            : sameStore
+              ? 'You logged records in this store today — a different Store Manager must verify'
+              : null;
+
+          return { ...item, coiBlocked, coiReason };
+        });
+
+      } else {
+        // ── Pen-scoped COI (Pen Manager) ────────────────────────────────────
+        const [ownEggs, ownMort, ownFeed] = await Promise.all([
+          prisma.eggProduction.findMany({
+            where: {
+              recordedById: user.sub,
+              collectionDate: { gte: sevenDaysAgo },
+              ...(allowedSectionIds && { penSectionId: { in: allowedSectionIds } }),
+            },
+            select: { penSectionId: true, collectionDate: true },
+          }),
+          prisma.mortalityRecord.findMany({
+            where: {
+              recordedById: user.sub,
+              recordDate: { gte: sevenDaysAgo },
+              ...(allowedSectionIds && { penSectionId: { in: allowedSectionIds } }),
+            },
+            select: { penSectionId: true, recordDate: true },
+          }),
+          prisma.feedConsumption.findMany({
+            where: {
+              recordedById: user.sub,
+              recordedDate: { gte: sevenDaysAgo },
+              ...(allowedSectionIds && { penSectionId: { in: allowedSectionIds } }),
+            },
+            select: { penSectionId: true, recordedDate: true },
+          }),
+        ]);
+
+        const ownSubmissions = new Set();
+        const toKey = (sectionId, date) =>
+          `${sectionId}|${new Date(date).toISOString().slice(0, 10)}`;
+
+        ownEggs.forEach(r => ownSubmissions.add(toKey(r.penSectionId, r.collectionDate)));
+        ownMort.forEach(r => ownSubmissions.add(toKey(r.penSectionId, r.recordDate)));
+        ownFeed.forEach(r => ownSubmissions.add(toKey(r.penSectionId, r.recordedDate)));
+
+        pendingQueue = pendingQueue.map(item => {
+          const itemDate     = item.date ? new Date(item.date).toISOString().slice(0, 10) : null;
+          const selfSubmitted = item.recordedById === user.sub;
+          const sameSection  = item.penSectionId && itemDate
+            ? ownSubmissions.has(toKey(item.penSectionId, itemDate))
+            : false;
+
+          const coiBlocked = selfSubmitted || sameSection;
+          const coiReason  = selfSubmitted
+            ? 'You submitted this record — a different Pen Manager must verify it'
+            : sameSection
+              ? 'You submitted records in this section today — a different Pen Manager must verify'
+              : null;
+
+          return { ...item, coiBlocked, coiReason };
+        });
+      }
+    }
+
     if (type) {
       pendingQueue = pendingQueue.filter(i => i.type === type);
     }
 
-    // Always fetch live discrepancy/escalated counts for summary badges
     const [discrepancyCount, escalatedCount] = await Promise.all([
       prisma.verification.count({ where: { tenantId: user.tenantId, status: 'DISCREPANCY_FOUND' } }),
       prisma.verification.count({ where: { tenantId: user.tenantId, status: 'ESCALATED' } }),
     ]);
 
     const summary = {
-      totalPending:     pendingQueue.length,
+      totalPending: pendingQueue.length,
       byType: {
         DAILY_PRODUCTION: pendingQueue.filter(i => i.type === 'DAILY_PRODUCTION').length,
         FEED_RECEIPT:     pendingQueue.filter(i => i.type === 'FEED_RECEIPT').length,
@@ -321,7 +481,6 @@ export async function POST(request) {
     const body = await request.json();
     const data = createVerificationSchema.parse(body);
 
-    // Typed verification gate
     if (!canVerifyRecordType(user.role, data.referenceType)) {
       return NextResponse.json({
         error: `Your role (${user.role}) is not authorised to verify ${data.referenceType} records.`,
@@ -329,7 +488,33 @@ export async function POST(request) {
       }, { status: 403 });
     }
 
-    // ── Resolve storeId server-side if not provided ────────────────────────────
+    // ── Conflict-of-interest guard (VERIFIED actions only) ────────────────────
+    // A PM cannot verify records from a section where they also submitted data
+    // on the same production date. Flagging is exempt from this check.
+    if (data.status === 'VERIFIED') {
+      const coi = await checkConflictOfInterest(prisma, user, data.referenceType, data.referenceId);
+      if (coi.blocked) {
+        // Log the attempted COI bypass in the audit trail
+        await prisma.auditLog.create({
+          data: {
+            tenantId:   user.tenantId,
+            userId:     user.sub,
+            action:     'UPDATE',
+            entityType: 'Verification',
+            entityId:   data.referenceId,
+            changes: {
+              blocked:   true,
+              coiType:   coi.coiType,
+              reason:    coi.reason,
+              referenceType: data.referenceType,
+              referenceId:   data.referenceId,
+            },
+          },
+        }).catch(() => {});
+        return NextResponse.json({ error: coi.reason, coiBlocked: true, coiType: coi.coiType }, { status: 403 });
+      }
+    }
+
     let resolvedStoreId = data.storeId;
     if (!resolvedStoreId) {
       const firstStore = await prisma.store.findFirst({
@@ -347,16 +532,13 @@ export async function POST(request) {
         return NextResponse.json({ error: 'Store not found' }, { status: 404 });
     }
 
-    // Check for all existing verification records for this reference
     const allExisting = await prisma.verification.findMany({
       where: { tenantId: user.tenantId, referenceId: data.referenceId },
       orderBy: { createdAt: 'desc' },
     });
 
-    // If a PENDING record exists (resubmitted after rejection) — update it, delete stale duplicates
     const pendingRecord = allExisting.find(v => v.status === 'PENDING');
     if (pendingRecord) {
-      // Delete any other stale records for this referenceId to prevent future confusion
       const staleIds = allExisting.filter(v => v.id !== pendingRecord.id).map(v => v.id);
       if (staleIds.length > 0) {
         await prisma.verification.deleteMany({ where: { id: { in: staleIds } } }).catch(() => {});
@@ -376,12 +558,10 @@ export async function POST(request) {
       return NextResponse.json({ verification }, { status: 200 });
     }
 
-    // Block if any record is already fully verified or resolved
     const finalRecord = allExisting.find(v => ['VERIFIED', 'RESOLVED', 'ESCALATED'].includes(v.status));
     if (finalRecord)
       return NextResponse.json({ error: 'This record has already been verified', verification: finalRecord }, { status: 409 });
 
-    // Create verification record
     const verification = await prisma.verification.create({
       data: {
         tenantId:          user.tenantId,
@@ -402,11 +582,9 @@ export async function POST(request) {
       },
     });
 
-    // Update source record status
     const newStatus = data.status === 'VERIFIED' ? 'APPROVED' : 'PENDING';
     await updateSourceRecord(data.referenceType, data.referenceId, newStatus, user.sub).catch(() => {});
 
-    // Notify on discrepancy
     if (data.status === 'DISCREPANCY_FOUND') {
       await notifyDiscrepancy(verification, data, user.tenantId).catch(() => {});
     }
