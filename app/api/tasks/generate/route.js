@@ -170,13 +170,16 @@ export async function POST(request) {
       where: {
         pen: { farm: { tenantId: user.tenantId } },
         isActive: true,
-        flocks:   { some: { status: 'ACTIVE' } }, // only sections with live flocks
         ...sectionFilter,
       },
       include: {
         pen: { select: { operationType: true, name: true } },
+        flocks: {
+          where:  { status: 'ACTIVE' },
+          select: { id: true },
+          take:   1,
+        },
         workerAssignments: {
-          where:  { isActive: true },
           include: { user: { select: { id: true, role: true, isActive: true } } },
         },
       },
@@ -189,7 +192,8 @@ export async function POST(request) {
     let skipped = 0;
 
     for (const section of sections) {
-      const opType = section.pen.operationType; // 'LAYER' | 'BROILER'
+      const opType         = section.pen.operationType; // 'LAYER' | 'BROILER'
+      const hasActiveFlock = section.flocks?.length > 0;
 
       // Find all active workers assigned to this section
       const workers = section.workerAssignments
@@ -201,8 +205,12 @@ export async function POST(request) {
       // One worker gets assigned per task — the first active PEN_WORKER, or PM if none
       const primaryWorker = workers.find(u => u.role === 'PEN_WORKER') || workers[0];
 
+      // Flock-dependent task types — only generated when an active flock exists
+      const FLOCK_REQUIRED = ['FEEDING', 'EGG_COLLECTION', 'MORTALITY_CHECK', 'WEIGHT_RECORDING'];
+
       if (frequency === 'daily') {
-        const templates = dailyTemplates(baseDate, opType);
+        const templates = dailyTemplates(baseDate, opType)
+          .filter(t => hasActiveFlock || !FLOCK_REQUIRED.includes(t.taskType));
 
         // Check which task types already have tasks today for this section
         const existingToday = await prisma.task.findMany({
@@ -241,7 +249,8 @@ export async function POST(request) {
       }
 
       if (frequency === 'weekly') {
-        const templates = weeklyTemplates(weekStart, opType);
+        const templates = weeklyTemplates(weekStart, opType)
+          .filter(t => hasActiveFlock || !FLOCK_REQUIRED.includes(t.taskType));
 
         // Check which weekly tasks already exist this week for this section
         const weekEnd = new Date(weekStart);
@@ -284,6 +293,13 @@ export async function POST(request) {
         }
       }
     }
+
+    console.log(`[tasks/generate] ${frequency}: ${sections.length} sections found, ${created} created, ${skipped} skipped`);
+    sections.forEach(s => {
+      const hasFlock = s.flocks?.length > 0;
+      const workerCount = s.workerAssignments?.length ?? 0;
+      console.log(`  Section: ${s.id} | flock:${hasFlock} | workers:${workerCount} | pen:${s.pen?.name}`);
+    });
 
     return NextResponse.json({
       created,

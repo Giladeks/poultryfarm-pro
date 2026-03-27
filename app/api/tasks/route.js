@@ -160,8 +160,16 @@ export async function POST(request) {
       });
       if (!task) return NextResponse.json({ error: 'Task not found' }, { status: 404 });
 
-      if (user.role === 'PEN_WORKER' && task.assignedToId !== user.sub)
-        return NextResponse.json({ error: 'Cannot complete another worker\'s task' }, { status: 403 });
+      // PEN_WORKERs can complete any task for sections they are assigned to.
+      // Tasks are fetched by sectionIds (not assignedToId), so the worker may see
+      // tasks originally assigned to another worker in the same section.
+      if (user.role === 'PEN_WORKER' && task.penSectionId) {
+        const assignment = await prisma.penWorkerAssignment.findFirst({
+          where: { userId: user.sub, penSectionId: task.penSectionId, isActive: true },
+        });
+        if (!assignment)
+          return NextResponse.json({ error: 'You are not assigned to this section' }, { status: 403 });
+      }
 
       const updated = await prisma.task.update({
         where: { id: data.taskId },

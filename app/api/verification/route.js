@@ -15,12 +15,12 @@ const MANAGEMENT_OVERRIDE = ['FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER
 const RECORD_TYPE_VERIFIERS = {
   EggProduction:   [...new Set(['PEN_MANAGER',                    ...MANAGEMENT_OVERRIDE])],
   MortalityRecord: [...new Set(['PEN_MANAGER',                    ...MANAGEMENT_OVERRIDE])],
-  FeedConsumption: [...new Set(['STORE_MANAGER', 'STORE_CLERK',   ...MANAGEMENT_OVERRIDE])],
+  FeedConsumption: [...new Set(['PEN_MANAGER', 'STORE_MANAGER', 'STORE_CLERK', ...MANAGEMENT_OVERRIDE])],
   StoreReceipt:    [...new Set(['STORE_MANAGER',                  ...MANAGEMENT_OVERRIDE])],
   DailyReport:     [...new Set(['PEN_MANAGER',                    ...MANAGEMENT_OVERRIDE])],
 };
 const ROLE_VISIBLE_TYPES = {
-  PEN_MANAGER:   ['EggProduction', 'MortalityRecord', 'DailyReport'],
+  PEN_MANAGER:   ['EggProduction', 'MortalityRecord', 'DailyReport', 'FeedConsumption'],
   STORE_CLERK:   ['FeedConsumption'],
   STORE_MANAGER: ['FeedConsumption', 'StoreReceipt'],
   FARM_MANAGER:  null,

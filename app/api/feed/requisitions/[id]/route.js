@@ -39,6 +39,7 @@ const VIEW_ROLES    = ['PEN_MANAGER', 'STORE_MANAGER', 'STORE_CLERK', 'INTERNAL_
                        'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
 
 const INCLUDE = {
+  pen:           { select: { id: true, name: true } },
   penSection:    { select: { id: true, name: true, pen: { select: { name: true } } } },
   flock:         { select: { id: true, batchCode: true, currentCount: true } },
   feedInventory: { select: { id: true, feedType: true, currentStockKg: true, bagWeightKg: true, costPerKg: true } },
@@ -248,13 +249,17 @@ export async function PATCH(request, { params: rawParams }) {
         return NextResponse.json({ error: 'Can only issue against APPROVED requisitions' }, { status: 422 });
 
       const data = z.object({
-        issuedQtyKg:    z.number().positive(),
-        issuanceNotes:  z.string().max(500).nullable().optional(),
+        issuedQtyKg:     z.number().positive(),
+        issuanceNotes:   z.string().max(500).nullable().optional(),
+        // Optional per-section breakdown: [{ penSectionId, issuedQtyKg }]
+        sectionIssuance: z.array(z.object({
+          penSectionId: z.string(),
+          issuedQtyKg:  z.number().min(0),
+        })).optional(),
       }).parse(body);
 
-      const approvedQty     = Number(req.approvedQtyKg);
-      const currentStock    = Number(req.feedInventory.currentStockKg);
-      const costPerKg       = Number(req.feedInventory.costPerKg);
+      const approvedQty  = Number(req.approvedQtyKg);
+      const currentStock = Number(req.feedInventory.currentStockKg);
 
       // Cap issuance at approved quantity
       if (data.issuedQtyKg > approvedQty)
@@ -273,12 +278,31 @@ export async function PATCH(request, { params: rawParams }) {
           currentStock,
         }, { status: 422 });
 
+      // Merge per-section issued quantities into sectionBreakdown
+      let updatedBreakdown = req.sectionBreakdown ? [...req.sectionBreakdown] : null;
+      if (updatedBreakdown && data.sectionIssuance?.length > 0) {
+        const issueMap = Object.fromEntries(data.sectionIssuance.map(s => [s.penSectionId, s.issuedQtyKg]));
+        updatedBreakdown = updatedBreakdown.map(s => ({
+          ...s,
+          issuedQtyKg: issueMap[s.penSectionId] ?? s.issuedQtyKg ?? null,
+        }));
+      } else if (updatedBreakdown && actualIssue > 0) {
+        // Pro-rate issuance across sections by calculatedQtyKg
+        const totalCalc = updatedBreakdown.reduce((sum, s) => sum + (s.calculatedQtyKg || 0), 0);
+        updatedBreakdown = updatedBreakdown.map(s => ({
+          ...s,
+          issuedQtyKg: totalCalc > 0
+            ? parseFloat(((s.calculatedQtyKg / totalCalc) * actualIssue).toFixed(2))
+            : null,
+        }));
+      }
+
       // Create StoreIssuance record + decrement inventory atomically
       const [issuance] = await prisma.$transaction([
         prisma.storeIssuance.create({
           data: {
             storeId:        req.feedInventory.storeId || req.storeId,
-            penSectionId:   req.penSectionId,
+            penSectionId:   req.penSectionId || null,
             issuedById:     user.sub,
             issuanceDate:   now,
             feedInventoryId:req.feedInventoryId,
@@ -298,12 +322,13 @@ export async function PATCH(request, { params: rawParams }) {
       const updated = await prisma.feedRequisition.update({
         where: { id: params.id },
         data: {
-          issuedQtyKg:    actualIssue,
-          issuedById:     user.sub,
-          issuedAt:       now,
-          storeIssuanceId:issuance.id,
-          issuanceNotes:  data.issuanceNotes ?? null,
-          status:         newStatus,
+          issuedQtyKg:      actualIssue,
+          issuedById:       user.sub,
+          issuedAt:         now,
+          storeIssuanceId:  issuance.id,
+          issuanceNotes:    data.issuanceNotes ?? null,
+          status:           newStatus,
+          ...(updatedBreakdown && { sectionBreakdown: updatedBreakdown }),
         },
         include: INCLUDE,
       });
@@ -350,12 +375,36 @@ export async function PATCH(request, { params: rawParams }) {
       const data = z.object({
         acknowledgedQtyKg:    z.number().min(0),
         acknowledgementNotes: z.string().max(500).nullable().optional(),
+        // Optional per-section acknowledged quantities
+        sectionAcknowledgement: z.array(z.object({
+          penSectionId:      z.string(),
+          acknowledgedQtyKg: z.number().min(0),
+        })).optional(),
       }).parse(body);
 
       const issuedQty      = Number(req.issuedQtyKg);
       const discrepancyQty = parseFloat((issuedQty - data.acknowledgedQtyKg).toFixed(2));
-      const hasDiscrepancy = Math.abs(discrepancyQty) > 0.5; // 0.5 kg tolerance
+      const hasDiscrepancy = Math.abs(discrepancyQty) > 0.5;
       const newStatus      = hasDiscrepancy ? 'DISCREPANCY' : 'ACKNOWLEDGED';
+
+      // Merge per-section acknowledged quantities into sectionBreakdown
+      let updatedBreakdown = req.sectionBreakdown ? [...req.sectionBreakdown] : null;
+      if (updatedBreakdown && data.sectionAcknowledgement?.length > 0) {
+        const ackMap = Object.fromEntries(data.sectionAcknowledgement.map(s => [s.penSectionId, s.acknowledgedQtyKg]));
+        updatedBreakdown = updatedBreakdown.map(s => ({
+          ...s,
+          acknowledgedQtyKg: ackMap[s.penSectionId] ?? s.acknowledgedQtyKg ?? null,
+        }));
+      } else if (updatedBreakdown && data.acknowledgedQtyKg > 0) {
+        // Pro-rate acknowledgement by issuedQtyKg per section
+        const totalIssued = updatedBreakdown.reduce((sum, s) => sum + (s.issuedQtyKg || 0), 0);
+        updatedBreakdown = updatedBreakdown.map(s => ({
+          ...s,
+          acknowledgedQtyKg: totalIssued > 0
+            ? parseFloat((((s.issuedQtyKg || 0) / totalIssued) * data.acknowledgedQtyKg).toFixed(2))
+            : null,
+        }));
+      }
 
       const updated = await prisma.feedRequisition.update({
         where: { id: params.id },
@@ -366,6 +415,7 @@ export async function PATCH(request, { params: rawParams }) {
           discrepancyQtyKg:     discrepancyQty,
           acknowledgementNotes: data.acknowledgementNotes ?? null,
           status:               newStatus,
+          ...(updatedBreakdown && { sectionBreakdown: updatedBreakdown }),
         },
         include: INCLUDE,
       });

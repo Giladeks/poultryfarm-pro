@@ -130,10 +130,13 @@ export async function POST(request) {
       bagWeightKg = Number(feedItem.bagWeightKg) || 25;
       costAtTime  = Number(feedItem.costPerKg);
 
-      // quantityKg = (bagsUsed × bagWeightKg) + (bagWeightKg − remainingKg)
-      // i.e. full bags fully used, plus partial amount consumed from the last opened bag
+      // quantityKg = (bagsUsed × bagWeightKg) + partialConsumed
+      // partialConsumed = (bagWeightKg − remainingKg) only when a partial bag was opened.
+      // If remainingKg is 0 or absent, no partial bag was opened — no extra kg added.
+      const hasPartialBag  = (data.remainingKg ?? 0) > 0.1;
+      const partialConsumed = hasPartialBag ? (bagWeightKg - data.remainingKg) : 0;
       quantityKg = parseFloat(
-        ((data.bagsUsed * bagWeightKg) + (bagWeightKg - data.remainingKg)).toFixed(2)
+        ((data.bagsUsed * bagWeightKg) + partialConsumed).toFixed(2)
       );
 
       if (quantityKg <= 0)
@@ -368,79 +371,129 @@ async function checkLowFeedStock(tenantId, feedInventoryId, feedItem, stockAfter
   }).catch(err => console.error('[EMAIL] Feed low-stock error:', err.message));
 }
 
-// ─── Requisition draft upsert ─────────────────────────────────────────────────
+// ─── Requisition draft upsert (pen-level) ────────────────────────────────────
 // Called fire-and-forget after a feed consumption record is saved.
-// Creates or updates a DRAFT FeedRequisition for the next day.
-// If a DRAFT already exists for this section/feedType/date, updates the
-// calculated quantity with the latest consumption data.
+// Creates or updates a DRAFT FeedRequisition at the PEN level for the next day.
+//
+// Design:
+//   • One requisition per pen per feed type per day (not per section).
+//   • sectionBreakdown (JSONB) stores per-section quantities so the store
+//     knows exactly how much to issue to each section.
+//   • When any section in the pen logs feed, the pen-level requisition is
+//     refreshed to include ALL active sections in that pen for the same feed type.
 async function upsertDraftRequisition({
   tenantId, penSectionId, flockId, feedInventoryId, triggerLogId, recordedDate,
 }) {
   if (!penSectionId || !flockId || !feedInventoryId) return;
 
-  // The requisition is FOR the next day after the consumption date
+  // The requisition is FOR the next day
   const feedForDate = new Date(recordedDate);
   feedForDate.setDate(feedForDate.getDate() + 1);
   feedForDate.setHours(0, 0, 0, 0);
 
-  // Fetch flock bird count
-  const flock = await prisma.flock.findUnique({
-    where:  { id: flockId },
-    select: { currentCount: true, status: true },
-  });
-  if (!flock || flock.status !== 'ACTIVE') return;
+  // Resolve pen and feed inventory
+  const [section, feedInv] = await Promise.all([
+    prisma.penSection.findUnique({
+      where:  { id: penSectionId },
+      select: { id: true, name: true, penId: true, pen: { select: { id: true, name: true } } },
+    }),
+    prisma.feedInventory.findUnique({
+      where:  { id: feedInventoryId },
+      select: { storeId: true, bagWeightKg: true, feedType: true },
+    }),
+  ]);
+  if (!section || !feedInv) return;
 
-  // Fetch last 7 days of consumption for this section + feed type
+  const penId      = section.pen.id;
+  const bagWeightKg = Number(feedInv.bagWeightKg) || 25;
+
+  // Find ALL active sections in this pen that have an active flock
+  const siblingFlocks = await prisma.flock.findMany({
+    where: {
+      status:     'ACTIVE',
+      penSection: { penId, isActive: true },
+    },
+    select: {
+      id: true, currentCount: true, batchCode: true,
+      penSection: { select: { id: true, name: true } },
+    },
+  });
+
+  if (siblingFlocks.length === 0) return;
+
   const sevenDaysAgo = new Date(recordedDate);
-  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6); // include today
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
   sevenDaysAgo.setHours(0, 0, 0, 0);
+  const recordedEnd = new Date(recordedDate);
+  recordedEnd.setHours(23, 59, 59, 999);
 
-  const recentLogs = await prisma.feedConsumption.findMany({
-    where: {
-      penSectionId,
-      feedInventoryId,
-      recordedDate: { gte: sevenDaysAgo, lte: new Date(recordedDate) },
-    },
-    select: { quantityKg: true, recordedDate: true },
-    orderBy: { recordedDate: 'desc' },
-  });
+  // Calculate per-section quantities
+  const breakdownEntries = await Promise.all(siblingFlocks.map(async (f) => {
+    const recentLogs = await prisma.feedConsumption.findMany({
+      where: {
+        penSectionId:   f.penSection.id,
+        feedInventoryId,
+        recordedDate:   { gte: sevenDaysAgo, lte: recordedEnd },
+      },
+      select:  { quantityKg: true, recordedDate: true },
+      orderBy: { recordedDate: 'desc' },
+    });
 
-  // Resolve storeId from feedInventory
-  const feedInv = await prisma.feedInventory.findUnique({
-    where:  { id: feedInventoryId },
-    select: { storeId: true },
-  });
+    const calc = calculateRequisitionQty({
+      recentLogs,
+      currentBirdCount: f.currentCount,
+      bufferPct:        5,
+      lookbackDays:     7,
+    });
 
-  const calc = calculateRequisitionQty({
-    recentLogs,
-    currentBirdCount: flock.currentCount,
-    bufferPct:        5,
-    lookbackDays:     7,
-  });
+    // Bag breakdown for this section
+    const bags        = Math.floor(calc.calculatedQtyKg / bagWeightKg);
+    const remainderKg = parseFloat((calc.calculatedQtyKg % bagWeightKg).toFixed(2));
 
-  if (calc.calculatedQtyKg <= 0) return;
+    return {
+      penSectionId:          f.penSection.id,
+      sectionName:           f.penSection.name,
+      flockId:               f.id,
+      batchCode:             f.batchCode,
+      birdCount:             f.currentCount,
+      avgConsumptionPerBirdG: calc.avgConsumptionPerBirdG,
+      calculatedQtyKg:       calc.calculatedQtyKg,
+      bags,
+      remainderKg,
+      requestedQtyKg:        null,  // PM fills on submit
+      issuedQtyKg:           null,  // Store fills on issue
+      acknowledgedQtyKg:     null,  // PM fills on acknowledge
+    };
+  }));
 
-  // Upsert: update if DRAFT exists, create if not
+  // Sum across all sections for the pen total
+  const totalCalcKg = parseFloat(
+    breakdownEntries.reduce((s, e) => s + e.calculatedQtyKg, 0).toFixed(2)
+  );
+  if (totalCalcKg <= 0) return;
+
+  const totalBags      = Math.floor(totalCalcKg / bagWeightKg);
+  const totalRemainKg  = parseFloat((totalCalcKg % bagWeightKg).toFixed(2));
+
+  // Representative values (for backward compat fields) — use triggering section
+  const trigger = breakdownEntries.find(e => e.penSectionId === penSectionId) || breakdownEntries[0];
+
+  // Upsert: update if DRAFT exists for this pen/feedType/date
   const existing = await prisma.feedRequisition.findFirst({
-    where: {
-      penSectionId,
-      feedInventoryId,
-      feedForDate,
-      status: 'DRAFT',
-    },
+    where: { penId, feedInventoryId, feedForDate, status: 'DRAFT' },
     select: { id: true },
   });
 
   if (existing) {
-    // Recalculate with latest data
     await prisma.feedRequisition.update({
       where: { id: existing.id },
       data: {
-        calculatedQtyKg:        calc.calculatedQtyKg,
-        avgConsumptionPerBirdG: calc.avgConsumptionPerBirdG,
-        currentBirdCount:       calc.currentBirdCount,
-        calculationDays:        calc.calculationDays,
-        triggerLogId:           triggerLogId,
+        calculatedQtyKg:        totalCalcKg,
+        avgConsumptionPerBirdG: trigger.avgConsumptionPerBirdG,
+        currentBirdCount:       breakdownEntries.reduce((s, e) => s + e.birdCount, 0),
+        calculationDays:        7,
+        triggerLogId,
+        sectionBreakdown:       breakdownEntries,
       },
     });
   } else {
@@ -450,43 +503,50 @@ async function upsertDraftRequisition({
       data: {
         tenantId,
         requisitionNumber:      reqNumber,
-        penSectionId,
-        flockId,
+        penId,
+        penSectionId:           null,           // pen-level — no single section
+        flockId:                trigger.flockId, // representative flock
         feedInventoryId,
         storeId:                feedInv?.storeId ?? undefined,
         feedForDate,
         triggerLogId,
-        calculatedQtyKg:        calc.calculatedQtyKg,
-        avgConsumptionPerBirdG: calc.avgConsumptionPerBirdG,
-        currentBirdCount:       calc.currentBirdCount,
-        calculationDays:        calc.calculationDays,
+        calculatedQtyKg:        totalCalcKg,
+        avgConsumptionPerBirdG: trigger.avgConsumptionPerBirdG,
+        currentBirdCount:       breakdownEntries.reduce((s, e) => s + e.birdCount, 0),
+        calculationDays:        7,
+        sectionBreakdown:       breakdownEntries,
         status:                 'DRAFT',
       },
     });
 
-    // Notify PMs assigned to this section that a draft requisition is ready
+    // Notify PMs assigned to any section in this pen
+    const penSectionIds = breakdownEntries.map(e => e.penSectionId);
     const pmAssignments = await prisma.penWorkerAssignment.findMany({
       where: {
-        penSectionId,
+        penSectionId: { in: penSectionIds },
         user: { role: 'PEN_MANAGER', isActive: true },
       },
-      select: { userId: true },
+      select:  { userId: true },
+      distinct: ['userId'],
     });
 
     if (pmAssignments.length > 0) {
+      const totalBagsStr = totalRemainKg > 0
+        ? `${totalBags} bags + ${totalRemainKg} kg`
+        : `${totalBags} bags`;
       await prisma.notification.createMany({
         data: pmAssignments.map(a => ({
           tenantId,
           recipientId: a.userId,
           type:        'ALERT',
           title:       'Feed Requisition Ready for Review',
-          message:     `A draft feed requisition has been prepared for ${feedForDate.toLocaleDateString('en-NG', { day: 'numeric', month: 'short' })}. Calculated quantity: ${calc.calculatedQtyKg} kg. Please review and submit.`,
+          message:     `Draft requisition for ${section.pen.name} on ${feedForDate.toLocaleDateString('en-NG', { day: 'numeric', month: 'short' })}. Total: ${totalCalcKg} kg (${totalBagsStr}) across ${breakdownEntries.length} section${breakdownEntries.length !== 1 ? 's' : ''}.`,
           data:        {
             entityType:        'FeedRequisition',
             requisitionNumber: reqNumber,
-            penSectionId,
+            penId,
             feedForDate:       feedForDate.toISOString(),
-            calculatedQtyKg:   calc.calculatedQtyKg,
+            calculatedQtyKg:   totalCalcKg,
           },
           channel: 'IN_APP',
         })),

@@ -9,7 +9,7 @@ import { useAuth } from './AuthProvider';
 import { ROLE_LABELS } from '@/lib/constants/roles';
 import {
   // Nav items
-  LayoutDashboard, Building2, Egg, ClipboardList, Bird,
+  LayoutDashboard, Building2, Egg, ClipboardList, ClipboardCheck, Bird,
   TrendingUp, Scale, Factory, Syringe, Wheat, Cog,
   CheckSquare, DollarSign, Search, Drumstick, ChevronDown,
   // Group header icons
@@ -26,7 +26,7 @@ import {
 
 // Map icon name strings (from NAV_ITEMS) to Lucide components
 const ICON_MAP = {
-  LayoutDashboard, Building2, Egg, ClipboardList, Bird,
+  LayoutDashboard, Building2, Egg, ClipboardList, ClipboardCheck, Bird,
   TrendingUp, Scale, Factory, Syringe, Wheat, Cog,
   CheckSquare, DollarSign, Search, Drumstick,
 };
@@ -75,10 +75,14 @@ const NAV_ITEMS = [
   },
   {
     href: '/worker', icon: 'ClipboardList', label: 'My Tasks', section: 'top',
-    roles: ['PEN_WORKER','PEN_MANAGER','PRODUCTION_STAFF','STORE_CLERK','QC_TECHNICIAN'],
+    roles: ['PEN_WORKER','PRODUCTION_STAFF','STORE_CLERK','QC_TECHNICIAN'],
   },
 
   // ── Layer section ──
+  {
+    href: '/pen-manager/daily-summaries', icon: 'ClipboardCheck', label: 'Daily Summaries', section: 'top',
+    roles: ['PEN_MANAGER','FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN'],
+  },
   {
     href: '/farm?op=layer', icon: 'Bird', label: 'Layer Flocks', section: 'layer',
     roles: ['FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','PEN_MANAGER','SUPER_ADMIN'],

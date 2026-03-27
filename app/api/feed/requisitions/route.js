@@ -24,6 +24,7 @@ const ALLOWED_ROLES = [
 ];
 
 const INCLUDE = {
+  pen:           { select: { id: true, name: true } },
   penSection:    { select: { id: true, name: true, pen: { select: { name: true } } } },
   flock:         { select: { id: true, batchCode: true, currentCount: true, operationType: true } },
   feedInventory: { select: { id: true, feedType: true, currentStockKg: true, bagWeightKg: true } },
@@ -58,15 +59,23 @@ export async function GET(request) {
       where = { tenantId: user.tenantId };
 
     } else if (user.role === 'PEN_MANAGER') {
-      // Only sections this PM is assigned to
+      // Find all pens this PM manages via section assignments
       const assignments = await prisma.penWorkerAssignment.findMany({
         where:  { userId: user.sub },
-        select: { penSectionId: true },
+        select: { penSection: { select: { id: true, penId: true } } },
       });
-      const sectionIds = assignments.map(a => a.penSectionId);
-      if (sectionIds.length === 0)
+      const penIds     = [...new Set(assignments.map(a => a.penSection?.penId).filter(Boolean))];
+      const sectionIds = assignments.map(a => a.penSection?.id).filter(Boolean);
+      if (penIds.length === 0 && sectionIds.length === 0)
         return NextResponse.json({ requisitions: [], summary: {} });
-      where = { tenantId: user.tenantId, penSectionId: { in: sectionIds } };
+      // Pen-level reqs use penId; legacy per-section reqs use penSectionId
+      where = {
+        tenantId: user.tenantId,
+        OR: [
+          ...(penIds.length     ? [{ penId:        { in: penIds     } }] : []),
+          ...(sectionIds.length ? [{ penSectionId: { in: sectionIds } }] : []),
+        ],
+      };
 
     } else if (user.role === 'INTERNAL_CONTROL') {
       // IC sees all except DRAFT (they only need to act on submitted ones)

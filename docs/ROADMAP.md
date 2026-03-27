@@ -1,5 +1,5 @@
 # PoultryFarm Pro — Module Development Roadmap
-> Last updated: 19 March 2026 (rev 6)
+> Last updated: 24 March 2026 (rev 7)
 > Stack: Next.js 16 App Router · Prisma 5.22 · PostgreSQL · JWT Auth (localStorage Bearer) · Tailwind + custom CSS
 > Currency: Nigerian Naira (₦) · Locale: en-NG
 
@@ -78,11 +78,11 @@ Accounts Payable, Accounts Receivable, Profit & Loss, Bank Reconciliation, invoi
 - AppShell nav conditionally renders items based on active operation mode
 - Farm page and dashboard panels scoped to active modules
 
-### 🔧 8B — Production Dashboards & Worker Experience (Mostly Complete)
+### ✅ 8B — Production Dashboards & Worker Experience
 
-> This sub-phase diverged from the original spec to prioritise worker-facing dashboards and role-specific KPI views before building the brooding module. The core dashboard architecture is complete. Several data-entry modals remain.
+> Phase 8B is fully closed out. All items previously marked 🔧 have shipped. The sub-phase also delivered four additional feature sets that were not in the original spec.
 
-#### ✅ Completed in Phase 8B
+#### Core Dashboard Architecture (previously completed)
 - **Main dashboard** (`app/dashboard/page.js`) — all 11 roles fully implemented:
   - Pen Worker: 3-column section grid, click-to-chart modal, attention pill navigation to flagged sections
   - Pen Manager: KPI blocks (Layer + Broiler), attention pill (section-level), pending verifications panel (2-column compact grid, scoped to PM's pens, 240px max-height scroll)
@@ -93,38 +93,44 @@ Accounts Payable, Accounts Receivable, Profit & Loss, Bank Reconciliation, invoi
 - **Dashboard APIs**: `/api/dashboard`, `/api/dashboard/charts` (Phase 8B field-compatible), `/api/dashboard/verifications`
 - **Eggs API** (`/api/eggs` GET + POST, `/api/eggs/[id]` PATCH): Phase 8B crate-based two-phase workflow
 - **Weight records API** (`/api/weight-records` GET + POST): reads `WeightRecord` model with field aliases for broiler performance page
-- **`components/ui/Modal.js`**: portal-rendered modal component (was missing, now created)
+- **`components/ui/Modal.js`**: portal-rendered modal component
 - **`components/ui/KpiCard.js`**: status-colour KPI card with `onClick` support
 - **Prisma schema** (Phase 8B): `EggProduction` (crate-based), `FeedConsumption` (bag-based), `WaterMeterReading`, `DailySummary`, `WeightRecord`, `BroilerHarvest`, all enums
 - **Seed v2.2**: 4 layer flocks + 4 broiler flocks, 30 days egg records, weight records, water readings, daily summaries, all user roles, realistic Nigerian farm data
 
-#### 🔧 Remaining in Phase 8B (build next session)
+#### Priority 1 — Worker Data Entry Modals ✅
+| Item | Status |
+|------|--------|
+| **`WaterMeterModal.js`** | ✅ Daily odometer reading. System computes `consumptionL = today − yesterday` and `consumptionLPB`. Unique constraint on `(penSectionId, readingDate)`. Wired into the worker page. |
+| **`WorkerFeedModal.js`** | ✅ Bag-based feed distribution. Pulls live inventory. Computes `quantityKg = (bagsUsed × bagWeightKg) − remainingKg` and grams-per-bird. Wired into the worker page. |
+| **`GradingModal.js`** | ✅ PM Grade B grading with live preview of gradeA count and gradeA%. PATCHes `/api/eggs/[id]`. |
 
-**Priority 1 — Worker data entry modals (core workflow gaps)**
+#### Priority 2 — Verification Wiring ✅
+| Item | Status |
+|------|--------|
+| **`VerifyActions.js`** | ✅ Drop-in component that routes Egg records to `GradingModal`, Mortality records to `MortalityVerifyModal`, and everything else to a direct PATCH. Uses `PATCH /api/verification/[id]` when an ID exists, POSTs for new records. |
+| **Conflict-of-interest guard** | ✅ `lib/utils/conflictOfInterest.js` enforced across all verification routes. |
 
-| Item | Description |
-|------|-------------|
-| **Water meter reading modal** | Worker logs daily odometer reading. `POST /api/water-readings`. Model: `WaterMeterReading` (`penSectionId`, `readingDate`, `meterReading`). System computes `consumptionL = today − yesterday`, `consumptionLPB`. Unique constraint: `(penSectionId, readingDate)`. |
-| **Feed log modal** | Worker logs daily feed distribution. `POST /api/feed-consumption`. Body: `bagsUsed`, `remainingKg`, `feedInventoryId`, `feedTime`. `quantityKg = (bagsUsed × bagWeightKg) − remainingKg`. `feedTime` is TIMESTAMPTZ replacing old `feedBatch INT`. |
-| **PM Grade B grading modal** | PM enters `gradeBCrates`, `gradeBLoose`, `crackedConfirmed` for a pending egg record. `PATCH /api/eggs/[id]` with grading fields. System computes and stores `gradeBCount`, `gradeACount`, `gradeAPct`, sets `submissionStatus = 'APPROVED'`. |
+#### Priority 3 — Daily Summary ✅
+| Item | Status |
+|------|--------|
+| **`DailySummaryCard.js`** | ✅ Checklist booleans, production aggregates, closing observation, status pill. Wired into the worker page. `GET/POST /api/daily-summary`. |
+| **Farm settings: auto-submit time picker** | ✅ Time picker added to Settings page for `Farm.autoSummaryTime`. `lib/utils/autoSubmitSummary.js` complete. |
 
-**Priority 2 — Verification wiring**
+#### Priority 4 — Additional Features Shipped (Not in Previous Roadmap) ✅
+These features were designed, built, and deployed during Phase 8B without being tracked in a prior roadmap revision. They are recorded here for full traceability.
 
-| Item | Description |
-|------|-------------|
-| **PM dashboard Verify/Flag PATCH** | Current buttons POST to `/api/verification` (creates new record). Should PATCH existing pending record. `/api/verification/[id]` PATCH endpoint exists — wire it from the dashboard panel. |
-| **Full verification page** | `app/verification/page.js` is built (uploaded during session). Verify it wires correctly to `PATCH /api/verification/[id]` for approve/query/escalate actions. |
+| Feature | Description |
+|---------|-------------|
+| **Spot Check system** | `FARM_MANAGER` / `IC_OFFICER` can generate random spot checks. Workers complete them via a dedicated modal. |
+| **Feed Requisition module** | Full multi-step workflow: `DRAFT → SUBMITTED → APPROVED → ISSUED → ACKNOWLEDGED → CLOSED`. Role-aware `/feed-requisitions` page with IC approval logic. |
+| **Investigation workflow** | IC Officer flagging with escalation and resolution tracking. |
+| **Global search** | `GlobalSearch.js` + `/api/search`. |
+| **Notifications page** | In-app notification feed. |
+| **Profile / Avatar management** | User profile editing with avatar upload. |
+| **New DB models** | `FeedRequisition`, `WaterMeterReading`, `DailySummary`, `weight_samples`, `Investigation`. |
 
-**Priority 3 — Daily summary**
-
-| Item | Description |
-|------|-------------|
-| **Daily summary card UI** | Shows `DailySummary` per pen section: checklist booleans, production aggregates, `closingObservation`. Auto-submitted at `Farm.autoSummaryTime` (default `"19:00"`). `GET/POST /api/daily-summary`. |
-| **Farm settings: auto-submit time picker** | Add time picker to Settings page for `Farm.autoSummaryTime`. |
-
-**Priority 4 — Minor fixes**
-- `WATER_CHECK` TaskType enum — deferred. Use `INSPECTION` in all task references.
-- Broiler worker process flow parity with layer worker (equivalent modals on worker page).
+---
 
 ### 📋 8C — Brooding Module
 
@@ -369,14 +375,20 @@ Unit tests (format utils, role helpers, calculation functions), integration test
 
 ```
 COMPLETE  Phase 8A    Operation mode selector — DONE
-          Phase 8B    Production dashboards — MOSTLY DONE (data entry modals remaining)
+          Phase 8B    Production dashboards & worker experience — DONE
                       ├── ✅ Main dashboard (all 11 roles)
                       ├── ✅ Layer performance page
                       ├── ✅ Broiler performance page
                       ├── ✅ Dashboard APIs + eggs API + weight-records API
-                      ├── 🔧 Water meter modal + Feed log modal + PM grading modal
-                      ├── 🔧 PM verification PATCH wiring
-                      └── 🔧 Daily summary UI
+                      ├── ✅ WaterMeterModal + WorkerFeedModal + GradingModal
+                      ├── ✅ VerifyActions.js + conflict-of-interest guard
+                      ├── ✅ DailySummaryCard + autoSubmitSummary + time picker
+                      ├── ✅ Spot Check system
+                      ├── ✅ Feed Requisition module (6-stage workflow)
+                      ├── ✅ Investigation workflow
+                      ├── ✅ Global search
+                      ├── ✅ Notifications page
+                      └── ✅ Profile / Avatar management
 
 NEXT      Phase 8C    Brooding module (chick arrival → transfer lifecycle)
 THEN      Phase 8D    Layer Production refactor (hen-housed rate, laying persistence, cull trigger)
@@ -415,7 +427,7 @@ FUTURE    Phase 15    WhatsApp, Native App, HR, Assets, Budget, Market Prices
 | Flock placement date | ✅ `dateOfPlacement` | NOT `placementDate` |
 | Egg two-phase workflow | ✅ LOCKED | Worker enters crates/loose/cracked → system totals. PM enters gradeBCrates/gradeBLoose/crackedConfirmed → system computes gradeA. NEVER return to single-phase. |
 | `TaskType` enum | ✅ No `WATER_CHECK` | Use `INSPECTION` for water checks until enum is extended |
-| Verification context format | ✅ `"Pen Name — Section Name | Flock: BATCH"` | Pen names contain ` — ` — use `startsWith` matching, never `split('—')` |
+| Verification context format | ✅ `"Pen Name — Section Name \| Flock: BATCH"` | Pen names contain ` — ` — use `startsWith` matching, never `split('—')` |
 | React hooks order | ✅ Fixed | All hooks before any early returns |
 | Next.js 16 `params` | ✅ Fixed | Always `const params = await rawParams` at top of every dynamic route |
 | Verification role constants | ✅ Three arrays | Update `VERIFIER_ROLES`, `REJECT_ROLES`, `MANAGER_ROLES` in both route files AND page when adding record types |
@@ -436,6 +448,9 @@ FUTURE    Phase 15    WhatsApp, Native App, HR, Assets, Budget, Market Prices
 | Offline PWA | 📋 Phase 8F/14.4 | Service worker not yet implemented |
 | Audit page frontend | 📋 Phase 11.4 | API exists, nav accessible to IC, full frontend in Phase 11 |
 | Operation mode toggle | ✅ Phase 8A done | `tenant.settings.operationMode`, settings UI, AppShell gating all live |
+| Feed Requisition DB model | ✅ Phase 8B | `FeedRequisition` — shipped |
+| Investigation DB model | ✅ Phase 8B | `Investigation` — shipped |
+| `weight_samples` DB model | ✅ Phase 8B | Shipped (note: runtime access still via `WeightRecord` / `/api/weight-records`) |
 
 ---
 
@@ -451,11 +466,16 @@ FUTURE    Phase 15    WhatsApp, Native App, HR, Assets, Budget, Market Prices
 | PM Pending Verifications panel | — | ✅ | — | — | — | — | — | — | — | — | — |
 | Weight Tracking | — | ✅ | — | — | — | — | ✅ | ✅ | ✅ | — | — |
 | Feed Management | — | — | ✅ | ✅ | ✅ | — | ✅ | ✅ | ✅ | — | — |
+| Feed Requisitions | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ | ✅ | ✅ | — | ✅ |
 | Feed Mill module | — | — | — | — | ✅ | — | ✅ | ✅ | ✅ | — | — |
 | Processing Plant | — | — | — | — | — | ✅ | ✅ | ✅ | ✅ | — | — |
 | Health Management | — | ✅ | — | — | — | — | ✅ | ✅ | ✅ | — | — |
 | Farm Structure | — | ✅ | — | — | — | — | ✅ | ✅ | ✅ | — | — |
 | Flock Management | — | ✅ | — | — | — | — | ✅ | ✅ | ✅ | — | — |
+| Spot Checks | — | — | — | — | — | — | ✅ | ✅ | ✅ | — | ✅ |
+| Investigations | — | — | — | — | — | — | ✅ | ✅ | ✅ | — | ✅ |
+| Global Search | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Notifications | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Verify Records | — | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | — |
 | Task Compliance View | — | ✅ | — | — | — | — | ✅ | ✅ | ✅ | — | ✅ |
 | Anomaly / IC Dashboard | — | — | — | — | — | — | — | ✅ | ✅ | — | ✅ |

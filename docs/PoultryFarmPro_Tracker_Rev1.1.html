@@ -1,0 +1,766 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PoultryFarm Pro · Implementation Tracker Rev 1.1</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:#f0f4f8;font-family:'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:#0f172a;padding:0}
+  a{color:inherit;text-decoration:none}
+
+  /* ── Top banner ── */
+  .banner{background:linear-gradient(135deg,#1a3a2a 0%,#2d6a4f 60%,#40916c 100%);color:#fff;padding:2rem 2.5rem 1.5rem;position:sticky;top:0;z-index:100;box-shadow:0 4px 24px rgba(0,0,0,.18)}
+  .banner-top{display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:.75rem}
+  .banner h1{font-size:1.55rem;font-weight:900;letter-spacing:-.5px;line-height:1.15}
+  .banner h1 span{opacity:.65;font-weight:500;font-size:1rem;display:block;letter-spacing:0;margin-top:2px}
+  .banner-meta{font-size:.75rem;opacity:.7;margin-top:.35rem}
+  .overall-pill{display:flex;align-items:center;gap:.6rem;background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.25);border-radius:50px;padding:.45rem 1.1rem;font-size:.88rem;font-weight:700;white-space:nowrap}
+  .overall-pill .pct{font-size:1.25rem;font-weight:900}
+  .progress-banner{background:rgba(255,255,255,.2);border-radius:40px;height:7px;margin-top:1rem;overflow:hidden}
+  .progress-banner-fill{background:#74c69d;height:100%;border-radius:40px;transition:width .4s ease}
+  .task-counter{font-size:.78rem;opacity:.7;margin-top:.4rem}
+
+  /* ── Context box ── */
+  .context-section{max-width:1300px;margin:1.5rem auto .5rem;padding:0 1.5rem}
+  .context-box{background:#fff;border:2px solid #2d6a4f;border-radius:1.1rem;padding:1.2rem 1.5rem;display:grid;grid-template-columns:1fr 1fr 1fr;gap:1rem}
+  @media(max-width:900px){.context-box{grid-template-columns:1fr}}
+  .ctx-block h3{font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#64748b;margin-bottom:.5rem}
+  .ctx-block p,.ctx-block li{font-size:.8rem;line-height:1.6;color:#334155}
+  .ctx-block ul{padding-left:1rem}
+  .ctx-block li{margin-bottom:.1rem}
+  .ctx-block .tag{display:inline-block;font-size:.68rem;font-weight:700;border-radius:4px;padding:1px 6px;margin-right:4px;vertical-align:middle}
+  .tag-next{background:#fef3c7;color:#92400e}
+  .tag-done{background:#dcfce7;color:#166534}
+  .tag-stack{background:#ede9fe;color:#5b21b6}
+
+  /* ── Main grid ── */
+  .main{max-width:1300px;margin:1rem auto 3rem;padding:0 1.5rem;display:flex;flex-direction:column;gap:1rem}
+
+  /* ── Filter bar ── */
+  .filter-bar{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;margin-bottom:.25rem}
+  .filter-btn{border:1.5px solid #e2e8f0;background:#fff;border-radius:50px;padding:.35rem .9rem;font-size:.78rem;font-weight:600;cursor:pointer;transition:all .15s;color:#475569}
+  .filter-btn:hover{border-color:#2d6a4f;color:#2d6a4f}
+  .filter-btn.active{background:#2d6a4f;border-color:#2d6a4f;color:#fff}
+  .reset-btn{margin-left:auto;border:1.5px solid #fbbf24;background:#fffbeb;border-radius:50px;padding:.35rem .9rem;font-size:.78rem;font-weight:700;cursor:pointer;color:#92400e;transition:all .15s}
+  .reset-btn:hover{background:#fef3c7}
+  .expand-all-btn{border:1.5px solid #e2e8f0;background:#fff;border-radius:50px;padding:.35rem .9rem;font-size:.78rem;font-weight:600;cursor:pointer;color:#475569;transition:all .15s}
+  .expand-all-btn:hover{border-color:#2d6a4f;color:#2d6a4f}
+
+  /* ── Phase card ── */
+  .phase-card{background:#fff;border-radius:1.1rem;border:1px solid #e8edf5;overflow:hidden;transition:box-shadow .15s}
+  .phase-card:hover{box-shadow:0 4px 20px rgba(0,0,0,.07)}
+  .phase-card.hidden{display:none}
+
+  .phase-header{padding:.9rem 1.3rem;cursor:pointer;display:grid;grid-template-columns:1fr auto auto;align-items:center;gap:1rem;user-select:none;transition:background .1s}
+  .phase-header:hover{background:#f8fafb}
+  .phase-title-wrap{display:flex;align-items:center;gap:.6rem}
+  .expand-icon{font-size:.65rem;color:#94a3b8;transition:transform .2s;display:inline-block}
+  .phase-name{font-size:.92rem;font-weight:700;color:#1e293b}
+  .phase-badge{font-size:.65rem;font-weight:800;padding:2px 8px;border-radius:20px;white-space:nowrap}
+  .badge-active{background:#fef9c3;color:#713f12;border:1px solid #fde68a}
+  .badge-done{background:#dcfce7;color:#166534;border:1px solid #bbf7d0}
+  .badge-planned{background:#ede9fe;color:#5b21b6;border:1px solid #ddd6fe}
+  .badge-new{background:#fce7f3;color:#9d174d;border:1px solid #fbcfe8}
+  .badge-future{background:#f1f5f9;color:#64748b;border:1px solid #e2e8f0}
+  .badge-next{background:#ff9000;color:#fff;border:1px solid #ff9000;animation:pulse-badge 2s infinite}
+  @keyframes pulse-badge{0%,100%{opacity:1}50%{opacity:.7}}
+
+  .phase-stats{font-size:.76rem;font-weight:700;color:#64748b;white-space:nowrap}
+  .phase-progress-wrap{display:flex;align-items:center;gap:.5rem;min-width:120px}
+  .phase-pbar{flex:1;background:#e8f0f5;border-radius:20px;height:6px;overflow:hidden}
+  .phase-pbar-fill{height:100%;border-radius:20px;background:#2d6a4f;transition:width .3s}
+  .phase-pct{font-size:.7rem;font-weight:700;color:#64748b;min-width:28px;text-align:right}
+
+  /* ── Phase body ── */
+  .phase-body{display:none;border-top:1px solid #f0f4f8;padding:.1rem 0 .5rem}
+  .phase-body.open{display:block}
+
+  /* ── Task group ── */
+  .task-group{padding:.7rem 1.3rem .3rem}
+  .task-group-title{font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:#94a3b8;margin-bottom:.45rem;padding-bottom:.3rem;border-bottom:1px solid #f1f5f9}
+
+  /* ── Task items ── */
+  .task-list{list-style:none;display:flex;flex-direction:column;gap:.2rem}
+  .task-item{display:flex;align-items:flex-start;gap:.55rem;padding:.35rem .5rem;border-radius:.5rem;transition:background .1s;cursor:pointer}
+  .task-item:hover{background:#f8fafc}
+  .task-item.completed .task-label{color:#94a3b8;text-decoration:line-through}
+  .task-item input[type=checkbox]{width:14px;height:14px;flex-shrink:0;margin-top:2px;accent-color:#2d6a4f;cursor:pointer}
+  .task-label{font-size:.82rem;line-height:1.45;color:#334155;flex:1;cursor:pointer}
+  .task-done-badge{font-size:.6rem;font-weight:800;background:#dcfce7;color:#166534;border:1px solid #bbf7d0;border-radius:20px;padding:1px 7px;white-space:nowrap;flex-shrink:0;margin-top:2px}
+
+  /* ── Status colour strips on left border ── */
+  .phase-card[data-status="active"]{border-left:4px solid #40916c}
+  .phase-card[data-status="next"]{border-left:4px solid #ff9000}
+  .phase-card[data-status="done"]{border-left:4px solid #22c55e}
+  .phase-card[data-status="planned"]{border-left:4px solid #a78bfa}
+  .phase-card[data-status="new"]{border-left:4px solid #f472b6}
+  .phase-card[data-status="future"]{border-left:4px solid #cbd5e1}
+
+  /* ── Responsive ── */
+  @media(max-width:640px){
+    .phase-header{grid-template-columns:1fr auto}
+    .phase-progress-wrap{display:none}
+    .banner{padding:1.2rem 1rem 1rem}
+    .context-box{grid-template-columns:1fr}
+  }
+</style>
+</head>
+<body>
+
+<!-- ── Sticky banner ── -->
+<div class="banner">
+  <div class="banner-top">
+    <div>
+      <h1>🐔 PoultryFarm Pro <span>Implementation Tracker · Workplan Rev 1.1 · March 2026</span></h1>
+      <div class="banner-meta">Multi-tenant poultry ERP · Next.js 16 · Prisma 5.22 · PostgreSQL · JWT · Recharts</div>
+    </div>
+    <div class="overall-pill">
+      <span class="pct" id="overallPct">—</span>
+      <span>complete</span>
+    </div>
+  </div>
+  <div class="progress-banner"><div class="progress-banner-fill" id="globalFill" style="width:0%"></div></div>
+  <div class="task-counter" id="taskCounter">loading…</div>
+</div>
+
+<!-- ── Context box (paste into new chat) ── -->
+<div class="context-section">
+  <div class="context-box">
+    <div class="ctx-block">
+      <h3>📌 Project Status</h3>
+      <ul>
+        <li>Phases 1–7 <span class="tag tag-done">DONE</span> — Full foundation, finance, billing, audit</li>
+        <li>Phase 8A <span class="tag tag-done">DONE</span> — Operation mode selector</li>
+        <li>Phase 8B <span class="tag tag-done">DONE</span> — All dashboards, worker page, daily summaries, task generation, spot-checks, feed requisition workflow, IC override, statistical alerts</li>
+        <li>Phase 8G <span class="tag tag-done">DONE</span> — Code-based task templates (tenant-configurable UI deferred)</li>
+        <li>Phase 8C <span class="tag tag-next">NEXT</span> — Brooding Module</li>
+      </ul>
+    </div>
+    <div class="ctx-block">
+      <h3>🔧 Tech Stack (Locked)</h3>
+      <ul>
+        <li><span class="tag tag-stack">Next.js 16</span> App Router, no Tailwind JIT</li>
+        <li><span class="tag tag-stack">Prisma 5.22</span> — NEVER upgrade to 7.x</li>
+        <li><span class="tag tag-stack">PostgreSQL</span> Neon/Supabase, pgAdmin for migrations</li>
+        <li><span class="tag tag-stack">JWT</span> localStorage pfp_token, always use apiFetch()</li>
+        <li><span class="tag tag-stack">pdfmake 0.2.x</span> Helvetica only, ASCII currency</li>
+        <li><span class="tag tag-stack">Recharts</span> — do NOT add Chart.js</li>
+        <li>Zod validation, Termii SMS, Nodemailer, S3</li>
+      </ul>
+    </div>
+    <div class="ctx-block">
+      <h3>⚠️ Critical Constraints</h3>
+      <ul>
+        <li><code>operationType</code> is on <b>Pen</b> model, not PenSection</li>
+        <li><code>penWorkerAssignment</code> HAS <code>isActive</code> — dashboard: no filter; generate/tasks: filter <code>isActive:true</code></li>
+        <li>Seed IDs are slugs — use <code>z.string().min(1)</code> not <code>.uuid()</code></li>
+        <li>Egg formula: <code>(crates×30)+loose+cracked</code></li>
+        <li>Feed formula: <code>(bags×bagWt)+(bagWt−remaining)</code> only if <code>remaining &gt; 0.1</code></li>
+        <li><code>@db.Date</code> ranges: always use <code>Date.UTC(y,m,d)</code></li>
+        <li>WeightSample model REMOVED — use WeightRecord</li>
+        <li>All hooks before any early returns (React rules)</li>
+        <li>Next.js 16 dynamic routes: <code>const params = await rawParams</code></li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ── Controls ── -->
+<div class="main">
+  <div class="filter-bar">
+    <button class="filter-btn active" data-filter="all" onclick="setFilter('all',this)">All Phases</button>
+    <button class="filter-btn" data-filter="done" onclick="setFilter('done',this)">✅ Done</button>
+    <button class="filter-btn" data-filter="active" onclick="setFilter('active',this)">🔧 Active</button>
+    <button class="filter-btn" data-filter="next" onclick="setFilter('next',this)">🔴 Next Sprint</button>
+    <button class="filter-btn" data-filter="planned" onclick="setFilter('planned',this)">📋 Planned</button>
+    <button class="filter-btn" data-filter="new" onclick="setFilter('new',this)">🆕 New</button>
+    <button class="filter-btn" data-filter="future" onclick="setFilter('future',this)">🔮 Future</button>
+    <button class="expand-all-btn" id="expandAllBtn" onclick="toggleExpandAll()">Expand All</button>
+    <button class="reset-btn" onclick="resetAll()">↺ Reset to defaults</button>
+  </div>
+
+  <div id="phasesContainer"></div>
+</div>
+
+<script>
+// ─────────────────────────────────────────────────────────────────────────────
+// WORKPLAN DATA — Rev 1.1 (March 2026)
+// status: "done" | "active" | "next" | "planned" | "new" | "future"
+// ─────────────────────────────────────────────────────────────────────────────
+const phases = [
+
+  // ══════════════════════════════════════════════════════════════════
+  // PHASES 1–7 — COMPLETE
+  // ══════════════════════════════════════════════════════════════════
+  { id:"p1", name:"Phase 1 · Foundation", phaseStatus:"done", groups:[
+    { name:"Authentication & RBAC", tasks:[
+      { t:"JWT auth, 13 roles, multi-tenant RBAC (UserFarmRole)", s:"done"},
+      { t:"Role-gated API middleware, verifyToken wrapper", s:"done"},
+      { t:"All 11 role dashboards with role-aware navigation", s:"done"}
+    ]},
+    { name:"Farm Structure", tasks:[
+      { t:"Farm → Pen → Section hierarchy, capacity planning", s:"done"},
+      { t:"Flock lifecycle (Layer, Broiler, Breeder, Turkey)", s:"done"},
+      { t:"Pen Worker assignments (penWorkerAssignment model)", s:"done"}
+    ]},
+    { name:"Basic Production Tracking", tasks:[
+      { t:"Daily logs: eggs, feed, mortality, water meter readings", s:"done"},
+      { t:"Layer egg production — crate-based, two-phase PM grading", s:"done"},
+      { t:"Broiler weight tracking, FCR, ADG, harvest predictor", s:"done"}
+    ]}
+  ]},
+
+  { id:"p2", name:"Phase 2 · Inventory & Egg System", phaseStatus:"done", groups:[
+    { name:"Feed Inventory", tasks:[
+      { t:"Multi-store feed stock, reorder levels, cost/kg, bag weight", s:"done"},
+      { t:"GRN delivery receipts linked to supplier invoices", s:"done"}
+    ]},
+    { name:"Egg Production", tasks:[
+      { t:"Egg collection rounds (crates/loose/cracked) — worker entry", s:"done"},
+      { t:"PM grading modal (Grade A/B, cracked confirmed, laying rate)", s:"done"},
+      { t:"Laying rate, grade A% charts, performance page", s:"done"}
+    ]},
+    { name:"Mortality & Health", tasks:[
+      { t:"9 cause codes, daily records, spike detection", s:"done"},
+      { t:"Vaccination schedules & medication logs", s:"done"},
+      { t:"Water meter modal", s:"done"}
+    ]}
+  ]},
+
+  { id:"p3", name:"Phase 3 · Verification & Internal Controls", phaseStatus:"done", groups:[
+    { name:"Verification System", tasks:[
+      { t:"COI enforcement (verifier ≠ submitter) for all record types", s:"done"},
+      { t:"Grading modal, mortality verify, feed consumption verify", s:"done"},
+      { t:"PM override with mandatory audit trail, IC Dashboard 4-tab view", s:"done"},
+      { t:"IC Override acknowledge/flag workflow", s:"done"},
+      { t:"COI guard extended for Store Manager (store-scoped, Rule 2b)", s:"done"}
+    ]},
+    { name:"Task System", tasks:[
+      { t:"Structured task types (11 types), completion tracking", s:"done"},
+      { t:"Task generate route — daily/weekly section-scoped templates", s:"done"},
+      { t:"Spot-check system: scoring algo (recency, mortality, weight gap)", s:"done"},
+      { t:"SpotCheckCompleteModal with weight recording & inspection checklist", s:"done"}
+    ]},
+    { name:"Daily Summaries", tasks:[
+      { t:"Section-level daily checklist + production aggregates (live UTC date fix)", s:"done"},
+      { t:"Auto-submit at farm autoSummaryTime, refreshKey live aggregate updates", s:"done"},
+      { t:"PM review page (/pen-manager/daily-summaries) — active-flock sections only", s:"done"}
+    ]}
+  ]},
+
+  { id:"p4", name:"Phase 4 · Dashboards & Business Intelligence", phaseStatus:"done", groups:[
+    { name:"All-Role Dashboards", tasks:[
+      { t:"Pen Worker: section-first layout, task cards, quick-log buttons", s:"done"},
+      { t:"Pen Manager: KPI blocks, pending verifications, daily summaries link", s:"done"},
+      { t:"Farm Manager: tabbed view all pens", s:"done"},
+      { t:"Store, Feed Mill, QC, IC, Accountant dashboards", s:"done"},
+      { t:"Chairperson / Owner dashboard", s:"done"}
+    ]},
+    { name:"Business Intelligence", tasks:[
+      { t:"FCR analysis, profitability by pen", s:"done"},
+      { t:"Mortality trend, z-score anomaly detection", s:"done"},
+      { t:"Statistical outlier alerts — 9 types (LAYING_RATE_DROP, ZERO_MORT_STREAK, FEED_EGG_RATIO, etc.)", s:"done"},
+      { t:"90-day revenue forecast, harvest predictor", s:"done"}
+    ]}
+  ]},
+
+  { id:"p5", name:"Phase 5 · Reports, Export & Finance", phaseStatus:"done", groups:[
+    { name:"Reports & Export", tasks:[
+      { t:"CSV + PDF export for 6 report types, role-gated, date ranges", s:"done"}
+    ]},
+    { name:"Finance Module", tasks:[
+      { t:"AR sales invoices, AP supplier invoices, QR-code PDFs", s:"done"},
+      { t:"Profit & Loss statements, bank reconciliation", s:"done"},
+      { t:"Payment reminders, invoice email delivery (SMTP)", s:"done"}
+    ]}
+  ]},
+
+  { id:"p6", name:"Phase 6 · Billing, Notifications & Audit", phaseStatus:"done", groups:[
+    { name:"Billing (Stripe)", tasks:[
+      { t:"Subscription tiers, billing portal, webhooks, trial management", s:"done"}
+    ]},
+    { name:"Notifications", tasks:[
+      { t:"In-app, SMS (Termii), email — 10+ notification types", s:"done"},
+      { t:"Mark read, per-channel filters", s:"done"}
+    ]},
+    { name:"Audit Logs & Investigations", tasks:[
+      { t:"Action audit trail, IC dashboard", s:"done"},
+      { t:"Investigation workflow (Open → Review → Escalate → Close)", s:"done"}
+    ]}
+  ]},
+
+  { id:"p7", name:"Phase 7 · Admin & Settings", phaseStatus:"done", groups:[
+    { name:"User Admin", tasks:[
+      { t:"13 roles, pen section assignments, isActive management", s:"done"},
+      { t:"Profile management, S3 avatar upload, password management", s:"done"}
+    ]},
+    { name:"Settings & Search", tasks:[
+      { t:"Operation mode selector (Layer/Broiler/Both)", s:"done"},
+      { t:"Feed mill & processing module flags, alert configuration", s:"done"},
+      { t:"Global command-palette search", s:"done"}
+    ]}
+  ]},
+
+  // ══════════════════════════════════════════════════════════════════
+  // PHASE 8 — ACTIVE
+  // ══════════════════════════════════════════════════════════════════
+  { id:"p8a", name:"Phase 8A · Operation Mode Selector", phaseStatus:"done", groups:[
+    { name:"Core", tasks:[
+      { t:"Tenant-level operationMode: LAYER_ONLY | BROILER_ONLY | BOTH", s:"done"},
+      { t:"Optional module flags: hasFeedMillModule, hasProcessingModule", s:"done"},
+      { t:"Settings UI role-gated (FARM_ADMIN, CHAIRPERSON, SUPER_ADMIN)", s:"done"},
+      { t:"AppShell nav conditionally renders based on active operation mode", s:"done"}
+    ]}
+  ]},
+
+  { id:"p8b", name:"Phase 8B · Production Dashboards & Worker Experience", phaseStatus:"active", groups:[
+    { name:"Completed Items", tasks:[
+      { t:"Main dashboard — all 11 roles fully implemented", s:"done"},
+      { t:"Worker section-first layout, tasks per section card", s:"done"},
+      { t:"Layer performance page (6 KPI cards, charts, grade breakdown)", s:"done"},
+      { t:"Broiler performance page (FCR, weight trend, harvest countdown)", s:"done"},
+      { t:"Water meter modal, Feed log modal (bag-based formula fixed)", s:"done"},
+      { t:"Verification wiring (PATCH /api/verification/[id])", s:"done"},
+      { t:"Daily summary card — live aggregates, refreshKey, REPORT_SUBMISSION auto-submit", s:"done"},
+      { t:"Daily summary auto-generation with UTC date-range fix (Date.UTC)", s:"done"},
+      { t:"Task generation system — section-scoped, flock-dependent templates, dedup", s:"done"},
+      { t:"Spot-check task system (/api/tasks/spot-check), SpotCheckCompleteModal", s:"done"},
+      { t:"Statistical outlier alerts — 9 types", s:"done"},
+      { t:"IC override acknowledge/flag workflow, PM Overrides tab", s:"done"},
+      { t:"COI guard extended for Store Manager (store-scoped)", s:"done"},
+      { t:"Feed requisition workflow — DRAFT→SUBMITTED→APPROVED→ISSUED→ACKNOWLEDGED→CLOSED", s:"done"},
+      { t:"Feed requisition: pen-level grouping, sectionBreakdown JSON, bags+kg display", s:"done"},
+      { t:"Feed requisitions page (/feed-requisitions) — role-aware tabs for PM/IC/Store", s:"done"},
+      { t:"PM Daily Summaries review page (/pen-manager/daily-summaries)", s:"done"},
+      { t:"AppShell nav: Daily Summaries + Feed Requisitions wired, PEN_MANAGER removed from My Tasks", s:"done"}
+    ]},
+    { name:"Remaining Items", tasks:[
+      { t:"PM pending verifications panel — feed consumption visibility for PM", s:"done"},
+      { t:"Feed formula bags+kg display throughout (fmtBags helper)", s:"done"}
+    ]}
+  ]},
+
+  { id:"p8supp", name:"Phase 8-Supplement · Flock Lifecycle — Depletion & Culling", phaseStatus:"planned", groups:[
+    { name:"API Routes", tasks:[
+      { t:"POST /api/flocks/[id]/cull — partial cull, update currentCount", s:"planned"},
+      { t:"POST /api/flocks/[id]/deplete — full depletion (SOLD/CULLED/DIED), mark DEPLETED", s:"planned"},
+      { t:"GET /api/flocks/[id]/lifecycle-summary — final flock P&L", s:"planned"}
+    ]},
+    { name:"Workflow", tasks:[
+      { t:"Depletion summary report: chick cost, feed cost, medication cost, revenue", s:"planned"},
+      { t:"Pen clearance confirmation — section becomes VACANT, auto-triggers cleaning task", s:"planned"}
+    ]}
+  ]},
+
+  { id:"p8c", name:"Phase 8C · Brooding Module", phaseStatus:"next", groups:[
+    { name:"API & DB", tasks:[
+      { t:"New DB models: chick_arrivals, temperature_logs", s:"planned"},
+      { t:"POST /api/brooding/arrivals — log chick arrival, trigger task generation", s:"planned"},
+      { t:"POST /api/brooding/temperature — log temperature reading (task-linked)", s:"planned"},
+      { t:"GET /api/brooding/arrivals — active batches list", s:"planned"},
+      { t:"PATCH /api/brooding/arrivals/[id] — update or record transfer to production", s:"planned"},
+      { t:"GET /api/brooding/[id]/summary — full brooding period summary", s:"planned"}
+    ]},
+    { name:"Task Templates", tasks:[
+      { t:"Auto-generated tasks on chick arrival (06:00, 07:00, 08:00, 12:00, 16:00, 17:00, 17:30)", s:"planned"}
+    ]},
+    { name:"KPIs & UI", tasks:[
+      { t:"Early mortality %, chick-to-transfer survival rate, cost per surviving chick", s:"planned"},
+      { t:"/brooding page — active batches, arrivals tab, temperature chart, transfer tab", s:"planned"}
+    ]}
+  ]},
+
+  { id:"p8d", name:"Phase 8D · Layer Production Module Refactor", phaseStatus:"planned", groups:[
+    { name:"Features", tasks:[
+      { t:"Dedicated /production/layers replacing current performance page", s:"planned"},
+      { t:"Hen-housed production rate % (not just laying rate)", s:"planned"},
+      { t:"Feed cost per dozen eggs KPI", s:"planned"},
+      { t:"Laying persistence curve vs flock age in weeks", s:"planned"},
+      { t:"Peak production week detection, post-peak decline rate", s:"planned"},
+      { t:"Cull recommendation trigger: feed cost/dozen > revenue/dozen for 2+ weeks", s:"planned"},
+      { t:"Morning (08:00) and afternoon (16:00) batch tracking as independent records", s:"planned"},
+      { t:"Cumulative mortality vs age chart", s:"planned"}
+    ]}
+  ]},
+
+  { id:"p8e", name:"Phase 8E · Broiler Production Module Refactor", phaseStatus:"planned", groups:[
+    { name:"Features", tasks:[
+      { t:"Dedicated /production/broilers replacing current broiler-performance page", s:"planned"},
+      { t:"Harvest scheduler — calendar view across all active batches", s:"planned"},
+      { t:"Weight chart vs Ross 308 / Cobb 500 breed standard curves", s:"planned"},
+      { t:"Alert when projected weight >5% below target with <7 days to harvest", s:"planned"},
+      { t:"Batch profitability comparison — last 5 batches (FCR, mortality %, revenue/bird)", s:"planned"},
+      { t:"Projected harvest date based on current growth rate", s:"planned"}
+    ]}
+  ]},
+
+  { id:"p8f", name:"Phase 8F · Worker PWA", phaseStatus:"planned", groups:[
+    { name:"PWA Core", tasks:[
+      { t:"public/manifest.json — standalone display, theme #6c63ff", s:"planned"},
+      { t:"public/sw.js — offline caching, IndexedDB submission queue", s:"planned"},
+      { t:"Web Push — 07:00 shift-start notification with pending task count", s:"planned"},
+      { t:"Connectivity indicator always visible", s:"planned"},
+      { t:"Photo documentation on flagged observation tasks", s:"planned"},
+      { t:"One-tap 'no issues' completion for observation tasks", s:"planned"}
+    ]}
+  ]},
+
+  { id:"p8g", name:"Phase 8G · Worker Task Templates System", phaseStatus:"active", groups:[
+    { name:"Completed", tasks:[
+      { t:"Code-based daily/weekly task templates per operationType", s:"done"},
+      { t:"Section-scoped generation, deduplication per section+title", s:"done"},
+      { t:"Flock-dependent task filtering (FEEDING, EGG_COLLECTION, MORTALITY_CHECK skipped if no flock)", s:"done"},
+      { t:"isActive filter consistent across dashboard, generate, tasks routes", s:"done"}
+    ]},
+    { name:"Remaining", tasks:[
+      { t:"task_templates DB model (tenant-configurable templates per operation type)", s:"planned"},
+      { t:"Admin UI to edit task times, add/remove templates per tenant", s:"planned"},
+      { t:"±2 hour time window enforcement (configurable)", s:"planned"}
+    ]}
+  ]},
+
+  { id:"p8h", name:"Phase 8H · Feed Management Refactor", phaseStatus:"planned", groups:[
+    { name:"Features", tasks:[
+      { t:"Phase-tagged feed types: LAYER_STARTER, LAYER_GROWER, LAYER_LAYER, BROILER_STARTER, BROILER_FINISHER, BROODING_STARTER", s:"planned"},
+      { t:"Feed inventory auto-filtered by active operation mode", s:"planned"},
+      { t:"Consumption logging pre-filled from task context", s:"planned"},
+      { t:"Withdrawal period tracking for BROILER_FINISHER (days before harvest)", s:"planned"}
+    ]}
+  ]},
+
+  { id:"p8i", name:"Phase 8I · Supplier Management Module", phaseStatus:"planned", groups:[
+    { name:"API & DB", tasks:[
+      { t:"Supplier registry CRUD — type (FEED/CHICK/VET/EQUIPMENT/LOGISTICS), contact, payment terms, bank details", s:"planned"},
+      { t:"GET/POST /api/suppliers, PATCH /api/suppliers/[id]", s:"planned"},
+      { t:"GET /api/suppliers/[id]/performance", s:"planned"}
+    ]},
+    { name:"Features", tasks:[
+      { t:"Supplier performance tracking — on-time delivery rate, quality rejection rate, price trend", s:"planned"},
+      { t:"Link StoreReceipt and chick arrivals to supplier records via supplierId FK", s:"planned"}
+    ]}
+  ]},
+
+  // ══════════════════════════════════════════════════════════════════
+  // PHASES 9–15
+  // ══════════════════════════════════════════════════════════════════
+  { id:"p9", name:"Phase 9 · Feed Mill Module (Full)", phaseStatus:"planned", groups:[
+    { name:"9.1 Raw Materials", tasks:[{ t:"Stock, reorder levels, deliveries linked to AP, cost/kg", s:"planned"}]},
+    { name:"9.2 Feed Formulas", tasks:[{ t:"Ingredient %, nutritional targets, formula versioning", s:"planned"}]},
+    { name:"9.3 Batch Production", tasks:[{ t:"Production runs, raw material deduction, variance, cost/kg", s:"planned"}]},
+    { name:"9.4 QC Testing", tasks:[{ t:"Moisture/protein/energy; pass/fail vs formula; quarantine; QC cert", s:"planned"}]},
+    { name:"9.5 Batch Release", tasks:[{ t:"Transfer approved batch to main feed inventory as store receipt", s:"planned"}]},
+    { name:"9.6 Dashboard", tasks:[{ t:"Active runs, raw material levels, cost/kg trend, yield efficiency", s:"planned"}]},
+    { name:"9.7 API Routes", tasks:[{ t:"/api/feed-mill/materials, /formulas, /batches, /qc, /releases", s:"planned"}]}
+  ]},
+
+  { id:"p10", name:"Phase 10 · Processing Plant Module", phaseStatus:"planned", groups:[
+    { name:"10.1 Harvest Intake", tasks:[{ t:"Receive live birds from Broiler Production, DOA count, processing batch", s:"planned"}]},
+    { name:"10.2 Processing Records", tasks:[{ t:"Live weight, dressed weight, dressing %, by-product capture, cost/bird", s:"planned"}]},
+    { name:"10.3 Output & Packaging", tasks:[{ t:"Whole bird & cut parts, packs produced, cold storage intake, best-before", s:"planned"}]},
+    { name:"10.4 Cold Storage Inventory", tasks:[{ t:"Real-time stock by product/cut, FIFO alerts, temperature log, dispatch", s:"planned"}]},
+    { name:"10.5 Processing Dashboard", tasks:[{ t:"Today's run metrics, cold storage stock, yield efficiency trend", s:"planned"}]},
+    { name:"10.6 API Routes", tasks:[{ t:"/api/processing/intake, /batches, /storage, /dispatch, /temperature", s:"planned"}]}
+  ]},
+
+  { id:"p10n", name:"Phase 10-NEW · Egg Handling & Inventory", phaseStatus:"new", groups:[
+    { name:"Core", tasks:[
+      { t:"Egg store inventory by grade (A/B/cracked) with FIFO lot tracking", s:"new"},
+      { t:"FIFO spoilage tracking — alert when eggs exceed shelf life", s:"new"},
+      { t:"Crate tracking — issue to customers, returns, deposit management", s:"new"},
+      { t:"Egg cleaning records (washing, sanitisation log per batch)", s:"new"},
+      { t:"Sales integration — deduct from egg inventory on confirmed sale", s:"new"},
+      { t:"DB model: egg_inventory with FIFO lots", s:"new"}
+    ]}
+  ]},
+
+  { id:"p11", name:"Phase 11 · Verification & Internal Control (Enhanced)", phaseStatus:"planned", groups:[
+    { name:"Features", tasks:[
+      { t:"11.1 Typed verification by module (Egg, Mortality, Weight, Feed, Store, Processing)", s:"planned"},
+      { t:"11.2 Near-real-time notifications — verifier notified within 5 min, urgent for mortality spikes", s:"planned"},
+      { t:"11.3 Cross-Record Validation Engine — 12+ automated rules", s:"planned"},
+      { t:"11.4 IC Dashboard & Audit Page — anomaly feed, compliance heatmap, worker performance", s:"planned"},
+      { t:"11.5 Physical Count Reconciliation — BIRDS, EGGS_IN_STORE, FEED_STOCK, PROCESSED_PRODUCT", s:"planned"}
+    ]}
+  ]},
+
+  { id:"p11n", name:"Phase 11-NEW · Production Planning", phaseStatus:"new", groups:[
+    { name:"Features", tasks:[
+      { t:"Chick placement scheduling — plan future batch arrivals, pen availability check", s:"new"},
+      { t:"Pen allocation wizard — recommend optimal section for new batch", s:"new"},
+      { t:"Cycle overlap detection — alert when planned batches exceed capacity", s:"new"},
+      { t:"Depletion planning — forecast layer cull date based on production curves", s:"new"},
+      { t:"DB model: placement_plans (DRAFT/CONFIRMED/EXECUTED)", s:"new"}
+    ]}
+  ]},
+
+  { id:"p12", name:"Phase 12 · Owner Intelligence Dashboard", phaseStatus:"planned", groups:[
+    { name:"Features", tasks:[
+      { t:"12.1 Unified Chairperson dashboard — total birds, revenue vs last month, feed cost %, AR/AP", s:"planned"},
+      { t:"12.2 Batch profitability — full lifecycle P&L per broiler batch", s:"planned"},
+      { t:"12.3 Layer flock lifecycle analytics — laying rate vs age, projected end-of-lay, replacement prompt", s:"planned"},
+      { t:"12.4 Operation mix analysis (BOTH tenants) — layer vs broiler revenue %, profitability recommendation", s:"planned"}
+    ]}
+  ]},
+
+  { id:"p12n", name:"Phase 12-NEW · Advanced Analytics & Forecasting", phaseStatus:"new", groups:[
+    { name:"Features", tasks:[
+      { t:"Egg production forecast — per-flock curve model, 8-week outlook", s:"new"},
+      { t:"Feed consumption forecast — rolling average, auto-generate purchase recommendations", s:"new"},
+      { t:"Revenue projections per module (eggs, broiler, processed)", s:"new"},
+      { t:"Batch comparison analytics — current vs historical (FCR, mortality, cost/kg)", s:"new"},
+      { t:"Benchmarking vs industry standards (Ross 308, Isa Brown), cost optimisation flags", s:"new"}
+    ]}
+  ]},
+
+  { id:"p12nb", name:"Phase 12-NEW-B · Environmental Monitoring", phaseStatus:"new", groups:[
+    { name:"Features", tasks:[
+      { t:"Temperature & humidity logs — 3× daily per section", s:"new"},
+      { t:"Ventilation tracking — fan status, air exchange, CO2 level", s:"new"},
+      { t:"Heat stress alerts — configurable thresholds per bird type/age", s:"new"},
+      { t:"Historical climate charts per section", s:"new"},
+      { t:"DB model: environment_readings (linked to pen section + optional IoT device)", s:"new"}
+    ]}
+  ]},
+
+  { id:"p13", name:"Phase 13 · Monetisation & Tiers Refactor", phaseStatus:"planned", groups:[
+    { name:"Stripe Tiers", tasks:[
+      { t:"Starter — Layer OR Broiler, 10 users, core modules", s:"planned"},
+      { t:"Growth — Layer + Broiler, 25 users, full finance, SMS alerts, env monitoring", s:"planned"},
+      { t:"Professional — + IC dashboard, audit, traceability, cost centers, 50 users", s:"planned"},
+      { t:"Enterprise — all modules, multi-farm, processing, feed mill, IoT, unlimited users", s:"planned"}
+    ]},
+    { name:"Feature Gating", tasks:[
+      { t:"Per-tier module access enforcement, upgrade prompts in UI", s:"planned"}
+    ]}
+  ]},
+
+  { id:"p14", name:"Phase 14 · Production Hardening", phaseStatus:"planned", groups:[
+    { name:"Features", tasks:[
+      { t:"14.1 Self-service onboarding — signup, operation mode step, 14-day trial", s:"planned"},
+      { t:"14.2 Per-tenant rate limiting, full tenantId scoping audit across all routes", s:"planned"},
+      { t:"14.3 Test suite — unit tests (calculations, role helpers) + integration tests (brooding lifecycle, tasks)", s:"planned"},
+      { t:"14.4 Offline-first PWA hardening — 24h cache, conflict resolution, auto-sync queue", s:"planned"},
+      { t:"14.5 Performance optimisation — DB query analysis, index review, caching layer", s:"planned"}
+    ]}
+  ]},
+
+  { id:"p14n", name:"Phase 14-NEW · QA, Waste, Traceability, SOP, Incidents", phaseStatus:"new", groups:[
+    { name:"QA & Lab Testing", tasks:[{ t:"Feed/water/egg quality tests (protein, moisture, energy), disease diagnostics log", s:"new"}]},
+    { name:"Waste & By-Product Management", tasks:[{ t:"Manure production/sales, dead bird disposal logs, environmental compliance", s:"new"}]},
+    { name:"Traceability System", tasks:[{ t:"Batch → pen → product → customer chain, forward/backward trace, recall capability, regulatory export", s:"new"}]},
+    { name:"SOP Management", tasks:[{ t:"Procedure library, task checklist templates, compliance scoring, SOP acknowledgement tracking", s:"new"}]},
+    { name:"Incident & Emergency Management", tasks:[{ t:"Outbreak reports, emergency escalation workflows, recovery tracking", s:"new"}]}
+  ]},
+
+  { id:"p15", name:"Phase 15 · Future Modules", phaseStatus:"future", groups:[
+    { name:"Future", tasks:[
+      { t:"WhatsApp Data Entry — Termii WhatsApp Business API, structured message parser", s:"future"},
+      { t:"Native Mobile App — React Native, camera, QR/barcode scan", s:"future"},
+      { t:"HR / Payroll — attendance, leave, payroll, payslips", s:"future"},
+      { t:"Asset Management — equipment register, maintenance scheduling, depreciation", s:"future"},
+      { t:"Budget Module — annual budget, monthly actuals vs variance, integrated P&L", s:"future"},
+      { t:"Multi-Farm Consolidated View — cross-farm KPIs, group P&L", s:"future"},
+      { t:"Market Price Integration — live feeds for eggs, broiler/kg, maize, soybean", s:"future"},
+      { t:"IoT Integration — MQTT/WebSocket pipeline, sensor device registry", s:"future"},
+      { t:"Logistics & Fleet Management — vehicle tracking, routing, fuel, driver assignment", s:"future"},
+      { t:"Chick Procurement Module — hatchery supplier tracking, quality grading, transport mortality", s:"future"}
+    ]}
+  ]}
+];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STATE
+// ─────────────────────────────────────────────────────────────────────────────
+const STORAGE_KEY = "pfp_tracker_v11";
+let checkState = null; // [phaseIdx][groupIdx][taskIdx] = bool
+let activeFilter = "all";
+let allExpanded = false;
+
+const STATUS_BADGE = {
+  done:    { label:"✅ Done",        cls:"badge-done" },
+  active:  { label:"🔧 Active",      cls:"badge-active" },
+  next:    { label:"🔴 Next Sprint", cls:"badge-next" },
+  planned: { label:"📋 Planned",     cls:"badge-planned" },
+  new:     { label:"🆕 New",         cls:"badge-new" },
+  future:  { label:"🔮 Future",      cls:"badge-future" },
+};
+
+function initState() {
+  const stored = localStorage.getItem(STORAGE_KEY);
+  if (stored) {
+    try {
+      const p = JSON.parse(stored);
+      if (Array.isArray(p) && p.length === phases.length) { checkState = p; return; }
+    } catch(e) {}
+  }
+  checkState = phases.map(ph =>
+    ph.groups.map(g => g.tasks.map(t => t.s === "done"))
+  );
+}
+
+function saveState() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(checkState));
+}
+
+function phaseCompletion(pi) {
+  let done = 0, total = 0;
+  phases[pi].groups.forEach((g, gi) => g.tasks.forEach((_, ti) => {
+    total++;
+    if (checkState[pi][gi][ti]) done++;
+  }));
+  return { done, total, pct: total ? (done / total) * 100 : 0 };
+}
+
+function overallCompletion() {
+  let done = 0, total = 0;
+  for (let i = 0; i < phases.length; i++) {
+    const c = phaseCompletion(i);
+    done += c.done; total += c.total;
+  }
+  return { done, total, pct: total ? (done / total) * 100 : 0 };
+}
+
+function isOpen(pi) {
+  return localStorage.getItem(`pfp_open_${pi}`) === "true";
+}
+function setOpen(pi, val) {
+  localStorage.setItem(`pfp_open_${pi}`, val ? "true" : "false");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RENDER
+// ─────────────────────────────────────────────────────────────────────────────
+function render() {
+  const container = document.getElementById("phasesContainer");
+  container.innerHTML = "";
+
+  for (let pi = 0; pi < phases.length; pi++) {
+    const ph = phases[pi];
+    const comp = phaseCompletion(pi);
+    const open = isOpen(pi);
+    const badge = STATUS_BADGE[ph.phaseStatus] || STATUS_BADGE.planned;
+
+    const card = document.createElement("div");
+    card.className = "phase-card";
+    card.dataset.status = ph.phaseStatus;
+
+    // filter visibility
+    if (activeFilter !== "all" && ph.phaseStatus !== activeFilter) {
+      card.classList.add("hidden");
+    }
+
+    // header
+    const hdr = document.createElement("div");
+    hdr.className = "phase-header";
+    hdr.innerHTML = `
+      <div class="phase-title-wrap">
+        <span class="expand-icon" style="transform:${open?'rotate(90deg)':'none'}"">▶</span>
+        <span class="phase-name">${ph.name}</span>
+        <span class="phase-badge ${badge.cls}">${badge.label}</span>
+      </div>
+      <div class="phase-stats">${comp.done}/${comp.total} tasks</div>
+      <div class="phase-progress-wrap">
+        <div class="phase-pbar"><div class="phase-pbar-fill" style="width:${comp.pct}%"></div></div>
+        <span class="phase-pct">${Math.round(comp.pct)}%</span>
+      </div>`;
+    hdr.addEventListener("click", () => { setOpen(pi, !isOpen(pi)); render(); });
+    card.appendChild(hdr);
+
+    // body
+    const body = document.createElement("div");
+    body.className = "phase-body" + (open ? " open" : "");
+
+    for (let gi = 0; gi < ph.groups.length; gi++) {
+      const grp = ph.groups[gi];
+      const grpDiv = document.createElement("div");
+      grpDiv.className = "task-group";
+      grpDiv.innerHTML = `<div class="task-group-title">${grp.name}</div>`;
+      const ul = document.createElement("ul");
+      ul.className = "task-list";
+
+      for (let ti = 0; ti < grp.tasks.length; ti++) {
+        const task = grp.tasks[ti];
+        const checked = checkState[pi][gi][ti];
+        const li = document.createElement("li");
+        li.className = "task-item" + (checked ? " completed" : "");
+
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = checked;
+        cb.addEventListener("change", e => {
+          e.stopPropagation();
+          checkState[pi][gi][ti] = cb.checked;
+          saveState();
+          render();
+        });
+
+        const lbl = document.createElement("span");
+        lbl.className = "task-label";
+        lbl.textContent = task.t;
+        lbl.addEventListener("click", () => {
+          cb.checked = !cb.checked;
+          checkState[pi][gi][ti] = cb.checked;
+          saveState();
+          render();
+        });
+
+        li.appendChild(cb);
+        li.appendChild(lbl);
+
+        if (checked) {
+          const bdg = document.createElement("span");
+          bdg.className = "task-done-badge";
+          bdg.textContent = "✅ done";
+          li.appendChild(bdg);
+        }
+        ul.appendChild(li);
+      }
+      grpDiv.appendChild(ul);
+      body.appendChild(grpDiv);
+    }
+    card.appendChild(body);
+    container.appendChild(card);
+  }
+
+  // update banner
+  const ov = overallCompletion();
+  document.getElementById("globalFill").style.width = `${ov.pct}%`;
+  document.getElementById("overallPct").textContent = `${Math.round(ov.pct)}%`;
+  document.getElementById("taskCounter").textContent = `${ov.done} / ${ov.total} tasks completed`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CONTROLS
+// ─────────────────────────────────────────────────────────────────────────────
+function setFilter(f, btn) {
+  activeFilter = f;
+  document.querySelectorAll(".filter-btn").forEach(b => b.classList.remove("active"));
+  btn.classList.add("active");
+  render();
+}
+
+function toggleExpandAll() {
+  allExpanded = !allExpanded;
+  for (let pi = 0; pi < phases.length; pi++) setOpen(pi, allExpanded);
+  document.getElementById("expandAllBtn").textContent = allExpanded ? "Collapse All" : "Expand All";
+  render();
+}
+
+function resetAll() {
+  if (!confirm("Reset all checkboxes to their default state?")) return;
+  checkState = phases.map(ph =>
+    ph.groups.map(g => g.tasks.map(t => t.s === "done"))
+  );
+  saveState();
+  render();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BOOT
+// ─────────────────────────────────────────────────────────────────────────────
+initState();
+render();
+</script>
+</body>
+</html>

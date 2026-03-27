@@ -1,3 +1,5 @@
+// FILE: app/api/dashboard/route.js
+
 // app/api/dashboard/route.js — Role-aware dashboard data
 // Returns different data shapes depending on the caller's role:
 //   PEN_WORKER       → their sections only, layer or broiler KPIs
@@ -29,7 +31,7 @@ export async function GET(request) {
 
     if (!isManager) {
       const assignments = await prisma.penWorkerAssignment.findMany({
-        where: { userId: user.sub },
+        where: { userId: user.sub, isActive: true },
         select: { penSectionId: true },
       });
       allowedSectionIds = assignments.map(a => a.penSectionId);

@@ -165,12 +165,6 @@ model User {
   weight_samples             weight_samples[]
   workOrders                 WorkOrder[]           @relation("WOAssignedTo")
   workOrdersCreated          WorkOrder[]           @relation("WOCreatedBy")
-  submittedRequisitions      FeedRequisition[]     @relation("RequisitionSubmittedBy")
-  approvedRequisitions       FeedRequisition[]     @relation("RequisitionApprovedBy")
-  rejectedRequisitions       FeedRequisition[]     @relation("RequisitionRejectedBy")
-  issuedRequisitions         FeedRequisition[]     @relation("RequisitionIssuedBy")
-  acknowledgedRequisitions   FeedRequisition[]     @relation("RequisitionAcknowledgedBy")
-  closedRequisitions         FeedRequisition[]     @relation("RequisitionClosedBy")
 
   @@unique([tenantId, email])
   @@map("users")
@@ -251,7 +245,6 @@ model PenSection {
   waterMeterReadings WaterMeterReading[]
   weightRecords      WeightRecord[]
   weight_samples     weight_samples[]
-  requisitions       FeedRequisition[]
 
   @@map("pen_sections")
 }
@@ -292,7 +285,6 @@ model Flock {
   waterMeterReadings      WaterMeterReading[]
   weightRecords           WeightRecord[]
   weight_samples          weight_samples[]
-  requisitions            FeedRequisition[]
 
   @@unique([tenantId, batchCode])
   @@map("flocks")
@@ -489,7 +481,6 @@ model FeedInventory {
   supplier       Supplier?         @relation(fields: [supplierId], references: [id])
   issuances      StoreIssuance[]   @relation("FeedIssuances")
   storeReceipts  StoreReceipt[]    @relation("FeedReceipts")
-  requisitions   FeedRequisition[]
 
   @@map("feed_inventory")
 }
@@ -526,79 +517,57 @@ model FeedConsumption {
 }
 
 model FeedRequisition {
-  id                    String                 @id @default(uuid())
-  tenantId              String
-  requisitionNumber     String                 // e.g. REQ-2026-00042, unique per tenant
-  feedForDate           DateTime               @db.Date   // date the feed is needed FOR
-  triggerLogId          String?                // FeedConsumption.id that triggered this
+  id                     String                @id @default(dbgenerated("(gen_random_uuid())::text"))
+  tenantId               String
+  requisitionNumber      String
+  penSectionId           String?
+  flockId                String
+  feedInventoryId        String
+  storeId                String?
+  feedForDate            DateTime              @db.Date
+  triggerLogId           String?
+  calculatedQtyKg        Decimal               @db.Decimal(10, 2)
+  avgConsumptionPerBirdG Decimal?              @db.Decimal(8, 4)
+  currentBirdCount       Int?
+  calculationDays        Int                   @default(7)
+  requestedQtyKg         Decimal?              @db.Decimal(10, 2)
+  pmNotes                String?
+  submittedById          String?
+  submittedAt            DateTime?             @db.Timestamptz(6)
+  deviationPct           Decimal?              @db.Decimal(6, 2)
+  approvedQtyKg          Decimal?              @db.Decimal(10, 2)
+  icNotes                String?
+  approvedById           String?
+  approvedAt             DateTime?             @db.Timestamptz(6)
+  rejectionReason        String?
+  rejectedById           String?
+  rejectedAt             DateTime?             @db.Timestamptz(6)
+  issuedQtyKg            Decimal?              @db.Decimal(10, 2)
+  issuedById             String?
+  issuedAt               DateTime?             @db.Timestamptz(6)
+  storeIssuanceId        String?
+  issuanceNotes          String?
+  acknowledgedQtyKg      Decimal?              @db.Decimal(10, 2)
+  acknowledgedById       String?
+  acknowledgedAt         DateTime?             @db.Timestamptz(6)
+  discrepancyQtyKg       Decimal?              @db.Decimal(10, 2)
+  acknowledgementNotes   String?
+  closedById             String?
+  closedAt               DateTime?             @db.Timestamptz(6)
+  closeNotes             String?
+  status                 FeedRequisitionStatus @default(DRAFT)
+  createdAt              DateTime              @default(now()) @db.Timestamptz(6)
+  updatedAt              DateTime              @default(now()) @updatedAt @db.Timestamptz(6)
+  penId                  String?
+  sectionBreakdown       Json?
 
-  // Context
-  penSectionId          String
-  flockId               String
-  feedInventoryId       String
-  storeId               String?
-
-  // System calculation basis
-  calculatedQtyKg       Decimal                @db.Decimal(10, 2)
-  avgConsumptionPerBirdG Decimal?              @db.Decimal(8, 4)  // grams/bird/day 7d avg
-  currentBirdCount      Int?
-  calculationDays       Int                    @default(7)
-
-  // PM submission
-  requestedQtyKg        Decimal?               @db.Decimal(10, 2)
-  pmNotes               String?
-  submittedById         String?
-  submittedAt           DateTime?
-  deviationPct          Decimal?               @db.Decimal(6, 2)  // (requested-calculated)/calculated*100
-
-  // IC approval/rejection
-  approvedQtyKg         Decimal?               @db.Decimal(10, 2)
-  icNotes               String?
-  approvedById          String?
-  approvedAt            DateTime?
-  rejectionReason       String?
-  rejectedById          String?
-  rejectedAt            DateTime?
-
-  // Store issuance
-  issuedQtyKg           Decimal?               @db.Decimal(10, 2)
-  issuedById            String?
-  issuedAt              DateTime?
-  storeIssuanceId       String?
-  issuanceNotes         String?
-
-  // PM acknowledgement
-  acknowledgedQtyKg     Decimal?               @db.Decimal(10, 2)
-  acknowledgedById      String?
-  acknowledgedAt        DateTime?
-  discrepancyQtyKg      Decimal?               @db.Decimal(10, 2)  // issuedQty - acknowledgedQty
-  acknowledgementNotes  String?
-
-  // Closure
-  closedById            String?
-  closedAt              DateTime?
-  closeNotes            String?
-
-  status                FeedRequisitionStatus  @default(DRAFT)
-  createdAt             DateTime               @default(now())
-  updatedAt             DateTime               @updatedAt
-
-  // Relations
-  penSection            PenSection             @relation(fields: [penSectionId], references: [id])
-  flock                 Flock                  @relation(fields: [flockId], references: [id])
-  feedInventory         FeedInventory          @relation(fields: [feedInventoryId], references: [id])
-  store                 Store?                 @relation(fields: [storeId], references: [id])
-  submittedBy           User?                  @relation("RequisitionSubmittedBy", fields: [submittedById], references: [id])
-  approvedBy            User?                  @relation("RequisitionApprovedBy", fields: [approvedById], references: [id])
-  rejectedBy            User?                  @relation("RequisitionRejectedBy", fields: [rejectedById], references: [id])
-  issuedBy              User?                  @relation("RequisitionIssuedBy", fields: [issuedById], references: [id])
-  acknowledgedBy        User?                  @relation("RequisitionAcknowledgedBy", fields: [acknowledgedById], references: [id])
-  closedBy              User?                  @relation("RequisitionClosedBy", fields: [closedById], references: [id])
-
-  @@unique([tenantId, requisitionNumber])
-  @@unique([penSectionId, feedInventoryId, feedForDate])  // one per section/feedtype/date
-  @@index([tenantId, status])
-  @@index([penSectionId, feedForDate(sort: Desc)])
+  @@unique([penId, feedInventoryId, feedForDate], map: "feed_requisitions_pen_inventory_date_unique")
+  @@unique([tenantId, requisitionNumber], map: "feed_requisitions_tenant_number_unique")
+  @@index([feedInventoryId], map: "feed_requisitions_feed_inventory_idx")
+  @@index([penId, feedForDate(sort: Desc)], map: "feed_requisitions_pen_id_idx")
+  @@index([penSectionId, feedForDate(sort: Desc)], map: "feed_requisitions_pen_section_idx")
+  @@index([submittedById], map: "feed_requisitions_submitted_by_idx")
+  @@index([tenantId, status], map: "feed_requisitions_tenant_status_idx")
   @@map("feed_requisitions")
 }
 
@@ -718,7 +687,6 @@ model Store {
   receipts      StoreReceipt[]
   farm          Farm            @relation(fields: [farmId], references: [id])
   verifications Verification[]
-  requisitions  FeedRequisition[]
 
   @@map("stores")
 }
@@ -2186,14 +2154,13 @@ enum SupplierInvoiceStatus {
 }
 
 enum FeedRequisitionStatus {
-  DRAFT           // system-created draft, awaiting PM review
-  SUBMITTED       // PM confirmed and submitted to IC
-  APPROVED        // IC approved, ready for store to issue
-  REJECTED        // IC rejected, returned to PM for revision
-  ISSUED          // store issued full approved quantity
-  ISSUED_PARTIAL  // store issued partial (stock shortage) — flagged to IC
-  ACKNOWLEDGED    // PM confirmed receipt of feed
-  DISCREPANCY     // PM acknowledged quantity differs from what was issued
-  CLOSED          // IC or Farm Manager closed the loop
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+  ISSUED
+  ISSUED_PARTIAL
+  ACKNOWLEDGED
+  DISCREPANCY
+  CLOSED
 }
-

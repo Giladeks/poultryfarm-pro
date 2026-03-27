@@ -33,7 +33,7 @@ const CHECKLIST_LABELS = {
   cageDoorsInspected:  'Cage doors inspected',
 };
 
-export default function DailySummaryCard({ penSectionId, apiFetch }) {
+export default function DailySummaryCard({ penSectionId, isLayer = true, apiFetch, refreshKey = 0 }) {
   const [summary,    setSummary]    = useState(null);
   const [loading,    setLoading]    = useState(true);
   const [saving,     setSaving]     = useState(false);
@@ -58,7 +58,8 @@ export default function DailySummaryCard({ penSectionId, apiFetch }) {
     finally  { setLoading(false); }
   }, [penSectionId, todayStr]);
 
-  useEffect(() => { load(); }, [load]);
+  // refreshKey changes whenever the parent saves a production record, triggering a re-fetch
+  useEffect(() => { load(); }, [load, refreshKey]);
 
   // ── PATCH a checklist item ─────────────────────────────────────────────────
   async function toggleCheck(field, newValue) {
@@ -161,7 +162,7 @@ export default function DailySummaryCard({ penSectionId, apiFetch }) {
         {/* Production totals */}
         <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
           {[
-            { label: 'Eggs',   value: fmt(summary.totalEggsCollected), icon: '🥚', show: true },
+            { label: 'Eggs',   value: fmt(summary.totalEggsCollected), icon: '🥚', show: isLayer },
             { label: 'Feed',   value: fmtKg(summary.totalFeedKg),      icon: '🍽️', show: true },
             { label: 'Deaths', value: fmt(summary.totalMortality),     icon: '💀', show: true },
             { label: 'Water',  value: fmtL(summary.waterConsumptionL), icon: '💧', show: Number(summary.waterConsumptionL) > 0 },

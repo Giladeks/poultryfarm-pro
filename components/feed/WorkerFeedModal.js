@@ -29,7 +29,7 @@ function gpbStatus(gpb, opType) {
 }
 
 export default function WorkerFeedModal({ section, apiFetch, onClose, onSave }) {
-  const flock  = section?.flocks?.[0] || null;
+  const flock  = section.flock ?? section.activeFlock ?? null;
   const opType = section?.pen?.operationType || 'LAYER';
   const today  = new Date().toISOString().split('T')[0];
 
@@ -62,10 +62,13 @@ export default function WorkerFeedModal({ section, apiFetch, onClose, onSave }) 
   const bagsUsed     = Math.max(0, parseInt(form.bagsUsed)  || 0);
   const remainingKg  = Math.max(0, parseFloat(form.remainingKg) || 0);
 
-  // quantityKg = (bagsUsed × bagWt) + (bagWt − remainingKg)
-  // Only compute when at least one bag has been opened (bagsUsed + partial)
-  const quantityKg = (bagsUsed > 0 || remainingKg > 0)
-    ? parseFloat(((bagsUsed * bagWt) + (bagWt - remainingKg)).toFixed(2))
+  // quantityKg = (bagsUsed × bagWt) + partialConsumed
+  // partialConsumed = (bagWt − remainingKg) only when a bag is opened (remainingKg > 0.1)
+  // If remainingKg is 0 or empty, no partial bag was opened — add nothing extra.
+  const hasPartialBag = remainingKg > 0.1;
+  const partialConsumed = hasPartialBag ? (bagWt - remainingKg) : 0;
+  const quantityKg = (bagsUsed > 0 || hasPartialBag)
+    ? parseFloat(((bagsUsed * bagWt) + partialConsumed).toFixed(2))
     : 0;
 
   const birdCount  = flock?.currentCount || 0;
@@ -141,7 +144,7 @@ export default function WorkerFeedModal({ section, apiFetch, onClose, onSave }) 
     >
       {/* Section context */}
       <div style={{ padding: '10px 14px', background: 'var(--bg-elevated)', borderRadius: 9, fontSize: 13, marginBottom: 16 }}>
-        <strong>{section?.pen?.name} › {section?.name}</strong>
+        <strong>{section?.penName || section?.pen?.name} › {section?.name}</strong>
         {flock && (
           <span style={{ color: 'var(--text-muted)', marginLeft: 8 }}>
             · {flock.batchCode} · {fmt(flock.currentCount, 0)} birds
@@ -245,10 +248,18 @@ export default function WorkerFeedModal({ section, apiFetch, onClose, onSave }) 
             }}>
               {/* Formula breakdown */}
               <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>
-                ({bagsUsed} bags × {bagWt} kg) + ({bagWt} − {remainingKg || 0} kg remaining) =
-                {' '}<strong style={{ color: willOverdraw ? 'var(--red)' : 'var(--purple)', fontSize: 13 }}>
+                ({bagsUsed} bags × {bagWt} kg)
+                {hasPartialBag
+                  ? ` + (${bagWt} − ${remainingKg} kg remaining) = `
+                  : ' = '}
+                <strong style={{ color: willOverdraw ? 'var(--red)' : 'var(--purple)', fontSize: 13 }}>
                   {fmt(quantityKg, 2)} kg total
                 </strong>
+                {!hasPartialBag && bagsUsed > 0 && (
+                  <span style={{ color: 'var(--text-muted)', marginLeft: 6 }}>
+                    (no partial bag)
+                  </span>
+                )}
               </div>
 
               <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
