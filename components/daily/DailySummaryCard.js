@@ -33,7 +33,9 @@ const CHECKLIST_LABELS = {
   cageDoorsInspected:  'Cage doors inspected',
 };
 
-export default function DailySummaryCard({ penSectionId, isLayer = true, apiFetch, refreshKey = 0 }) {
+export default function DailySummaryCard({ penSectionId, isLayer = true, stage = 'PRODUCTION', apiFetch, refreshKey = 0 }) {
+  // Eggs are only tracked in PRODUCTION stage — hide for BROODING / REARING
+  const showEggs = isLayer && (stage === 'PRODUCTION' || !stage);
   const [summary,    setSummary]    = useState(null);
   const [loading,    setLoading]    = useState(true);
   const [saving,     setSaving]     = useState(false);
@@ -162,7 +164,7 @@ export default function DailySummaryCard({ penSectionId, isLayer = true, apiFetc
         {/* Production totals */}
         <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
           {[
-            { label: 'Eggs',   value: fmt(summary.totalEggsCollected), icon: '🥚', show: isLayer },
+            { label: 'Eggs',   value: fmt(summary.totalEggsCollected), icon: '🥚', show: showEggs },
             { label: 'Feed',   value: fmtKg(summary.totalFeedKg),      icon: '🍽️', show: true },
             { label: 'Deaths', value: fmt(summary.totalMortality),     icon: '💀', show: true },
             { label: 'Water',  value: fmtL(summary.waterConsumptionL), icon: '💧', show: Number(summary.waterConsumptionL) > 0 },
@@ -253,10 +255,10 @@ export default function DailySummaryCard({ penSectionId, isLayer = true, apiFetc
         </div>
 
         {/* Pending verification flags */}
-        {(summary.pendingEggVerifications > 0 || summary.pendingFeedVerifications > 0 || summary.pendingMortalityVerifications > 0) && (
+        {(summary.pendingFeedVerifications > 0 || summary.pendingMortalityVerifications > 0 || (showEggs && summary.pendingEggVerifications > 0)) && (
           <div style={{ marginBottom: 10, padding: '8px 12px', background: 'var(--amber-bg)', border: '1px solid var(--amber-border)', borderRadius: 8, fontSize: 12, color: '#92400e' }}>
             ⏳ Awaiting PM verification:
-            {summary.pendingEggVerifications > 0 && ` ${summary.pendingEggVerifications} egg`}
+            {showEggs && summary.pendingEggVerifications > 0 && ` ${summary.pendingEggVerifications} egg`}
             {summary.pendingFeedVerifications > 0 && ` · ${summary.pendingFeedVerifications} feed`}
             {summary.pendingMortalityVerifications > 0 && ` · ${summary.pendingMortalityVerifications} mortality`}
           </div>

@@ -44,7 +44,8 @@ export async function GET(request) {
     const sections = await prisma.penSection.findMany({
       where: {
         ...(allowedSectionIds ? { id: { in: allowedSectionIds } } : {}),
-        pen: { farm: { tenantId: user.tenantId, isActive: true } },
+        isActive: true,
+        pen: { isActive: true, farm: { tenantId: user.tenantId, isActive: true } },
       },
       include: {
         pen: {
@@ -60,6 +61,7 @@ export async function GET(request) {
             currentCount: true, initialCount: true,
             dateOfPlacement: true, breed: true,
             expectedHarvestDate: true, expectedLayingStartDate: true,
+            stage: true,   // ← Phase 8C: needed for stage-aware KPI cards
           },
         },
         workerAssignments: {
@@ -75,7 +77,7 @@ export async function GET(request) {
     const sectionIds = sections.map(s => s.id);
 
     // ── Fetch all metrics in parallel ─────────────────────────────────────────
-    const [todayMort, weekMort, weekFeed, todayEggs, weekEggs, weekWeights, todayTasks] =
+    const [todayMort, weekMort, weekFeed, todayEggs, weekEggs, weekWeights, todayTasks, latestTemps] =
       await Promise.all([
         // Today mortality
         prisma.mortalityRecord.groupBy({
@@ -124,6 +126,13 @@ export async function GET(request) {
           select: { penSectionId: true, avgWeightG: true, ageInDays: true, uniformityPct: true },
         }),
 
+        // Latest brooder temperature per section (for BROODING sections)
+        prisma.temperature_logs.findMany({
+          where:   { penSectionId: { in: sectionIds }, loggedAt: { gte: sevenDaysAgo } },
+          orderBy: { loggedAt: 'desc' },
+          select:  { penSectionId: true, tempCelsius: true, loggedAt: true },
+        }),
+
         // Today's tasks for this user
         prisma.task.findMany({
           where: {
@@ -161,6 +170,10 @@ export async function GET(request) {
         cracked: r._sum.crackedCount || 0,
         rate:    parseFloat((r._avg.layingRatePct || 0).toFixed(1)),
       }])),
+      latestBrooderTemp: latestTemps.reduce((acc, t) => {
+        if (!acc[t.penSectionId]) acc[t.penSectionId] = Number(t.tempCelsius);
+        return acc;
+      }, {}),
       latestWeight: weekWeights.reduce((acc, w) => {
         if (!acc[w.penSectionId]) acc[w.penSectionId] = w;
         return acc;
@@ -217,9 +230,10 @@ export async function GET(request) {
         flock, ageInDays, workers, managers, flags,
         metrics: isLayer ? {
           type: 'LAYER',
+          stage: flock?.stage || 'PRODUCTION',   // ← Phase 8C: expose lifecycle stage
           todayMortality: todayDead, weekMortality: weekDead, mortalityRate,
           todayEggs: tEgg.total, todayGradeA: tEgg.gradeA, todayCracked: tEgg.cracked,
-          todayGradeAPending: tEgg.gradeA === 0 && tEgg.total > 0, // true when PM hasn't verified yet
+          todayGradeAPending: tEgg.gradeA === 0 && tEgg.total > 0,
           todayGradeAPct: gradeAPct, todayLayingRate: tEgg.rate,
           weekEggs: wEgg.total, weekGradeAPct: wGradeAPct, avgLayingRate: wEgg.rate,
           avgDailyFeedKg: avgDailyFeed, feedGramsPerBird: feedData.gpb,
@@ -229,6 +243,7 @@ export async function GET(request) {
           latestWeightG, uniformityPct: wt?.uniformityPct ? parseFloat(parseFloat(wt.uniformityPct).toFixed(1)) : null,
           estimatedFCR, daysToHarvest, ageInDays,
           weekFeedKg: feedData.kg, avgDailyFeedKg: avgDailyFeed, feedGramsPerBird: feedData.gpb,
+          latestBrooderTemp: idx.latestBrooderTemp[sec.id] ?? null,
         },
       };
     });

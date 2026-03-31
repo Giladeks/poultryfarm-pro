@@ -71,7 +71,12 @@ const NAV_ITEMS = [
   },
   {
     href: '/brooding', icon: 'Egg', label: 'Brooding', section: 'top',
-    roles: ['FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','PEN_MANAGER','SUPER_ADMIN'],
+    roles: ['FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','PEN_MANAGER','SUPER_ADMIN','PEN_WORKER'],
+  },
+  {
+    href: '/rearing', icon: 'Scale', label: 'Rearing', section: 'top',
+    roles: ['FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','PEN_MANAGER','SUPER_ADMIN','PEN_WORKER'],
+    opModes: ['LAYER_ONLY', 'BOTH'],
   },
   {
     href: '/worker', icon: 'ClipboardList', label: 'My Tasks', section: 'top',
@@ -825,7 +830,8 @@ export default function AppShell({ children }) {
   const [hasProcessing, setHasProcessing] = useState(false);
 
   // Per-user operation type: null = unrestricted; 'LAYER' | 'BROILER' = pen-scoped
-  const [userOpType,    setUserOpType]    = useState(null);
+  const [userOpType,  setUserOpType]  = useState(null);
+  const [flockStages, setFlockStages] = useState([]);  // active flock stages in worker's sections
 
   const bellRef    = useRef(null);
   const profileRef = useRef(null);
@@ -864,6 +870,7 @@ export default function AppShell({ children }) {
       if (!res.ok) return;
       const data  = await res.json();
       setUserOpType(data.operationType ?? null);
+      setFlockStages(data.flockStages  ?? []);
     } catch { /* silent */ }
   }, [user]);
 
@@ -897,6 +904,22 @@ export default function AppShell({ children }) {
       if (isPenScoped && userOpType) {
         if (item.section === 'layer'   && userOpType !== 'LAYER')   return false;
         if (item.section === 'broiler' && userOpType !== 'BROILER') return false;
+      }
+      // Brooding nav — only show when worker has an active BROODING-stage flock.
+      // This works for both LAYER and BROILER workers:
+      //   - Broiling BROILER worker with active BROODING flock → ✅
+      //   - Broiler worker after "End Brooding" (flock now PRODUCTION) → ❌ auto-hides
+      //   - Layer brooding worker → ✅
+      //   - Layer production worker → ❌
+      if (isPenScoped && item.href === '/brooding') {
+        return flockStages.includes('BROODING');
+      }
+      // Rearing nav — only show for LAYER workers (broiling has no rearing stage)
+      //   - Layer brooding worker → ✅ (they hand off to rearing)
+      //   - Layer production worker → ✅ (they receive rearing flocks)
+      //   - Any BROILER worker → ❌
+      if (isPenScoped && item.href === '/rearing') {
+        return userOpType === 'LAYER';
       }
       return true;
     });

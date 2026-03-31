@@ -1,15 +1,22 @@
 // app/api/farm-structure/route.js — Role-aware farm structure + metrics
+// Phase 8C update:
+//   POST  ?type=pen → now accepts and persists `penPurpose` (required)
+//   PATCH ?type=pen → now accepts and persists `penPurpose`
+//   GET   → now returns `penPurpose` on each pen (already comes from DB after migration)
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
 import { verifyToken } from '@/lib/middleware/auth';
 
 const MANAGER_ROLES = ['FARM_ADMIN', 'FARM_MANAGER', 'CHAIRPERSON', 'SUPER_ADMIN'];
 
+// ── GET /api/farm-structure ───────────────────────────────────────────────────
 export async function GET(request) {
   const user = await verifyToken(request);
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const isManager = MANAGER_ROLES.includes(user.role);
+  const { searchParams } = new URL(request.url);
+  const allSections = searchParams.get('allSections') === 'true';
 
   try {
     const today = new Date();
@@ -18,10 +25,11 @@ export async function GET(request) {
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
     // ── Determine which sections this user can see ──────────────────────────
+    // allSections=true bypasses role scope — used by transfer destination picker
     let allowedSectionIds = null;
     let allowedOpTypes    = null;
 
-    if (!isManager) {
+    if (!isManager && !allSections) {
       const assignments = await prisma.penWorkerAssignment.findMany({
         where: { userId: user.sub },
         include: {
@@ -41,11 +49,13 @@ export async function GET(request) {
       include: {
         pens: {
           where: {
+            isActive: true,
             ...(allowedOpTypes && { operationType: { in: allowedOpTypes } }),
           },
           include: {
             sections: {
               where: {
+                isActive: true,
                 ...(allowedSectionIds && { id: { in: allowedSectionIds } }),
               },
               include: {
@@ -56,6 +66,7 @@ export async function GET(request) {
                     currentCount: true, initialCount: true,
                     dateOfPlacement: true, breed: true,
                     expectedHarvestDate: true, expectedLayingStartDate: true,
+                    stage: true,   // Phase 8C: include stage
                   },
                 },
                 workerAssignments: {
@@ -74,95 +85,88 @@ export async function GET(request) {
       orderBy: { name: 'asc' },
     });
 
-    const filteredFarms = farms.map(farm => ({
+    // Managers see ALL pens (including newly created ones with no sections yet).
+    // Non-managers are filtered to only pens that have sections they are assigned to.
+    const filteredFarms = isManager
+      ? farms
+      : farms.map(farm => ({
       ...farm,
       pens: farm.pens.filter(pen => pen.sections.length > 0),
-    })).filter(farm => farm.pens.length > 0);
+      })).filter(farm => farm.pens.length > 0);
 
     // ── Fetch metrics ───────────────────────────────────────────────────────
     const sectionFilter = allowedSectionIds
       ? { penSectionId: { in: allowedSectionIds } }
-      : { flock: { penSection: { pen: { farm: { tenantId: user.tenantId } } } } };
+      : { penSection: { pen: { farm: { tenantId: user.tenantId } } } };
 
-    const eggSectionFilter = allowedSectionIds
-      ? { penSectionId: { in: allowedSectionIds } }
-      : { flock: { penSection: { pen: { farm: { tenantId: user.tenantId } } } } };
-
-    const [todayMortality, weekMortality, weekFeed, todayEggs, weekEggs, weekWeights] = await Promise.all([
-      // Today mortality
-      prisma.mortalityRecord.groupBy({
-        by: ['penSectionId'],
-        where: { ...sectionFilter, recordDate: { gte: today } },
-        _sum: { count: true },
-      }),
-      // 7-day mortality
-      prisma.mortalityRecord.groupBy({
-        by: ['penSectionId'],
-        where: { ...sectionFilter, recordDate: { gte: sevenDaysAgo } },
-        _sum: { count: true },
-      }),
-      // 7-day feed
-      prisma.feedConsumption.groupBy({
-        by: ['penSectionId'],
-        where: {
-          ...(allowedSectionIds
-            ? { penSectionId: { in: allowedSectionIds } }
-            : { flock: { penSection: { pen: { farm: { tenantId: user.tenantId } } } } }),
-          recordedDate: { gte: sevenDaysAgo },
-        },
-        _sum: { quantityKg: true },
-        _avg: { gramsPerBird: true },
-      }),
-      // Today eggs — Phase 8B fields only (no dirtyCount, gradeACount is nullable/PM-set)
-      prisma.eggProduction.groupBy({
-        by: ['penSectionId'],
-        where: {
-          ...eggSectionFilter,
-          collectionDate: { gte: today },
-        },
-        _sum: { totalEggs: true, gradeACount: true, crackedCount: true },
-        _avg: { layingRatePct: true },
-      }),
-      // 7-day eggs
-      prisma.eggProduction.groupBy({
-        by: ['penSectionId'],
-        where: {
-          ...eggSectionFilter,
-          collectionDate: { gte: sevenDaysAgo },
-        },
-        _sum: { totalEggs: true, gradeACount: true },
-        _avg: { layingRatePct: true },
-      }),
-      // Latest weight per section (BROILER only)
-      prisma.weightRecord.findMany({
-        where: {
-          ...(allowedSectionIds
-            ? { penSectionId: { in: allowedSectionIds } }
-            : { penSection: { pen: { farm: { tenantId: user.tenantId } } } }),
-          recordDate: { gte: sevenDaysAgo },
-        },
-        orderBy: { recordDate: 'desc' },
-        select: {
-          penSectionId: true, avgWeightG: true, ageInDays: true,
-          uniformityPct: true, recordDate: true,
-        },
-      }),
-    ]);
+    const [todayMortality, weekMortality, weekFeed, todayEggs, weekEggs, weekWeights] =
+      await Promise.all([
+        prisma.mortalityRecord.groupBy({
+          by: ['penSectionId'],
+          where: { ...sectionFilter, recordDate: { gte: today } },
+          _sum: { count: true },
+        }),
+        prisma.mortalityRecord.groupBy({
+          by: ['penSectionId'],
+          where: { ...sectionFilter, recordDate: { gte: sevenDaysAgo } },
+          _sum: { count: true },
+        }),
+        prisma.feedConsumption.groupBy({
+          by: ['penSectionId'],
+          where: { ...sectionFilter, recordedDate: { gte: sevenDaysAgo } },
+          _sum: { quantityKg: true },
+          _avg: { gramsPerBird: true },
+        }),
+        prisma.eggProduction.groupBy({
+          by: ['penSectionId'],
+          where: {
+            ...(allowedSectionIds
+              ? { penSectionId: { in: allowedSectionIds } }
+              : { penSection: { pen: { farm: { tenantId: user.tenantId } } } }),
+            collectionDate: { gte: today },
+          },
+          _sum: { totalEggs: true, gradeACount: true, crackedCount: true },
+          _avg: { layingRatePct: true },
+        }),
+        prisma.eggProduction.groupBy({
+          by: ['penSectionId'],
+          where: {
+            ...(allowedSectionIds
+              ? { penSectionId: { in: allowedSectionIds } }
+              : { penSection: { pen: { farm: { tenantId: user.tenantId } } } }),
+            collectionDate: { gte: sevenDaysAgo },
+          },
+          _sum: { totalEggs: true, gradeACount: true },
+          _avg: { layingRatePct: true },
+        }),
+        prisma.weightRecord.findMany({
+          where: {
+            ...(allowedSectionIds
+              ? { penSectionId: { in: allowedSectionIds } }
+              : { penSection: { pen: { farm: { tenantId: user.tenantId } } } }),
+            recordDate: { gte: sevenDaysAgo },
+          },
+          orderBy: { recordDate: 'desc' },
+          select: {
+            penSectionId: true, avgWeightG: true, ageInDays: true,
+            uniformityPct: true, recordDate: true,
+          },
+        }),
+      ]);
 
     // Index metrics by penSectionId
     const idx = {
       todayDead:  Object.fromEntries(todayMortality.map(r => [r.penSectionId, r._sum.count || 0])),
       weekDead:   Object.fromEntries(weekMortality.map(r  => [r.penSectionId, r._sum.count || 0])),
-      weekFeed:   Object.fromEntries(weekFeed.map(r       => [r.penSectionId, {
+      weekFeed:   Object.fromEntries(weekFeed.map(r => [r.penSectionId, {
         kg:  parseFloat((r._sum.quantityKg || 0).toFixed(1)),
         gpb: parseFloat((r._avg.gramsPerBird || 0).toFixed(0)),
       }])),
       todayEggs:  Object.fromEntries(todayEggs.map(r => [r.penSectionId, {
-        total:   r._sum.totalEggs  || 0,
-        gradeA:  r._sum.gradeACount || 0,   // null until PM grades — treat 0 as pending
-        cracked: r._sum.crackedCount || 0,
-        rate:    parseFloat((r._avg.layingRatePct || 0).toFixed(1)),
-        // flag: true when eggs exist but gradeA hasn't been set yet by PM
+        total:        r._sum.totalEggs   || 0,
+        gradeA:       r._sum.gradeACount || 0,
+        cracked:      r._sum.crackedCount || 0,
+        rate:         parseFloat((r._avg.layingRatePct || 0).toFixed(1)),
         gradePending: (r._sum.totalEggs || 0) > 0 && !r._sum.gradeACount,
       }])),
       weekEggs:   Object.fromEntries(weekEggs.map(r => [r.penSectionId, {
@@ -198,162 +202,415 @@ export async function GET(request) {
           const workers  = sec.workerAssignments.filter(a => a.user.role === 'PEN_WORKER').map(a => a.user);
           const managers = sec.workerAssignments.filter(a => a.user.role === 'PEN_MANAGER').map(a => a.user);
           const ageInDays = activeFlock
-            ? Math.floor((Date.now() - new Date(activeFlock.dateOfPlacement)) / 86400000) : 0;
+            ? Math.floor((new Date() - new Date(activeFlock.dateOfPlacement)) / 86400000)
+            : null;
 
-          const todayDead  = idx.todayDead[sec.id]  || 0;
-          const weekDead   = idx.weekDead[sec.id]   || 0;
-          const feedData   = idx.weekFeed[sec.id]   || { kg: 0, gpb: 0 };
-          const tEgg       = idx.todayEggs[sec.id]  || { total: 0, gradeA: 0, cracked: 0, rate: 0, gradePending: false };
-          const wEgg       = idx.weekEggs[sec.id]   || { total: 0, gradeA: 0, rate: 0 };
-          const wt         = idx.latestWeight[sec.id];
-
-          const mortalityRate = activeFlock?.initialCount > 0
-            ? parseFloat(((weekDead / activeFlock.initialCount) * 100).toFixed(2)) : 0;
-
-          const currentWeightKg = wt
-            ? parseFloat(wt.avgWeightG) * currentBirds / 1000 : null;
-          const placementWeightKg = currentBirds * 0.042;
-          const estimatedGainKg  = currentWeightKg
-            ? parseFloat((currentWeightKg - placementWeightKg).toFixed(1)) : null;
-          const estimatedFCR = estimatedGainKg && feedData.kg > 0 && estimatedGainKg > 0
-            ? parseFloat((feedData.kg / estimatedGainKg).toFixed(2)) : null;
-
-          // gradeA % — only meaningful once PM has graded
-          const gradeAPct = tEgg.total > 0 && tEgg.gradeA > 0
-            ? parseFloat(((tEgg.gradeA / tEgg.total) * 100).toFixed(1)) : 0;
-          const weekGradeAPct = wEgg.total > 0 && wEgg.gradeA > 0
-            ? parseFloat(((wEgg.gradeA / wEgg.total) * 100).toFixed(1)) : 0;
-
+          // Build the metrics object using field names the page expects:
+          // page uses sec.metrics.todayMortality, sec.metrics.todayEggs,
+          // sec.metrics.todayLayingRate, sec.metrics.todayGradeAPct,
+          // sec.metrics.latestWeightG, sec.metrics.estimatedFCR, sec.metrics.daysToHarvest,
+          // sec.metrics.avgDailyFeedKg, sec.metrics.mortalityRate
+          const avgDailyFeedKg = activeFlock
+            ? parseFloat(((idx.weekFeed[sec.id]?.kg || 0) / 7).toFixed(1))
+            : 0;
+          const mortalityRate = activeFlock && activeFlock.currentCount > 0
+            ? parseFloat(((( idx.weekDead[sec.id] || 0) / activeFlock.currentCount) * 100).toFixed(2))
+            : 0;
           const daysToHarvest = activeFlock?.expectedHarvestDate
-            ? Math.max(0, Math.floor((new Date(activeFlock.expectedHarvestDate) - Date.now()) / 86400000)) : null;
+            ? Math.max(0, Math.floor((new Date(activeFlock.expectedHarvestDate) - new Date()) / 86400000))
+            : null;
 
+          const metrics = activeFlock ? {
+            type:             activeFlock.operationType,
+            stage:            activeFlock.stage,
+            todayMortality:   idx.todayDead[sec.id]  || 0,
+            weekMortality:    idx.weekDead[sec.id]   || 0,
+            mortalityRate,
+            avgDailyFeedKg,
+            weekFeedKg:       idx.weekFeed[sec.id]?.kg  || 0,
+            gramsPerBird:     idx.weekFeed[sec.id]?.gpb || 0,
+            todayEggs:        isLayer ? (idx.todayEggs[sec.id]?.total    || 0) : null,
+            todayLayingRate:  isLayer ? (idx.todayEggs[sec.id]?.rate     || 0) : null,
+            todayGradeAPct:   isLayer ? (idx.todayEggs[sec.id]?.gradeA && idx.todayEggs[sec.id]?.total
+              ? parseFloat(((idx.todayEggs[sec.id].gradeA / idx.todayEggs[sec.id].total)*100).toFixed(1))
+              : null) : null,
+            gradePending:     isLayer ? (idx.todayEggs[sec.id]?.gradePending || false) : null,
+            weekEggs:         isLayer ? (idx.weekEggs[sec.id]?.total || 0) : null,
+            weekLayRate:      isLayer ? (idx.weekEggs[sec.id]?.rate  || 0) : null,
+            latestWeightG:    isBroiler ? (idx.latestWeight[sec.id]?.avgWeightG
+              ? parseFloat(Number(idx.latestWeight[sec.id].avgWeightG).toFixed(0)) : null) : null,
+            uniformityPct:    isBroiler ? (idx.latestWeight[sec.id]?.uniformityPct
+              ? parseFloat(Number(idx.latestWeight[sec.id].uniformityPct).toFixed(1)) : null) : null,
+            estimatedFCR:     null, // computed separately if needed
+            daysToHarvest,
+          } : null;
+
+          // Keep mx as alias for backward compat with any components using it
           return {
-            id: sec.id, name: sec.name, capacity: sec.capacity,
-            currentBirds, occupancyPct, activeFlock, ageInDays,
-            workers, managers,
-            metrics: isLayer ? {
-              type: 'LAYER',
-              todayMortality:   todayDead,
-              weekMortality:    weekDead,
-              mortalityRate,
-              todayEggs:        tEgg.total,
-              todayGradeA:      tEgg.gradeA,
-              todayCracked:     tEgg.cracked,
-              todayGradeAPct:   gradeAPct,
-              todayGradeAPending: tEgg.gradePending,   // true = eggs logged but PM hasn't graded yet
-              todayLayingRate:  tEgg.rate,
-              weekEggs:         wEgg.total,
-              weekGradeA:       wEgg.gradeA,
-              weekGradeAPct,
-              avgLayingRate:    wEgg.rate,
-              avgDailyFeedKg:   feedData.kg > 0
-                ? parseFloat((feedData.kg / 7).toFixed(1)) : 0,
-              feedGramsPerBird: feedData.gpb,
-            } : {
-              type: 'BROILER',
-              todayMortality:  todayDead,
-              weekMortality:   weekDead,
-              mortalityRate,
-              ageInDays,
-              daysToHarvest,
-              latestWeightG:   wt ? parseFloat(parseFloat(wt.avgWeightG).toFixed(0)) : null,
-              uniformityPct:   wt?.uniformityPct ? parseFloat(parseFloat(wt.uniformityPct).toFixed(1)) : null,
-              weekFeedKg:      feedData.kg,
-              avgDailyFeedKg:  feedData.kg > 0 ? parseFloat((feedData.kg / 7).toFixed(1)) : 0,
-              feedGramsPerBird: feedData.gpb,
-              estimatedFCR,
-            },
+            ...sec,
+            activeFlock,
+            currentBirds,
+            occupancyPct,
+            ageInDays,
+            workers,
+            managers,
+            metrics,
+            mx: metrics, // alias
           };
         });
 
-        // Aggregate pen metrics
-        const totalCapacity = sections.reduce((s, sec) => s + sec.capacity, 0);
-        const currentBirds  = sections.reduce((s, sec) => s + sec.currentBirds, 0);
-
-        const penMetrics = isLayer ? {
-          type: 'LAYER',
-          todayMortality: sections.reduce((s, sec) => s + sec.metrics.todayMortality, 0),
-          weekMortality:  sections.reduce((s, sec) => s + sec.metrics.weekMortality, 0),
-          mortalityRate:  currentBirds > 0
-            ? parseFloat(((sections.reduce((s, sec) => s + sec.metrics.weekMortality, 0) / currentBirds) * 100).toFixed(2)) : 0,
-          todayEggs:      sections.reduce((s, sec) => s + (sec.metrics.todayEggs || 0), 0),
-          weekEggs:       sections.reduce((s, sec) => s + (sec.metrics.weekEggs  || 0), 0),
-          avgLayingRate:  (() => {
-            const ls = sections.filter(s => s.metrics.avgLayingRate > 0);
-            return ls.length > 0 ? parseFloat((ls.reduce((s, sec) => s + sec.metrics.avgLayingRate, 0) / ls.length).toFixed(1)) : 0;
-          })(),
-          weekFeedKg: parseFloat(sections.reduce((s, sec) => s + (sec.metrics.avgDailyFeedKg || 0) * 7, 0).toFixed(1)),
-        } : {
-          type: 'BROILER',
-          todayMortality: sections.reduce((s, sec) => s + sec.metrics.todayMortality, 0),
-          weekMortality:  sections.reduce((s, sec) => s + sec.metrics.weekMortality,  0),
-          mortalityRate:  currentBirds > 0
-            ? parseFloat(((sections.reduce((s, sec) => s + sec.metrics.weekMortality, 0) / currentBirds) * 100).toFixed(2)) : 0,
-          avgWeightG: (() => {
-            const ws = sections.filter(s => s.metrics.latestWeightG);
-            return ws.length > 0 ? parseFloat((ws.reduce((s, sec) => s + sec.metrics.latestWeightG, 0) / ws.length).toFixed(0)) : null;
-          })(),
-          avgFCR: (() => {
-            const fs = sections.filter(s => s.metrics.estimatedFCR);
-            return fs.length > 0 ? parseFloat((fs.reduce((s, sec) => s + sec.metrics.estimatedFCR, 0) / fs.length).toFixed(2)) : null;
-          })(),
-          weekFeedKg: parseFloat(sections.reduce((s, sec) => s + (sec.metrics.weekFeedKg || 0), 0).toFixed(1)),
-        };
+        const penTotalBirds    = sections.reduce((s, sec) => s + sec.currentBirds, 0);
+        const penTotalCapacity = sections.reduce((s, sec) => s + sec.capacity, 0);
 
         return {
-          id: pen.id, name: pen.name, operationType: pen.operationType,
-          capacity: pen.capacity, location: pen.location, buildYear: pen.buildYear,
-          sections, penManagers, totalCapacity, currentBirds,
-          occupancyPct: totalCapacity > 0
-            ? parseFloat(((currentBirds / totalCapacity) * 100).toFixed(1)) : 0,
-          sectionCount: sections.length,
-          activeSections: sections.filter(s => s.activeFlock).length,
-          metrics: penMetrics,
+          ...pen,
+          sections,
+          sectionCount: sections.length,    // page uses pen.sectionCount
+          penManagers,
+          totalBirds:    penTotalBirds,
+          totalCapacity: penTotalCapacity,
+          totalCapacityPct: penTotalCapacity > 0
+            ? parseFloat(((penTotalBirds / penTotalCapacity) * 100).toFixed(1)) : 0,
+          metrics: {
+            todayMortality: sections.reduce((s, sec) => s + (sec.metrics?.todayMortality || 0), 0),
+            weekMortality:  sections.reduce((s, sec) => s + (sec.metrics?.weekMortality  || 0), 0),
+            weekFeedKg:     parseFloat(sections.reduce((s, sec) => s + (sec.metrics?.weekFeedKg || 0), 0).toFixed(1)),
+            todayEggs:      isLayer   ? sections.reduce((s, sec) => s + (sec.metrics?.todayEggs || 0), 0) : null,
+            avgLayingRate:  isLayer   ? parseFloat((sections.reduce((s, sec) => s + (sec.metrics?.todayLayingRate || 0), 0) / (sections.length || 1)).toFixed(1)) : null,
+            latestWeightG:  isBroiler ? (sections.map(s => s.metrics?.latestWeightG).find(Boolean) || null) : null,
+          },
         };
       });
 
-      const totalCapacity  = pens.reduce((s, p) => s + p.totalCapacity, 0);
-      const totalBirds     = pens.reduce((s, p) => s + p.currentBirds, 0);
-      const layerPens      = pens.filter(p => p.operationType === 'LAYER');
-      const broilerPens    = pens.filter(p => p.operationType === 'BROILER');
-
-      const farmMetrics = {
-        todayMortality:  pens.reduce((s, p) => s + p.metrics.todayMortality, 0),
-        weekMortality:   pens.reduce((s, p) => s + p.metrics.weekMortality,  0),
-        mortalityRate:   totalBirds > 0
-          ? parseFloat(((pens.reduce((s, p) => s + p.metrics.weekMortality, 0) / totalBirds) * 100).toFixed(2)) : 0,
-        weekFeedKg:      parseFloat(pens.reduce((s, p) => s + (p.metrics.weekFeedKg || 0), 0).toFixed(1)),
-        todayEggs:       layerPens.reduce((s, p) => s + (p.metrics.todayEggs || 0), 0),
-        weekEggs:        layerPens.reduce((s, p) => s + (p.metrics.weekEggs  || 0), 0),
-        avgLayingRate:   (() => {
-          const lp = layerPens.filter(p => p.metrics.avgLayingRate > 0);
-          return lp.length > 0 ? parseFloat((lp.reduce((s, p) => s + p.metrics.avgLayingRate, 0) / lp.length).toFixed(1)) : 0;
-        })(),
-        avgBroilerWeightG: (() => {
-          const bp = broilerPens.filter(p => p.metrics.avgWeightG);
-          return bp.length > 0 ? parseFloat((bp.reduce((s, p) => s + p.metrics.avgWeightG, 0) / bp.length).toFixed(0)) : null;
-        })(),
-        avgFCR: (() => {
-          const bp = broilerPens.filter(p => p.metrics.avgFCR);
-          return bp.length > 0 ? parseFloat((bp.reduce((s, p) => s + p.metrics.avgFCR, 0) / bp.length).toFixed(2)) : null;
-        })(),
-      };
+      // Farm-level aggregates — all fields the page uses
+      const farmTotalBirds    = pens.reduce((s, p) => s + p.totalBirds, 0);
+      const farmTotalCapacity = pens.reduce((s, p) => s + p.totalCapacity, 0);
+      const farmLayerBirds    = pens.filter(p => p.operationType === 'LAYER')
+                                    .reduce((s, p) => s + p.totalBirds, 0);
+      const farmBroilerBirds  = pens.filter(p => p.operationType === 'BROILER')
+                                    .reduce((s, p) => s + p.totalBirds, 0);
+      const farmOccupancyPct  = farmTotalCapacity > 0
+        ? parseFloat(((farmTotalBirds / farmTotalCapacity) * 100).toFixed(1)) : 0;
 
       return {
-        id: farm.id, name: farm.name, location: farm.location,
-        address: farm.address, phone: farm.phone, email: farm.email,
-        managerId: farm.managerId,
-        pens, totalCapacity, totalBirds,
-        occupancyPct: totalCapacity > 0
-          ? parseFloat(((totalBirds / totalCapacity) * 100).toFixed(1)) : 0,
-        metrics: farmMetrics,
+        ...farm,
+        pens,
+        penCount:      pens.length,           // page uses farm.penCount
+        totalBirds:    farmTotalBirds,         // page uses farm.totalBirds
+        totalCapacity: farmTotalCapacity,      // page uses farm.totalCapacity
+        layerBirds:    farmLayerBirds,         // page uses farm.layerBirds
+        broilerBirds:  farmBroilerBirds,       // page uses farm.broilerBirds
+        occupancyPct:  farmOccupancyPct,       // page uses farm.occupancyPct
+        metrics: {
+          totalBirds:     farmTotalBirds,
+          todayMortality: pens.reduce((s, p) => s + p.metrics.todayMortality, 0),
+          weekFeedKg:     parseFloat(pens.reduce((s, p) => s + p.metrics.weekFeedKg, 0).toFixed(1)),
+          todayEggs:      pens.reduce((s, p) => s + (p.metrics.todayEggs || 0), 0),
+        },
       };
     });
 
     return NextResponse.json({ farms: enriched });
-
   } catch (error) {
-    console.error('Farm structure error:', error);
-    return NextResponse.json({ error: 'Failed to fetch farm structure' }, { status: 500 });
+    console.error('Farm structure fetch error:', error);
+    return NextResponse.json({ error: 'Failed to fetch farm structure', detail: error?.message }, { status: 500 });
+  }
+}
+
+// ── POST /api/farm-structure ──────────────────────────────────────────────────
+export async function POST(request) {
+  const user = await verifyToken(request);
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (!MANAGER_ROLES.includes(user.role))
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+
+  const { searchParams } = new URL(request.url);
+  const type = searchParams.get('type'); // 'farm' | 'pen' | 'section'
+
+  try {
+    const body = await request.json();
+
+    // ── Create Farm ─────────────────────────────────────────────────────────
+    if (type === 'farm') {
+      const { name, location, address, phone, email, managerId } = body;
+      if (!name?.trim()) return NextResponse.json({ error: 'Farm name required' }, { status: 400 });
+
+      const farm = await prisma.farm.create({
+        data: {
+          tenantId:  user.tenantId,
+          name:      name.trim(),
+          location:  location  || null,
+          address:   address   || null,
+          phone:     phone     || null,
+          email:     email     || null,
+          managerId: managerId || null,
+        },
+      });
+      return NextResponse.json({ farm }, { status: 201 });
+    }
+
+    // ── Create Pen ──────────────────────────────────────────────────────────
+    // Phase 8C: penPurpose is now required. API validates it is present.
+    if (type === 'pen') {
+      const { farmId, name, operationType, penPurpose, capacity, location, buildYear } = body;
+      if (!farmId || !name?.trim() || !operationType || !penPurpose || !capacity)
+        return NextResponse.json({ error: 'farmId, name, operationType, penPurpose, and capacity are required' }, { status: 400 });
+
+      if (!['PRODUCTION','BROODING','GENERAL'].includes(penPurpose))
+        return NextResponse.json({ error: 'penPurpose must be PRODUCTION, BROODING, or GENERAL' }, { status: 400 });
+
+      // Verify farm belongs to tenant
+      const farm = await prisma.farm.findFirst({
+        where: { id: farmId, tenantId: user.tenantId },
+      });
+      if (!farm) return NextResponse.json({ error: 'Farm not found' }, { status: 404 });
+
+      const pen = await prisma.pen.create({
+        data: {
+          farmId,
+          name:          name.trim(),
+          operationType,
+          penPurpose,
+          capacity:      parseInt(capacity),
+          location:      location  || null,
+          buildYear:     buildYear ? parseInt(buildYear) : null,
+        },
+      });
+      return NextResponse.json({ pen }, { status: 201 });
+    }
+
+    // ── Create Section ──────────────────────────────────────────────────────
+    if (type === 'section') {
+      const { penId, name, capacity } = body;
+      if (!penId || !name?.trim() || !capacity)
+        return NextResponse.json({ error: 'penId, name, and capacity are required' }, { status: 400 });
+
+      // Verify pen belongs to tenant
+      const pen = await prisma.pen.findFirst({
+        where: { id: penId, farm: { tenantId: user.tenantId } },
+      });
+      if (!pen) return NextResponse.json({ error: 'Pen not found' }, { status: 404 });
+
+      const section = await prisma.penSection.create({
+        data: {
+          penId,
+          name:     name.trim(),
+          capacity: parseInt(capacity),
+        },
+      });
+      return NextResponse.json({ section }, { status: 201 });
+    }
+
+    return NextResponse.json({ error: `Unknown type: ${type}` }, { status: 400 });
+  } catch (error) {
+    console.error('Farm structure POST error:', error);
+    return NextResponse.json({ error: 'Failed to create', detail: error?.message }, { status: 500 });
+  }
+}
+
+// ── PATCH /api/farm-structure ─────────────────────────────────────────────────
+export async function PATCH(request) {
+  const user = await verifyToken(request);
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (!MANAGER_ROLES.includes(user.role))
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+
+  const { searchParams } = new URL(request.url);
+  const type = searchParams.get('type');
+
+  try {
+    const body = await request.json();
+
+    // ── Update Farm ─────────────────────────────────────────────────────────
+    if (type === 'farm') {
+      const { id, name, location, address, phone, email, managerId } = body;
+      if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
+
+      const farm = await prisma.farm.findFirst({ where: { id, tenantId: user.tenantId } });
+      if (!farm) return NextResponse.json({ error: 'Farm not found' }, { status: 404 });
+
+      const updated = await prisma.farm.update({
+        where: { id },
+        data: {
+          ...(name      && { name: name.trim() }),
+          ...(location !== undefined && { location: location || null }),
+          ...(address  !== undefined && { address:  address  || null }),
+          ...(phone    !== undefined && { phone:    phone    || null }),
+          ...(email    !== undefined && { email:    email    || null }),
+          ...(managerId !== undefined && { managerId: managerId || null }),
+        },
+      });
+      return NextResponse.json({ farm: updated });
+    }
+
+    // ── Update Pen ──────────────────────────────────────────────────────────
+    // Phase 8C: penPurpose can now be updated
+    if (type === 'pen') {
+      const { id, name, capacity, location, buildYear, penPurpose } = body;
+      if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
+
+      const pen = await prisma.pen.findFirst({ where: { id, farm: { tenantId: user.tenantId } } });
+      if (!pen) return NextResponse.json({ error: 'Pen not found' }, { status: 404 });
+
+      if (penPurpose && !['PRODUCTION','BROODING','GENERAL'].includes(penPurpose))
+        return NextResponse.json({ error: 'penPurpose must be PRODUCTION, BROODING, or GENERAL' }, { status: 400 });
+
+      const updated = await prisma.pen.update({
+        where: { id },
+        data: {
+          ...(name       && { name:      name.trim() }),
+          ...(capacity   && { capacity:  parseInt(capacity) }),
+          ...(location  !== undefined && { location:  location  || null }),
+          ...(buildYear !== undefined && { buildYear: buildYear ? parseInt(buildYear) : null }),
+          ...(penPurpose && { penPurpose }),
+        },
+      });
+      return NextResponse.json({ pen: updated });
+    }
+
+    // ── Update Section ──────────────────────────────────────────────────────
+    if (type === 'section') {
+      const { id, name, capacity } = body;
+      if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
+
+      const section = await prisma.penSection.findFirst({
+        where: { id, pen: { farm: { tenantId: user.tenantId } } },
+      });
+      if (!section) return NextResponse.json({ error: 'Section not found' }, { status: 404 });
+
+      const updated = await prisma.penSection.update({
+        where: { id },
+        data: {
+          ...(name     && { name:     name.trim() }),
+          ...(capacity && { capacity: parseInt(capacity) }),
+        },
+      });
+      return NextResponse.json({ section: updated });
+    }
+
+    return NextResponse.json({ error: `Unknown type: ${type}` }, { status: 400 });
+  } catch (error) {
+    console.error('Farm structure PATCH error:', error);
+    return NextResponse.json({ error: 'Failed to update', detail: error?.message }, { status: 500 });
+  }
+}
+
+// DELETE /api/farm-structure?type=pen&id=...&action=archive   → soft deactivate (Farm Admin+)
+// DELETE /api/farm-structure?type=pen&id=...&action=delete    → hard delete (SUPER_ADMIN only, zero-history pens)
+
+const ARCHIVE_ROLES = ['FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
+const DELETE_ROLES  = ['SUPER_ADMIN'];
+
+export async function DELETE(request) {
+  const user = await verifyToken(request);
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const { searchParams } = new URL(request.url);
+  const type   = searchParams.get('type');
+  const id     = searchParams.get('id');
+  const action = searchParams.get('action') || 'archive'; // 'archive' | 'delete'
+
+  if (type !== 'pen')
+    return NextResponse.json({ error: 'Only pen deletion is supported via this endpoint' }, { status: 400 });
+  if (!id)
+    return NextResponse.json({ error: 'Pen id is required' }, { status: 400 });
+
+  // Role gate
+  if (action === 'delete' && !DELETE_ROLES.includes(user.role))
+    return NextResponse.json({ error: 'Only Super Admins can permanently delete pens' }, { status: 403 });
+  if (action === 'archive' && !ARCHIVE_ROLES.includes(user.role))
+    return NextResponse.json({ error: 'Only Farm Admins and above can archive pens' }, { status: 403 });
+
+  try {
+    // Verify pen belongs to this tenant
+    const pen = await prisma.pen.findFirst({
+      where: { id, farm: { tenantId: user.tenantId } },
+      include: {
+        sections: {
+          include: {
+            flocks:  { where: { status: 'ACTIVE' }, select: { id: true, batchCode: true } },
+            _count:  { select: { flocks: true } },
+          },
+        },
+      },
+    });
+
+    if (!pen)
+      return NextResponse.json({ error: 'Pen not found' }, { status: 404 });
+
+    // ── Safety checks ─────────────────────────────────────────────────────────
+
+    // Block if any section has an active flock — birds must be cleared first
+    const activeFlocks = pen.sections.flatMap(s => s.flocks);
+    if (activeFlocks.length > 0) {
+      return NextResponse.json({
+        error:        'Cannot archive or delete a pen with active flocks.',
+        detail:       `Remove or transfer these flocks first: ${activeFlocks.map(f => f.batchCode).join(', ')}`,
+        activeFlocks: activeFlocks.map(f => f.batchCode),
+      }, { status: 409 });
+    }
+
+    // ── ARCHIVE (soft delete) ─────────────────────────────────────────────────
+    if (action === 'archive') {
+      // Deactivate pen + all its sections
+      await prisma.$transaction([
+        prisma.penSection.updateMany({
+          where: { penId: id },
+          data:  { isActive: false },
+        }),
+        prisma.pen.update({
+          where: { id },
+          data:  { isActive: false },
+        }),
+      ]);
+
+      return NextResponse.json({
+        success: true,
+        action:  'archived',
+        message: `${pen.name} has been archived and will no longer appear in Farm Structure. All historical data is preserved.`,
+      });
+    }
+
+    // ── HARD DELETE (SUPER_ADMIN, zero-history pens only) ─────────────────────
+    if (action === 'delete') {
+      // Check whether any section ever had a flock (not just active ones)
+      const totalFlockHistory = pen.sections.reduce((s, sec) => s + sec._count.flocks, 0);
+
+      if (totalFlockHistory > 0) {
+        return NextResponse.json({
+          error:  'Cannot permanently delete a pen that has flock history.',
+          detail: `This pen has ${totalFlockHistory} historical flock record(s). Use Archive instead to hide it while preserving data.`,
+        }, { status: 409 });
+      }
+
+      // Safe to hard delete — no flock history at all
+      // Prisma cascade handles: sections → workerAssignments, tasks
+      await prisma.$transaction([
+        // Remove worker assignments on all sections
+        prisma.penWorkerAssignment.deleteMany({
+          where: { penSection: { penId: id } },
+        }),
+        // Remove sections
+        prisma.penSection.deleteMany({
+          where: { penId: id },
+        }),
+        // Remove pen
+        prisma.pen.delete({
+          where: { id },
+        }),
+      ]);
+
+      return NextResponse.json({
+        success: true,
+        action:  'deleted',
+        message: `${pen.name} and all its sections have been permanently deleted.`,
+      });
+    }
+
+    return NextResponse.json({ error: 'Invalid action. Use archive or delete.' }, { status: 400 });
+
+  } catch (err) {
+    console.error('DELETE /api/farm-structure error:', err);
+    return NextResponse.json({ error: 'Operation failed', detail: err?.message }, { status: 500 });
   }
 }

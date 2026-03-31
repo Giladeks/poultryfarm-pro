@@ -1,19 +1,9 @@
 // app/api/me/operation/route.js
-// GET — Returns the current user's operation type derived from their live pen assignments.
+// GET — Returns the current user's operation type, pen purposes, and active flock stages.
 //
-// Only meaningful for PEN_WORKER and PEN_MANAGER roles. For all other roles returns null
-// (they are not scoped to a single operation and see the full nav).
-//
-// Called by AppShell every 30 seconds for pen-scoped roles so that reassignments are
-// reflected without requiring a logout. Fast query — single join, no aggregations.
-//
-// Response shape:
-//   { operationType: 'LAYER' | 'BROILER' | null }
-//
-// operationType is null when:
-//   - The user's role is not PEN_WORKER or PEN_MANAGER
-//   - The user has no active pen assignments yet
-//   - Their assigned pens have mixed operation types (edge case — show all in that case)
+// flockStages drives Brooding nav visibility:
+//   flockStages.includes('BROODING') → show Brooding nav
+//   operationType === 'LAYER'        → show Rearing nav
 
 import { NextResponse } from 'next/server';
 import { prisma }       from '@/lib/db/prisma';
@@ -25,41 +15,45 @@ export async function GET(request) {
   const user = await verifyToken(request);
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  // Non-pen-scoped roles: return null immediately — no DB query needed
   if (!PEN_SCOPED_ROLES.includes(user.role)) {
-    return NextResponse.json({ operationType: null });
+    return NextResponse.json({ operationType: null, penPurposes: [], flockStages: [] });
   }
 
   try {
-    // Fetch all active pen assignments for this user, pulling operationType from the pen
+    // Step 1 — get assigned section IDs + pen metadata
     const assignments = await prisma.penWorkerAssignment.findMany({
-      where: { userId: user.sub },
+      where:  { userId: user.sub, isActive: true },
       select: {
         penSection: {
           select: {
-            pen: { select: { operationType: true } },
+            id:  true,
+            pen: { select: { operationType: true, penPurpose: true } },
           },
         },
       },
     });
 
     if (assignments.length === 0) {
-      return NextResponse.json({ operationType: null });
+      return NextResponse.json({ operationType: null, penPurposes: [], flockStages: [] });
     }
 
-    // Collect unique operation types across all assigned pens
-    const opTypes = [...new Set(
-      assignments
-        .map(a => a.penSection?.pen?.operationType)
-        .filter(Boolean)
-    )];
+    const sectionIds = assignments.map(a => a.penSection?.id).filter(Boolean);
+    const opTypes    = [...new Set(assignments.map(a => a.penSection?.pen?.operationType).filter(Boolean))];
+    const purposes   = [...new Set(assignments.map(a => a.penSection?.pen?.penPurpose).filter(Boolean))];
 
-    // Single operation type → return it; mixed (edge case) → return null (show all)
+    // Step 2 — separately fetch active flock stages for these sections
+    // (Prisma doesn't support include inside select in the same query)
+    const activeFlocks = await prisma.flock.findMany({
+      where:  { penSectionId: { in: sectionIds }, status: 'ACTIVE' },
+      select: { stage: true },
+    });
+
+    const stages = [...new Set(activeFlocks.map(f => f.stage).filter(Boolean))];
     const operationType = opTypes.length === 1 ? opTypes[0] : null;
 
-    return NextResponse.json({ operationType });
+    return NextResponse.json({ operationType, penPurposes: purposes, flockStages: stages });
   } catch (err) {
     console.error('GET /api/me/operation error:', err);
-    return NextResponse.json({ error: 'Failed to fetch operation type' }, { status: 500 });
+    return NextResponse.json({ error: 'Failed', detail: err?.message }, { status: 500 });
   }
 }

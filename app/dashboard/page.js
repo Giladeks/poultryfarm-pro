@@ -111,8 +111,9 @@ function ChartTip({ active, payload, label, unit='' }) {
 }
 
 // ── Floating chart modal ─────────────────────────────────────────────────────
-function ChartModal({ sectionId, sectionName, penName, opType, onClose }) {
-  const isL = opType === 'LAYER';
+function ChartModal({ sectionId, sectionName, penName, opType, stage = 'PRODUCTION', onClose }) {
+  const isL         = opType === 'LAYER';
+  const isBrooding  = isL && (stage === 'BROODING' || stage === 'REARING');
   const [days, setDays] = useState(isL ? 7 : 14);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -139,6 +140,89 @@ function ChartModal({ sectionId, sectionName, penName, opType, onClose }) {
     <div style={{ background: '#fff', borderRadius: 12, padding: '14px 16px', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column' }}>
       <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 10 }}>{title}</div>
       {children}
+    </div>
+  );
+
+  // Brooding / Rearing charts — feed + mortality + temperature only (no eggs)
+  const broodingCharts = (
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gridTemplateRows: '1fr 1fr', gap: 14, flex: 1, minHeight: 0 }}>
+      {/* Top Left: Daily Feed Consumption */}
+      <Tile title="🌾 Daily Feed Consumption">
+        {loading ? <Spinner /> : (
+          <ResponsiveContainer width="100%" height={220}>
+            <ComposedChart data={chart} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+              <XAxis dataKey="label" tick={{ fontSize: 10 }} />
+              <YAxis yAxisId="kg" tick={{ fontSize: 10 }} width={45} unit="kg" />
+              <YAxis yAxisId="gpb" orientation="right" tick={{ fontSize: 10 }} width={40} unit="g" />
+              <Tooltip content={<ChartTip />} />
+              <Legend wrapperStyle={{ fontSize: 10 }} />
+              <Bar yAxisId="kg" dataKey="feedKg" name="Feed (kg)" fill="#6c63ff" opacity={0.8} radius={[3, 3, 0, 0]} />
+              <Line yAxisId="gpb" type="monotone" dataKey="feedGpb" name="g/bird/day" stroke="#f59e0b" strokeWidth={2} dot={{ r: 2 }} connectNulls />
+            </ComposedChart>
+          </ResponsiveContainer>
+        )}
+      </Tile>
+      {/* Top Right: Daily Water Intake */}
+      <Tile title="💧 Daily Water Intake">
+        {loading ? <Spinner /> : chart.every(d => !d.waterL) ? (
+          <div style={{ height: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 12 }}>
+            Log water readings to see data
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height={220}>
+            <ComposedChart data={chart} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+              <XAxis dataKey="label" tick={{ fontSize: 10 }} />
+              <YAxis yAxisId="L" tick={{ fontSize: 10 }} width={45} unit="L" />
+              <YAxis yAxisId="lpb" orientation="right" tick={{ fontSize: 10 }} width={45} unit="L/b" />
+              <Tooltip content={<ChartTip />} />
+              <Legend wrapperStyle={{ fontSize: 10 }} />
+              <Bar yAxisId="L" dataKey="waterL" name="Water (L)" fill="#0ea5e9" opacity={0.8} radius={[3, 3, 0, 0]} />
+              <Line yAxisId="lpb" type="monotone" dataKey="waterLpb" name="L/bird" stroke="#0369a1" strokeWidth={2} dot={{ r: 2 }} connectNulls />
+            </ComposedChart>
+          </ResponsiveContainer>
+        )}
+      </Tile>
+      {/* Bottom Left: Brooder Temperature or Rearing Weight */}
+      <Tile title={stage === 'REARING' ? '⚖️ Weekly Weight (Rearing)' : '🌡️ Brooder Temperature'}>
+        {loading ? <Spinner /> : chart.length === 0 ? (
+          <div style={{ height: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 12 }}>
+            {stage === 'REARING' ? 'Log weekly weigh-ins to see data' : 'Log temperature readings in the Brooding page'}
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height={220}>
+            <LineChart data={chart} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+              <XAxis dataKey="label" tick={{ fontSize: 10 }} />
+              <YAxis tick={{ fontSize: 10 }} width={45} unit={stage === 'REARING' ? 'g' : '°C'} />
+              <Tooltip content={<ChartTip unit={stage === 'REARING' ? 'g' : '°C'} />} />
+              {stage === 'REARING'
+                ? <Line type="monotone" dataKey="avgWeightG" name="Avg Weight (g)" stroke="#6c63ff" strokeWidth={2.5} dot={{ r: 3 }} connectNulls />
+                : <>
+                    <Line type="monotone" dataKey="avgWeightG" name="Brooder Temp °C" stroke="#f59e0b" strokeWidth={2} dot={{ r: 2 }} connectNulls />
+                    <ReferenceLine y={38} stroke="#ef4444" strokeDasharray="3 3" label={{ value: 'Max 38°C', fontSize: 9, fill: '#ef4444' }} />
+                    <ReferenceLine y={26} stroke="#3b82f6" strokeDasharray="3 3" label={{ value: 'Min 26°C', fontSize: 9, fill: '#3b82f6' }} />
+                  </>
+              }
+            </LineChart>
+          </ResponsiveContainer>
+        )}
+      </Tile>
+      {/* Bottom Right: Daily Mortality */}
+      <Tile title="💀 Daily Mortality">
+        {loading ? <Spinner /> : (
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={chart} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+              <XAxis dataKey="label" tick={{ fontSize: 10 }} />
+              <YAxis tick={{ fontSize: 10 }} width={35} allowDecimals={false} />
+              <Tooltip content={<ChartTip />} />
+              <Bar dataKey="mortality" name="Deaths" fill="#ef4444" opacity={0.8} radius={[3, 3, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        )}
+      </Tile>
     </div>
   );
 
@@ -291,7 +375,9 @@ function ChartModal({ sectionId, sectionName, penName, opType, onClose }) {
               {OP_ICON[opType]} {penName} — {sectionName}
             </div>
             <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-              {isL ? 'Layer production trends' : 'Broiler growth & performance trends'}
+              {isBrooding
+                ? `${stage === 'BROODING' ? 'Brooding' : 'Rearing'} — feed & mortality trends`
+                : isL ? 'Layer production trends' : 'Broiler growth & performance trends'}
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -303,7 +389,7 @@ function ChartModal({ sectionId, sectionName, penName, opType, onClose }) {
         {/* Charts 2×2 grid */}
         <div style={{ flex: 1, padding: '16px 20px 20px', overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
           {!data && !loading && <div style={{ textAlign: 'center', padding: 60, color: 'var(--text-muted)' }}>No data available</div>}
-          {isL ? layerCharts : broilerCharts}
+          {isBrooding ? broodingCharts : isL ? layerCharts : broilerCharts}
         </div>
 
       </div>
@@ -324,6 +410,8 @@ function WorkerSectionGridCard({ sec, highlighted = false }) {
   const cardRef = useRef(null);
   const mx      = sec.metrics;
   const isL     = sec.penOperationType === 'LAYER';
+  const secStage = sec.metrics?.stage || sec.flock?.stage || 'PRODUCTION';
+  const isBroodingOrRearing = isL && (secStage === 'BROODING' || secStage === 'REARING');
   const flag    = (sec.flags||[])[0];
   const isCrit  = flag?.type === 'critical';
   const isWarn  = flag?.type === 'warn';
@@ -397,7 +485,12 @@ function WorkerSectionGridCard({ sec, highlighted = false }) {
         {/* ── Metric grid ── */}
         {hasFlock ? (
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
-            {isL ? (<>
+            {isBroodingOrRearing ? (<>
+              <MiniStat label="Live Birds"   value={fmt(sec.flock?.currentCount||0)} color="var(--text-secondary)" />
+              <MiniStat label="Feed/Day"     value={mx.avgDailyFeedKg!=null?`${mx.avgDailyFeedKg}kg`:'—'} color="#6c63ff" />
+              <MiniStat label="Deaths Today" value={fmt(mx.todayMortality||0)} color={mx.todayMortality>5?'#ef4444':'var(--text-secondary)'} />
+              <MiniStat label="7d Mortality" value={fmt(mx.weekMortality||0)} color="var(--text-secondary)" />
+            </>) : isL ? (<>
               <MiniStat label="Eggs Today"  value={fmt(mx.todayEggs||0)} color="#f59e0b" />
               <MiniStat label="Lay Rate"    value={layRate!=null?`${layRate}%`:'—'} color={rateColor} />
               <MiniStat label="Deaths Today" value={fmt(mx.todayMortality||0)} color={mx.todayMortality>5?'#ef4444':'var(--text-secondary)'} />
@@ -438,6 +531,7 @@ function WorkerSectionGridCard({ sec, highlighted = false }) {
           sectionName={sec.name}
           penName={sec.penName}
           opType={sec.penOperationType}
+          stage={sec.metrics?.stage || sec.flock?.stage || 'PRODUCTION'}
           onClose={() => setModal(false)}
         />
       )}
@@ -539,14 +633,14 @@ function PenCard({ pen, autoOpen = false, highlightSection = null }) {
                     </div>
                   </div>
                   {sFlg&&<span style={{fontSize:10,fontWeight:600,color:'#d97706',background:'#fffbeb',border:'1px solid #fde68a',borderRadius:5,padding:'2px 7px',whiteSpace:'nowrap'}}>{sFlg.msg}</span>}
-                  {sec.flock&&<button onClick={e=>{e.stopPropagation();setModalSec({id:sec.id,name:sec.name});}} style={{background:'#eeecff',border:'none',borderRadius:7,padding:'5px 11px',fontSize:11,fontWeight:600,color:'#6c63ff',cursor:'pointer',whiteSpace:'nowrap'}}>View Trends →</button>}
+                  {sec.flock&&<button onClick={e=>{e.stopPropagation();setModalSec({id:sec.id,name:sec.name,stage:sec.flock?.stage||'PRODUCTION'});}} style={{background:'#eeecff',border:'none',borderRadius:7,padding:'5px 11px',fontSize:11,fontWeight:600,color:'#6c63ff',cursor:'pointer',whiteSpace:'nowrap'}}>View Trends →</button>}
                 </div>
               );
             })}
           </div>
         )}
       </div>
-      {modalSec&&<ChartModal sectionId={modalSec.id} sectionName={modalSec.name} penName={pen.name} opType={pen.operationType} onClose={()=>setModalSec(null)}/>}
+      {modalSec&&<ChartModal sectionId={modalSec.id} sectionName={modalSec.name} penName={pen.name} opType={pen.operationType} stage={modalSec.stage||'PRODUCTION'} onClose={()=>setModalSec(null)}/>}
     </div>
   );
 }
@@ -807,29 +901,65 @@ function WorkerDashboard({ sections, tasks, user, apiFetch }) {
   // highlightedSection: which section name to pulse when attention pill is clicked
   const [highlightedSection, setHighlightedSection] = useState(null);
 
-  const workerKpis = isL ? [
-    {
-      label:'Live Birds', value: fmt(totBirds),
+  // Dominant stage across this worker's sections
+  const dominantStage = (() => {
+    const counts = {};
+    sections.forEach(s => {
+      const st = s.metrics?.stage || s.flock?.stage || 'PRODUCTION';
+      counts[st] = (counts[st] || 0) + 1;
+    });
+    if (counts.BROODING > 0) return 'BROODING';
+    if (counts.REARING  > 0) return 'REARING';
+    return 'PRODUCTION';
+  })();
+
+  const latestBrooderTemp = sections.map(s => s.metrics?.latestBrooderTemp).find(t => t != null) || null;
+  const tempStatus = latestBrooderTemp == null ? 'neutral'
+    : (latestBrooderTemp < 26 || latestBrooderTemp > 38) ? 'critical'
+    : (latestBrooderTemp < 28 || latestBrooderTemp > 35) ? 'warn' : 'good';
+
+  const rearingWtSecs = sections.filter(s => s.metrics?.latestWeightG);
+  const avgRearingWt  = rearingWtSecs.length
+    ? parseFloat((rearingWtSecs.reduce((a,s)=>a+s.metrics.latestWeightG,0)/rearingWtSecs.length).toFixed(0)) : null;
+
+  const mortCard = {
+    label:'Mortality Today', value:fmt(totDead),
+    sub:`7d total: ${fmt(sections.reduce((a,s)=>a+(s.metrics?.weekMortality||0),0))}`,
+    delta:totDead===0?'All clear':totDead<=2?'Normal':'Spike detected',
+    trend:totDead===0?'up':totDead>5?'down':'stable',
+    status:mortCountStatus(totDead,5), icon:'💀', context:'Your sections',
+  };
+
+  const workerKpis = isL && dominantStage==='BROODING' ? [
+    { label:'Live Chicks', value:fmt(totBirds),
+      sub:`${sections.length} brooding section${sections.length!==1?'s':''}`,
+      delta:'', trend:'stable', status:'neutral', icon:'🐣', context:'Your sections' },
+    { label:'Brooder Temp',
+      value:latestBrooderTemp!=null?`${Number(latestBrooderTemp).toFixed(1)}°C`:'—',
+      sub:'Latest reading · Safe range 26–38°C',
+      delta:latestBrooderTemp!=null?(latestBrooderTemp<26||latestBrooderTemp>38?'⚠ Out of range':'✓ In range'):'No reading yet',
+      trend:tempStatus==='critical'?'down':'stable', status:tempStatus,
+      icon:'🌡️', context:'Log in Brooding page' },
+    mortCard, taskCard,
+  ] : isL && dominantStage==='REARING' ? [
+    { label:'Live Pullets', value:fmt(totBirds),
+      sub:`Wk ${sections[0]?.ageInDays!=null?Math.floor(sections[0].ageInDays/7):'—'} of rearing`,
+      delta:'', trend:'stable', status:'neutral', icon:'🌱', context:'Your sections' },
+    { label:'Avg Weight',
+      value:avgRearingWt?`${(avgRearingWt/1000).toFixed(3)} kg`:'—',
+      sub:avgRearingWt?`${avgRearingWt}g avg body weight`:'No weigh-in yet',
+      delta:avgRearingWt?`${avgRearingWt}g`:'Weigh-in pending',
+      trend:'stable', status:avgRearingWt?'good':'neutral', icon:'⚖️', context:'Weekly weigh-in task' },
+    mortCard, taskCard,
+  ] : isL ? [
+    { label:'Live Birds', value:fmt(totBirds),
       sub:`${sections.length} section${sections.length!==1?'s':''}`,
-      delta:'', trend:'stable', status:'neutral',
-      icon:'🐦', context:'Your sections',
-    },
-    {
-      label:'Eggs Collected Today', value: fmt(todayEggs),
-      sub:`7d avg ${fmt(Math.round(sections.filter(s=>s.metrics.type==='LAYER').reduce((a,s)=>a+(s.metrics.weekEggs||0),0)/7))}`,
-      delta: todayEggs>0?`${fmt(todayEggs)} collected`:'None yet',
-      trend:'stable', status: todayEggs>0?'good':'neutral',
-      icon:'🥚', context:'Your sections',
-    },
-    {
-      label:'Mortality Today', value: fmt(totDead),
-      sub:`7d total: ${fmt(sections.reduce((a,s)=>a+(s.metrics.weekMortality||0),0))}`,
-      delta: totDead===0?'All clear':totDead<=2?'Normal':'Spike detected',
-      trend: totDead===0?'up':totDead>5?'down':'stable',
-      status: mortCountStatus(totDead, 5),
-      icon:'📉', context:'Your sections',
-    },
-    taskCard,
+      delta:'', trend:'stable', status:'neutral', icon:'🐦', context:'Your sections' },
+    { label:'Eggs Collected Today', value:fmt(todayEggs),
+      sub:`7d avg ${fmt(Math.round(sections.filter(s=>s.metrics?.type==='LAYER').reduce((a,s)=>a+(s.metrics?.weekEggs||0),0)/7))}`,
+      delta:todayEggs>0?`${fmt(todayEggs)} collected`:'None yet',
+      trend:'stable', status:todayEggs>0?'good':'neutral', icon:'🥚', context:'Your sections' },
+    mortCard, taskCard,
   ] : [
     {
       label:'Live Birds', value: fmt(totBirds),

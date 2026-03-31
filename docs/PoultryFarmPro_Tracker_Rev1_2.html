@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>PoultryFarm Pro · Implementation Tracker Rev 1.1</title>
+<title>PoultryFarm Pro · Implementation Tracker Rev 1.2</title>
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
   body{background:#f0f4f8;font-family:'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:#0f172a;padding:0}
@@ -33,6 +33,7 @@
   .tag-next{background:#fef3c7;color:#92400e}
   .tag-done{background:#dcfce7;color:#166534}
   .tag-stack{background:#ede9fe;color:#5b21b6}
+  .tag-active{background:#fef9c3;color:#713f12}
 
   /* ── Main grid ── */
   .main{max-width:1300px;margin:1rem auto 3rem;padding:0 1.5rem;display:flex;flex-direction:column;gap:1rem}
@@ -112,7 +113,7 @@
 <div class="banner">
   <div class="banner-top">
     <div>
-      <h1>🐔 PoultryFarm Pro <span>Implementation Tracker · Workplan Rev 1.1 · March 2026</span></h1>
+      <h1>🐔 PoultryFarm Pro <span>Implementation Tracker · Workplan Rev 1.2 · March 2026</span></h1>
       <div class="banner-meta">Multi-tenant poultry ERP · Next.js 16 · Prisma 5.22 · PostgreSQL · JWT · Recharts</div>
     </div>
     <div class="overall-pill">
@@ -133,7 +134,7 @@
         <li>Phases 1–7 <span class="tag tag-done">DONE</span> — Full foundation, finance, billing, audit</li>
         <li>Phase 8A <span class="tag tag-done">DONE</span> — Operation mode selector</li>
         <li>Phase 8B <span class="tag tag-done">DONE</span> — All dashboards, worker page, daily summaries, task generation, spot-checks, feed requisition workflow, IC override, statistical alerts</li>
-        <li>Phase 8G <span class="tag tag-done">DONE</span> — Code-based task templates (tenant-configurable UI deferred)</li>
+        <li>Phase 8G <span class="tag tag-active">PARTIAL</span> — Code-based templates done; task_templates DB model + admin UI pending</li>
         <li>Phase 8C <span class="tag tag-next">NEXT</span> — Brooding Module</li>
       </ul>
     </div>
@@ -141,7 +142,7 @@
       <h3>🔧 Tech Stack (Locked)</h3>
       <ul>
         <li><span class="tag tag-stack">Next.js 16</span> App Router, no Tailwind JIT</li>
-        <li><span class="tag tag-stack">Prisma 5.22</span> — NEVER upgrade to 7.x</li>
+        <li><span class="tag tag-stack">Prisma 5.22</span> — NEVER upgrade to v6/v7</li>
         <li><span class="tag tag-stack">PostgreSQL</span> Neon/Supabase, pgAdmin for migrations</li>
         <li><span class="tag tag-stack">JWT</span> localStorage pfp_token, always use apiFetch()</li>
         <li><span class="tag tag-stack">pdfmake 0.2.x</span> Helvetica only, ASCII currency</li>
@@ -161,6 +162,8 @@
         <li>WeightSample model REMOVED — use WeightRecord</li>
         <li>All hooks before any early returns (React rules)</li>
         <li>Next.js 16 dynamic routes: <code>const params = await rawParams</code></li>
+        <li>Schema changes: SQL → <code>prisma db pull</code> → <code>prisma generate</code> — never edit schema.prisma directly</li>
+        <li>All API routes must scope every query with <code>tenantId</code></li>
       </ul>
     </div>
   </div>
@@ -185,7 +188,13 @@
 
 <script>
 // ─────────────────────────────────────────────────────────────────────────────
-// WORKPLAN DATA — Rev 1.1 (March 2026)
+// WORKPLAN DATA — Rev 1.2 (March 2026)
+// Rev 1.2 changes vs Rev 1.1:
+//   • Phase 8B — phaseStatus changed active→done (all items confirmed shipped per MEMORY.md)
+//   • Phase 8G — phaseStatus stays active; "Remaining" tasks clarified as correctly planned
+//   • Context box updated: Phase 8G now shown as PARTIAL (not DONE)
+//   • Critical constraints list expanded (tenantId scope, schema edit rule)
+//   • Tracker version bumped Rev 1.1 → 1.2
 // status: "done" | "active" | "next" | "planned" | "new" | "future"
 // ─────────────────────────────────────────────────────────────────────────────
 const phases = [
@@ -314,30 +323,49 @@ const phases = [
     ]}
   ]},
 
-  { id:"p8b", name:"Phase 8B · Production Dashboards & Worker Experience", phaseStatus:"active", groups:[
-    { name:"Completed Items", tasks:[
-      { t:"Main dashboard — all 11 roles fully implemented", s:"done"},
-      { t:"Worker section-first layout, tasks per section card", s:"done"},
-      { t:"Layer performance page (6 KPI cards, charts, grade breakdown)", s:"done"},
-      { t:"Broiler performance page (FCR, weight trend, harvest countdown)", s:"done"},
-      { t:"Water meter modal, Feed log modal (bag-based formula fixed)", s:"done"},
-      { t:"Verification wiring (PATCH /api/verification/[id])", s:"done"},
-      { t:"Daily summary card — live aggregates, refreshKey, REPORT_SUBMISSION auto-submit", s:"done"},
-      { t:"Daily summary auto-generation with UTC date-range fix (Date.UTC)", s:"done"},
-      { t:"Task generation system — section-scoped, flock-dependent templates, dedup", s:"done"},
-      { t:"Spot-check task system (/api/tasks/spot-check), SpotCheckCompleteModal", s:"done"},
-      { t:"Statistical outlier alerts — 9 types", s:"done"},
-      { t:"IC override acknowledge/flag workflow, PM Overrides tab", s:"done"},
-      { t:"COI guard extended for Store Manager (store-scoped)", s:"done"},
-      { t:"Feed requisition workflow — DRAFT→SUBMITTED→APPROVED→ISSUED→ACKNOWLEDGED→CLOSED", s:"done"},
-      { t:"Feed requisition: pen-level grouping, sectionBreakdown JSON, bags+kg display", s:"done"},
-      { t:"Feed requisitions page (/feed-requisitions) — role-aware tabs for PM/IC/Store", s:"done"},
-      { t:"PM Daily Summaries review page (/pen-manager/daily-summaries)", s:"done"},
-      { t:"AppShell nav: Daily Summaries + Feed Requisitions wired, PEN_MANAGER removed from My Tasks", s:"done"}
+  // ── Rev 1.2 change: phaseStatus active→done (all items confirmed shipped in MEMORY.md) ──
+  { id:"p8b", name:"Phase 8B · Production Dashboards & Worker Experience", phaseStatus:"done", groups:[
+    { name:"Core Dashboards & Worker Page", tasks:[
+      { t:"Main dashboard — all 11 roles fully implemented (app/dashboard/page.js)", s:"done"},
+      { t:"Worker section-first layout, tasks per section card (app/worker/page.js)", s:"done"},
+      { t:"Layer performance page — 6 KPI cards, charts, grade breakdown (app/performance/page.js)", s:"done"},
+      { t:"Broiler performance page — FCR, weight trend, harvest countdown (app/broiler-performance/page.js)", s:"done"},
+      { t:"Dashboard APIs: route.js, /charts, /verifications (app/api/dashboard/)", s:"done"}
     ]},
-    { name:"Remaining Items", tasks:[
+    { name:"Data Entry Modals", tasks:[
+      { t:"Water meter modal (components/water/WaterMeterModal.js)", s:"done"},
+      { t:"Feed log modal — bag-based formula fixed (components/feed/WorkerFeedModal.js)", s:"done"},
+      { t:"Grading modal (components/eggs/GradingModal.js)", s:"done"},
+      { t:"Eggs API — crate-based 2-phase (app/api/eggs/route.js + /[id]/route.js)", s:"done"},
+      { t:"Weight records API (app/api/weight-records/route.js)", s:"done"}
+    ]},
+    { name:"Verification & Controls", tasks:[
+      { t:"Verification wiring — PATCH /api/verification/[id]", s:"done"},
+      { t:"VerifyActions + COI guard (components/verification/VerifyActions.js, lib/utils/conflictOfInterest.js)", s:"done"},
+      { t:"IC override acknowledge/flag workflow, PM Overrides tab", s:"done"},
+      { t:"COI guard extended for Store Manager (store-scoped)", s:"done"}
+    ]},
+    { name:"Daily Summaries & Task Generation", tasks:[
+      { t:"DailySummaryCard + REPORT_SUBMISSION auto-submit (components/daily/DailySummaryCard.js)", s:"done"},
+      { t:"Daily summary auto-generation with UTC date-range fix (Date.UTC) (lib/utils/autoSubmitSummary.js)", s:"done"},
+      { t:"Task generation system — section-scoped, flock-dependent templates, dedup", s:"done"},
+      { t:"Spot-check task system (/api/tasks/spot-check) + SpotCheckCompleteModal", s:"done"},
+      { t:"Statistical outlier alerts — 9 types", s:"done"},
+      { t:"PM Daily Summaries review page (/pen-manager/daily-summaries)", s:"done"}
+    ]},
+    { name:"Feed Requisition Workflow", tasks:[
+      { t:"Feed requisition 6-stage lifecycle — DRAFT→SUBMITTED→APPROVED→ISSUED→ACKNOWLEDGED→CLOSED", s:"done"},
+      { t:"Feed requisition: pen-level grouping, sectionBreakdown JSON, bags+kg display", s:"done"},
+      { t:"Feed requisitions page (/feed-requisitions) — role-aware tabs for PM/IC/Store", s:"done"}
+    ]},
+    { name:"Navigation & Profile", tasks:[
+      { t:"AppShell nav: Daily Summaries + Feed Requisitions wired, PEN_MANAGER removed from My Tasks", s:"done"},
       { t:"PM pending verifications panel — feed consumption visibility for PM", s:"done"},
-      { t:"Feed formula bags+kg display throughout (fmtBags helper)", s:"done"}
+      { t:"Feed formula bags+kg display throughout (fmtBags helper)", s:"done"},
+      { t:"Global search (components/ui/GlobalSearch.js, app/api/search/route.js)", s:"done"},
+      { t:"Notifications page (app/notifications/page.js, app/api/notifications/route.js)", s:"done"},
+      { t:"Profile / Avatar (app/profile/page.js, app/api/profile/)", s:"done"},
+      { t:"Investigation workflow (app/api/investigations/)", s:"done"}
     ]}
   ]},
 
@@ -353,21 +381,42 @@ const phases = [
     ]}
   ]},
 
+  // ── Phase 8C — correctly marked next, all tasks planned ──
   { id:"p8c", name:"Phase 8C · Brooding Module", phaseStatus:"next", groups:[
-    { name:"API & DB", tasks:[
-      { t:"New DB models: chick_arrivals, temperature_logs", s:"planned"},
-      { t:"POST /api/brooding/arrivals — log chick arrival, trigger task generation", s:"planned"},
-      { t:"POST /api/brooding/temperature — log temperature reading (task-linked)", s:"planned"},
-      { t:"GET /api/brooding/arrivals — active batches list", s:"planned"},
-      { t:"PATCH /api/brooding/arrivals/[id] — update or record transfer to production", s:"planned"},
-      { t:"GET /api/brooding/[id]/summary — full brooding period summary", s:"planned"}
+    { name:"DB Migration (SQL-first)", tasks:[
+      { t:"SQL: create chick_arrivals table — id, tenantId, flockId, arrivalDate, chicksReceived, supplier, batchCode, status (ACTIVE|TRANSFERRED|CLOSED), transferDate, transferWeight, chickCost, notes, createdAt, updatedAt", s:"planned"},
+      { t:"SQL: create temperature_logs table — id, tenantId, chickArrivalId, penSectionId, loggedAt, zone, tempCelsius, humidity, taskId (optional), loggedById, createdAt", s:"planned"},
+      { t:"npx prisma db pull → npx prisma generate (never edit schema.prisma directly)", s:"planned"}
     ]},
-    { name:"Task Templates", tasks:[
-      { t:"Auto-generated tasks on chick arrival (06:00, 07:00, 08:00, 12:00, 16:00, 17:00, 17:30)", s:"planned"}
+    { name:"API Routes (app/api/brooding/)", tasks:[
+      { t:"POST /api/brooding/arrivals — validate with Zod, create ChickArrival, auto-generate 8 daily Task records, return arrival + task count", s:"planned"},
+      { t:"GET /api/brooding/arrivals — list active batches for tenant, include section + flock + last temp reading", s:"planned"},
+      { t:"PATCH /api/brooding/arrivals/[id] — update status, record transfer (transferDate, transferWeight, survivingCount)", s:"planned"},
+      { t:"POST /api/brooding/temperature — log temp reading linked to chickArrivalId; if tempCelsius <26 or >38 auto-create Notification for PEN_MANAGER", s:"planned"},
+      { t:"GET /api/brooding/[id]/summary — full period: arrival info, daily temp chart data, early mortality rate (week 1 & 2), feed consumed, survival rate, cost per surviving chick", s:"planned"}
     ]},
-    { name:"KPIs & UI", tasks:[
-      { t:"Early mortality %, chick-to-transfer survival rate, cost per surviving chick", s:"planned"},
-      { t:"/brooding page — active batches, arrivals tab, temperature chart, transfer tab", s:"planned"}
+    { name:"Task Auto-Generation on Arrival", tasks:[
+      { t:"06:00 — FEEDING: Morning feed & water check", s:"planned"},
+      { t:"07:00 — MORTALITY_CHECK: Morning mortality check", s:"planned"},
+      { t:"08:00 — INSPECTION: Brooder temperature & humidity check", s:"planned"},
+      { t:"12:00 — FEEDING: Midday feed & water top-up", s:"planned"},
+      { t:"16:00 — FEEDING: Afternoon feed & water check", s:"planned"},
+      { t:"17:00 — MORTALITY_CHECK: Evening mortality count", s:"planned"},
+      { t:"17:30 — INSPECTION: Evening brooder temperature check", s:"planned"},
+      { t:"Task mapping uses existing Task model TaskType enum (nearest valid values)", s:"planned"}
+    ]},
+    { name:"Page & UI (app/brooding/page.js)", tasks:[
+      { t:"Roles: PEN_MANAGER, FARM_MANAGER, FARM_ADMIN, CHAIRPERSON (read + action); PEN_WORKER (read only)", s:"planned"},
+      { t:"Tab: Active Batches — card grid per batch (code, chicks in, days in brooder, survival rate, latest temp, status pill)", s:"planned"},
+      { t:"Tab: Arrivals — form (chicksReceived, supplier, batchCode, chickCost, date, pen section selector)", s:"planned"},
+      { t:"Tab: Temperature — Recharts LineChart avg temp/day per zone; range bands (28–35°C wk1, 26–32°C wk2, 24–30°C wk3+)", s:"planned"},
+      { t:"Tab: Transfer — ACTIVE batches with Transfer button → modal (transferDate, transferWeight, survivingCount) → PATCH /arrivals/[id]", s:"planned"}
+    ]},
+    { name:"KPIs & Navigation", tasks:[
+      { t:"Early mortality % — week 1 only, week 2 only, total brooding period", s:"planned"},
+      { t:"Chick-to-transfer survival rate", s:"planned"},
+      { t:"Cost per surviving chick (chickCost ÷ survivingCount)", s:"planned"},
+      { t:"Nav item 🐣 Brooding — visible when operationMode is LAYER_ONLY, BROILER_ONLY, or BOTH; positioned after Dashboard, before Performance", s:"planned"}
     ]}
   ]},
 
@@ -400,32 +449,40 @@ const phases = [
       { t:"public/manifest.json — standalone display, theme #6c63ff", s:"planned"},
       { t:"public/sw.js — offline caching, IndexedDB submission queue", s:"planned"},
       { t:"Web Push — 07:00 shift-start notification with pending task count", s:"planned"},
-      { t:"Connectivity indicator always visible", s:"planned"},
+      { t:"Connectivity indicator always visible (components/ui/ConnectivityBanner.js)", s:"planned"},
       { t:"Photo documentation on flagged observation tasks", s:"planned"},
       { t:"One-tap 'no issues' completion for observation tasks", s:"planned"}
     ]}
   ]},
 
+  // ── Rev 1.2 note: Phase 8G — code-based templates ARE done; DB model + admin UI still pending ──
+  // phaseStatus remains "active" — phase is partially shipped
   { id:"p8g", name:"Phase 8G · Worker Task Templates System", phaseStatus:"active", groups:[
-    { name:"Completed", tasks:[
-      { t:"Code-based daily/weekly task templates per operationType", s:"done"},
+    { name:"Completed (Shipped in 8B)", tasks:[
+      { t:"Code-based daily/weekly task templates per operationType (hardcoded in task generate route)", s:"done"},
       { t:"Section-scoped generation, deduplication per section+title", s:"done"},
-      { t:"Flock-dependent task filtering (FEEDING, EGG_COLLECTION, MORTALITY_CHECK skipped if no flock)", s:"done"},
-      { t:"isActive filter consistent across dashboard, generate, tasks routes", s:"done"}
+      { t:"Flock-dependent task filtering (FEEDING, EGG_COLLECTION, MORTALITY_CHECK skipped if no active flock)", s:"done"},
+      { t:"isActive filter — consistent across dashboard (no filter), generate route (isActive:true), tasks route (isActive:true)", s:"done"}
     ]},
-    { name:"Remaining", tasks:[
-      { t:"task_templates DB model (tenant-configurable templates per operation type)", s:"planned"},
-      { t:"Admin UI to edit task times, add/remove templates per tenant", s:"planned"},
-      { t:"±2 hour time window enforcement (configurable)", s:"planned"}
+    { name:"Remaining — DB-Backed Template System", tasks:[
+      { t:"SQL migration: task_templates table — id, tenantId, penSectionId (nullable), operationType, taskType, title, scheduledTime, dataEntryType, isDefault, isActive, createdAt, updatedAt", s:"planned"},
+      { t:"SQL migration: daily_tasks table — id, tenantId, penSectionId, assignedUserId, templateId, taskType, title, scheduledTime, dueDate, status, completedAt, completedBy, notes, dataPayload (Json), createdAt, updatedAt", s:"planned"},
+      { t:"Seed default templates from ROADMAP §8G (layer, broiler, brooding daily defaults)", s:"planned"},
+      { t:"GET/POST/PATCH /api/task-templates — tenant-configurable template management", s:"planned"},
+      { t:"GET /api/daily-tasks, POST /api/daily-tasks/complete — worker daily task feed", s:"planned"},
+      { t:"POST /api/cron/generate-tasks — midnight cron secured by CRON_SECRET header", s:"planned"},
+      { t:"Admin UI — edit task times, add/remove templates per tenant", s:"planned"},
+      { t:"±2 hour time window enforcement (configurable per tenant), LATE_COMPLETION flag", s:"planned"}
     ]}
   ]},
 
   { id:"p8h", name:"Phase 8H · Feed Management Refactor", phaseStatus:"planned", groups:[
     { name:"Features", tasks:[
       { t:"Phase-tagged feed types: LAYER_STARTER, LAYER_GROWER, LAYER_LAYER, BROILER_STARTER, BROILER_FINISHER, BROODING_STARTER", s:"planned"},
+      { t:"withdrawalDays column on FeedInventory (SQL migration)", s:"planned"},
       { t:"Feed inventory auto-filtered by active operation mode", s:"planned"},
-      { t:"Consumption logging pre-filled from task context", s:"planned"},
-      { t:"Withdrawal period tracking for BROILER_FINISHER (days before harvest)", s:"planned"}
+      { t:"Consumption logging pre-filled from task context (taskContext prop in WorkerFeedModal)", s:"planned"},
+      { t:"Withdrawal period tracking for BROILER_FINISHER — highlight red if today >= stop-use date", s:"planned"}
     ]}
   ]},
 
@@ -572,7 +629,7 @@ const phases = [
 // ─────────────────────────────────────────────────────────────────────────────
 // STATE
 // ─────────────────────────────────────────────────────────────────────────────
-const STORAGE_KEY = "pfp_tracker_v11";
+const STORAGE_KEY = "pfp_tracker_v12"; // bumped from v11 to reset on load
 let checkState = null; // [phaseIdx][groupIdx][taskIdx] = bool
 let activeFilter = "all";
 let allExpanded = false;

@@ -2,26 +2,18 @@
 // POST — generates daily or weekly tasks for all active pen sections
 //        assigned to workers on the current tenant.
 //
+// Phase 8C update: stage-aware template dispatch.
+//   BROODING stage → brooding-specific tasks (temp checks, no egg collection)
+//   REARING stage  → rearing tasks (weight recording weekly, grower feed, no eggs)
+//   PRODUCTION stage → existing behaviour (unchanged)
+//
 // Called automatically on first login of the day (by the worker/PM dashboard)
 // or manually by a Farm Manager.
 //
 // Body:
 //   { frequency: 'daily' | 'weekly', date?: 'YYYY-MM-DD' }
 //
-// Daily tasks (created each morning, once per section):
-//   FEEDING        — Morning feed round          (due 08:00)
-//   EGG_COLLECTION — Collect and count eggs      (due 10:00)
-//   MORTALITY_CHECK— Record any deaths           (due 11:00)
-//   FEEDING        — Evening feed round          (due 17:00)
-//   REPORT_SUBMISSION — Closing observation      (due 19:00)
-//
-// Weekly tasks (created on Monday or first login of the week, once per section):
-//   CLEANING       — Section deep clean          (due Friday 16:00)
-//   BIOSECURITY    — Footbath, disinfection check(due Wednesday 10:00)
-//   WEIGHT_RECORDING (broiler only) — Weigh sample (due Thursday 10:00)
-//   STORE_COUNT    — Count remaining feed bags   (due Friday 14:00)
-//
-// Idempotent: skips sections that already have tasks of that type today/this week.
+// Idempotent: skips sections that already have a task with the same title today/this week.
 
 import { NextResponse } from 'next/server';
 import { prisma }       from '@/lib/db/prisma';
@@ -32,7 +24,7 @@ const ALLOWED_ROLES = [
   'CHAIRPERSON', 'SUPER_ADMIN',
 ];
 
-// ── Due-time helper: given a base date and HH:MM, returns a full Date ─────────
+// ── Due-time helper ───────────────────────────────────────────────────────────
 function dueAt(baseDate, hhMM) {
   const [h, m] = hhMM.split(':').map(Number);
   const d = new Date(baseDate);
@@ -40,7 +32,109 @@ function dueAt(baseDate, hhMM) {
   return d;
 }
 
-// ── Daily task templates ───────────────────────────────────────────────────────
+// ── Stage-aware daily template dispatcher ─────────────────────────────────────
+function dailyTemplatesForStage(date, opType, stage) {
+  if (stage === 'BROODING') return dailyTemplatesBrooding(date, opType);
+  if (stage === 'REARING')  return dailyTemplatesRearing(date);
+  return dailyTemplates(date, opType); // PRODUCTION — original behaviour
+}
+
+// ── Brooding daily templates ──────────────────────────────────────────────────
+function dailyTemplatesBrooding(date, opType) {
+  const isBroiler = opType === 'BROILER';
+  const templates = [
+    {
+      taskType: 'FEEDING',
+      title:    '🍽️ Morning Feed & Water Check',
+      description: 'Check feeders and drinkers. Top up chick starter feed. Ensure all chicks can access feed and water.',
+      dueTime: '06:00', priority: 'HIGH',
+    },
+    {
+      taskType: 'MORTALITY_CHECK',
+      title:    '💀 Morning Mortality Check',
+      description: 'Walk the brooder and remove dead chicks. Record count and cause in mortality log.',
+      dueTime: '07:00', priority: 'HIGH',
+    },
+    {
+      taskType:    'INSPECTION',
+      title:       isBroiler
+        ? '🛡️ Brooder Temperature & Tarpaulin Check'
+        : '🌡️ Brooder Temperature & Humidity Check',
+      description: isBroiler
+        ? 'Record brooder temperature. Check tarpaulins are secure and heat sources operational.'
+        : 'Record temperature and humidity in all zones. Alert manager if outside 26–38°C.',
+      dueTime: '08:00', priority: 'HIGH',
+    },
+    {
+      taskType: 'FEEDING',
+      title:    '🍽️ Midday Feed & Water Top-up',
+      description: 'Check and top up feed and water at midday.',
+      dueTime: '12:00', priority: 'NORMAL',
+    },
+    {
+      taskType: 'FEEDING',
+      title:    '🍽️ Afternoon Feed & Water Check',
+      description: 'Afternoon feed round. Record any observations on feed intake.',
+      dueTime: '16:00', priority: 'NORMAL',
+    },
+    {
+      taskType: 'MORTALITY_CHECK',
+      title:    '💀 Evening Mortality Count',
+      description: 'Evening mortality check. Record count and cause in mortality log.',
+      dueTime: '17:00', priority: 'HIGH',
+    },
+    {
+      taskType:    'INSPECTION',
+      title:       isBroiler
+        ? '🌡️ Evening Heat Source Check'
+        : '🌡️ Evening Brooder Temperature Check',
+      description: isBroiler
+        ? 'Check heat sources and brooder guards. Ensure temperature is stable for the night.'
+        : 'Record evening temperature. Adjust brooder guards to correct position.',
+      dueTime: '17:30', priority: 'NORMAL',
+    },
+    {
+      taskType: 'REPORT_SUBMISSION',
+      title:    '📋 Brooding Daily Report',
+      description: 'End-of-day brooding report: total mortality, feed bags used, temperature range, observations.',
+      dueTime: '19:00', priority: 'NORMAL',
+    },
+  ];
+  return templates.map(t => ({ ...t, dueDate: dueAt(date, t.dueTime) }));
+}
+
+// ── Rearing daily templates (LAYER REARING stage) ────────────────────────────
+function dailyTemplatesRearing(date) {
+  const templates = [
+    {
+      taskType: 'FEEDING',
+      title:    '🍽️ Morning Feed Round (Grower Mash)',
+      description: 'Distribute morning grower mash to all birds. Record bags used and remaining in feed log.',
+      dueTime: '08:00', priority: 'NORMAL',
+    },
+    {
+      taskType: 'MORTALITY_CHECK',
+      title:    '💀 Mortality Check',
+      description: 'Walk the section. Remove any dead birds. Record count and cause in mortality log.',
+      dueTime: '11:00', priority: 'NORMAL',
+    },
+    {
+      taskType: 'FEEDING',
+      title:    '🍽️ Evening Feed Round',
+      description: 'Evening grower mash distribution. Log feed consumption.',
+      dueTime: '17:00', priority: 'NORMAL',
+    },
+    {
+      taskType: 'REPORT_SUBMISSION',
+      title:    '📋 Rearing Daily Report',
+      description: 'Daily summary: feed consumed, mortality, water consumption, general flock observations.',
+      dueTime: '19:00', priority: 'NORMAL',
+    },
+  ];
+  return templates.map(t => ({ ...t, dueDate: dueAt(date, t.dueTime) }));
+}
+
+// ── Production daily templates (original — PRODUCTION stage) ──────────────────
 function dailyTemplates(date, opType) {
   const templates = [
     {
@@ -85,12 +179,71 @@ function dailyTemplates(date, opType) {
   }));
 }
 
-// ── Weekly task templates ──────────────────────────────────────────────────────
+// ── Stage-aware weekly template dispatcher ────────────────────────────────────
+function weeklyTemplatesForStage(weekStart, opType, stage) {
+  if (stage === 'BROODING') return weeklyTemplatesBrooding(weekStart);
+  if (stage === 'REARING')  return weeklyTemplatesRearing(weekStart);
+  return weeklyTemplates(weekStart, opType); // PRODUCTION
+}
+
+// ── Brooding weekly templates ─────────────────────────────────────────────────
+function weeklyTemplatesBrooding(weekStart) {
+  const wed = new Date(weekStart); wed.setDate(wed.getDate() + 2);
+  const fri = new Date(weekStart); fri.setDate(fri.getDate() + 4);
+  return [
+    {
+      taskType: 'CLEANING',
+      title:    '🧹 Brooder Section Clean',
+      description: 'Remove wet litter, replace with fresh dry litter. Clean drinkers and feeders thoroughly.',
+      dueDate: dueAt(fri, '15:00'), priority: 'HIGH',
+    },
+    {
+      taskType: 'BIOSECURITY',
+      title:    '🛡️ Biosecurity & Brooder Guard Check',
+      description: 'Check footbath disinfectant. Inspect brooder guard integrity. Verify no draughts or cold spots.',
+      dueDate: dueAt(wed, '10:00'), priority: 'NORMAL',
+    },
+  ];
+}
+
+// ── Rearing weekly templates ──────────────────────────────────────────────────
+function weeklyTemplatesRearing(weekStart) {
+  const wed = new Date(weekStart); wed.setDate(wed.getDate() + 2);
+  const thu = new Date(weekStart); thu.setDate(thu.getDate() + 3);
+  const fri = new Date(weekStart); fri.setDate(fri.getDate() + 4);
+  return [
+    {
+      taskType: 'WEIGHT_RECORDING',
+      title:    '⚖️ Weekly Pullet Weigh-In',
+      description: 'Randomly select and weigh at least 30 birds. Record average, min, and max weights. Calculate uniformity %. Compare against breed target weight for this week.',
+      dueDate: dueAt(thu, '10:00'), priority: 'HIGH',
+    },
+    {
+      taskType: 'CLEANING',
+      title:    '🧹 Section Deep Clean',
+      description: 'Sweep all aisles, clean feeders and drinkers, remove manure buildup.',
+      dueDate: dueAt(fri, '16:00'), priority: 'NORMAL',
+    },
+    {
+      taskType: 'BIOSECURITY',
+      title:    '🛡️ Biosecurity Check',
+      description: 'Check and refresh footbath disinfectant. Inspect all entry points. Verify pest control bait stations.',
+      dueDate: dueAt(wed, '10:00'), priority: 'NORMAL',
+    },
+    {
+      taskType: 'STORE_COUNT',
+      title:    '📦 Feed Bag Count',
+      description: 'Count remaining grower mash bags. Compare against system records. Report any discrepancies to Pen Manager.',
+      dueDate: dueAt(fri, '14:00'), priority: 'NORMAL',
+    },
+  ];
+}
+
+// ── Production weekly templates (original) ────────────────────────────────────
 function weeklyTemplates(weekStart, opType) {
-  // weekStart = Monday of the current week
-  const wed = new Date(weekStart); wed.setDate(wed.getDate() + 2); // Wednesday
-  const thu = new Date(weekStart); thu.setDate(thu.getDate() + 3); // Thursday
-  const fri = new Date(weekStart); fri.setDate(fri.getDate() + 4); // Friday
+  const wed = new Date(weekStart); wed.setDate(wed.getDate() + 2);
+  const thu = new Date(weekStart); thu.setDate(thu.getDate() + 3);
+  const fri = new Date(weekStart); fri.setDate(fri.getDate() + 4);
 
   const templates = [
     {
@@ -129,8 +282,8 @@ function weeklyTemplates(weekStart, opType) {
 function getWeekStart(date) {
   const d = new Date(date);
   d.setHours(0, 0, 0, 0);
-  const day = d.getDay(); // 0=Sun, 1=Mon...
-  const diff = day === 0 ? -6 : 1 - day; // adjust to Monday
+  const day = d.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
   d.setDate(d.getDate() + diff);
   return d;
 }
@@ -157,13 +310,8 @@ export async function POST(request) {
     const weekStart = getWeekStart(baseDate);
 
     // ── Fetch all active sections with their assigned workers ─────────────────
-    // Scope: workers only see their own sections; managers see all
     const sectionFilter = ['PEN_WORKER', 'PEN_MANAGER'].includes(user.role)
-      ? {
-          workerAssignments: {
-            some: { userId: user.sub, isActive: true },
-          },
-        }
+      ? { workerAssignments: { some: { userId: user.sub, isActive: true } } }
       : {};
 
     const sections = await prisma.penSection.findMany({
@@ -176,7 +324,7 @@ export async function POST(request) {
         pen: { select: { operationType: true, name: true } },
         flocks: {
           where:  { status: 'ACTIVE' },
-          select: { id: true },
+          select: { id: true, stage: true },  // ← now includes stage
           take:   1,
         },
         workerAssignments: {
@@ -192,33 +340,32 @@ export async function POST(request) {
     let skipped = 0;
 
     for (const section of sections) {
-      const opType         = section.pen.operationType; // 'LAYER' | 'BROILER'
+      const opType         = section.pen.operationType;
       const hasActiveFlock = section.flocks?.length > 0;
+      const flockStage     = section.flocks?.[0]?.stage || 'PRODUCTION';
 
-      // Find all active workers assigned to this section
       const workers = section.workerAssignments
         .map(a => a.user)
         .filter(u => u.isActive && ['PEN_WORKER', 'PEN_MANAGER'].includes(u.role));
 
       if (workers.length === 0) { skipped++; continue; }
 
-      // One worker gets assigned per task — the first active PEN_WORKER, or PM if none
       const primaryWorker = workers.find(u => u.role === 'PEN_WORKER') || workers[0];
 
-      // Flock-dependent task types — only generated when an active flock exists
+      // Flock-dependent task types — skip these if no active flock exists
       const FLOCK_REQUIRED = ['FEEDING', 'EGG_COLLECTION', 'MORTALITY_CHECK', 'WEIGHT_RECORDING'];
 
       if (frequency === 'daily') {
-        const templates = dailyTemplates(baseDate, opType)
+        // Use stage-aware dispatcher
+        const templates = dailyTemplatesForStage(baseDate, opType, flockStage)
           .filter(t => hasActiveFlock || !FLOCK_REQUIRED.includes(t.taskType));
 
-        // Check which task types already have tasks today for this section
         const existingToday = await prisma.task.findMany({
           where: {
-            tenantId:    user.tenantId,
-            penSectionId:section.id,
-            dueDate:     { gte: baseDate, lt: new Date(baseDate.getTime() + 86400000) },
-            status:      { not: 'CANCELLED' },
+            tenantId:     user.tenantId,
+            penSectionId: section.id,
+            dueDate:      { gte: baseDate, lt: new Date(baseDate.getTime() + 86400000) },
+            status:       { not: 'CANCELLED' },
           },
           select: { taskType: true, title: true },
         });
@@ -230,17 +377,17 @@ export async function POST(request) {
 
           await prisma.task.create({
             data: {
-              tenantId:     user.tenantId,
-              penSectionId: section.id,
-              assignedToId: primaryWorker.id,
-              createdById:  user.sub,
-              taskType:     tmpl.taskType,
-              title:        tmpl.title,
-              description:  tmpl.description,
-              dueDate:      tmpl.dueDate,
-              priority:     tmpl.priority,
-              status:       'PENDING',
-              isRecurring:  true,
+              tenantId:       user.tenantId,
+              penSectionId:   section.id,
+              assignedToId:   primaryWorker.id,
+              createdById:    user.sub,
+              taskType:       tmpl.taskType,
+              title:          tmpl.title,
+              description:    tmpl.description,
+              dueDate:        tmpl.dueDate,
+              priority:       tmpl.priority,
+              status:         'PENDING',
+              isRecurring:    true,
               recurrenceRule: 'DAILY',
             },
           });
@@ -249,20 +396,20 @@ export async function POST(request) {
       }
 
       if (frequency === 'weekly') {
-        const templates = weeklyTemplates(weekStart, opType)
+        // Use stage-aware weekly dispatcher
+        const templates = weeklyTemplatesForStage(weekStart, opType, flockStage)
           .filter(t => hasActiveFlock || !FLOCK_REQUIRED.includes(t.taskType));
 
-        // Check which weekly tasks already exist this week for this section
         const weekEnd = new Date(weekStart);
         weekEnd.setDate(weekEnd.getDate() + 7);
 
         const existingWeek = await prisma.task.findMany({
           where: {
-            tenantId:    user.tenantId,
-            penSectionId:section.id,
-            dueDate:     { gte: weekStart, lt: weekEnd },
-            status:      { not: 'CANCELLED' },
-            isRecurring: true,
+            tenantId:       user.tenantId,
+            penSectionId:   section.id,
+            dueDate:        { gte: weekStart, lt: weekEnd },
+            status:         { not: 'CANCELLED' },
+            isRecurring:    true,
             recurrenceRule: 'WEEKLY',
           },
           select: { taskType: true, title: true },
@@ -275,17 +422,17 @@ export async function POST(request) {
 
           await prisma.task.create({
             data: {
-              tenantId:     user.tenantId,
-              penSectionId: section.id,
-              assignedToId: primaryWorker.id,
-              createdById:  user.sub,
-              taskType:     tmpl.taskType,
-              title:        tmpl.title,
-              description:  tmpl.description,
-              dueDate:      tmpl.dueDate,
-              priority:     tmpl.priority,
-              status:       'PENDING',
-              isRecurring:  true,
+              tenantId:       user.tenantId,
+              penSectionId:   section.id,
+              assignedToId:   primaryWorker.id,
+              createdById:    user.sub,
+              taskType:       tmpl.taskType,
+              title:          tmpl.title,
+              description:    tmpl.description,
+              dueDate:        tmpl.dueDate,
+              priority:       tmpl.priority,
+              status:         'PENDING',
+              isRecurring:    true,
               recurrenceRule: 'WEEKLY',
             },
           });
@@ -296,9 +443,10 @@ export async function POST(request) {
 
     console.log(`[tasks/generate] ${frequency}: ${sections.length} sections found, ${created} created, ${skipped} skipped`);
     sections.forEach(s => {
-      const hasFlock = s.flocks?.length > 0;
+      const hasFlock   = s.flocks?.length > 0;
+      const flockStage = s.flocks?.[0]?.stage || 'PRODUCTION';
       const workerCount = s.workerAssignments?.length ?? 0;
-      console.log(`  Section: ${s.id} | flock:${hasFlock} | workers:${workerCount} | pen:${s.pen?.name}`);
+      console.log(`  Section: ${s.id} | stage:${flockStage} | flock:${hasFlock} | workers:${workerCount} | pen:${s.pen?.name}`);
     });
 
     return NextResponse.json({
@@ -314,9 +462,9 @@ export async function POST(request) {
   }
 }
 
-// ── GET /api/tasks/generate — check if tasks need generating today/this week ──
-// Returns { dailyGenerated: bool, weeklyGenerated: bool } so the UI can decide
-// whether to trigger generation on login.
+// ── GET /api/tasks/generate ───────────────────────────────────────────────────
+// Returns { dailyGenerated, weeklyGenerated } so the UI can decide whether to
+// trigger generation on login.
 export async function GET(request) {
   const user = await verifyToken(request);
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -331,20 +479,20 @@ export async function GET(request) {
   const [dailyCount, weeklyCount] = await Promise.all([
     prisma.task.count({
       where: {
-        tenantId:  user.tenantId,
-        dueDate:   { gte: today, lt: tomorrow },
-        isRecurring: true,
+        tenantId:       user.tenantId,
+        dueDate:        { gte: today, lt: tomorrow },
+        isRecurring:    true,
         recurrenceRule: 'DAILY',
-        status:    { not: 'CANCELLED' },
+        status:         { not: 'CANCELLED' },
       },
     }),
     prisma.task.count({
       where: {
-        tenantId:  user.tenantId,
-        dueDate:   { gte: weekStart, lt: weekEnd },
-        isRecurring: true,
+        tenantId:       user.tenantId,
+        dueDate:        { gte: weekStart, lt: weekEnd },
+        isRecurring:    true,
         recurrenceRule: 'WEEKLY',
-        status:    { not: 'CANCELLED' },
+        status:         { not: 'CANCELLED' },
       },
     }),
   ]);

@@ -4,6 +4,10 @@ import AppShell from '@/components/layout/AppShell';
 import { useAuth } from '@/components/layout/AuthProvider';
 import PortalModal from '@/components/ui/Modal';
 
+const PURPOSE_LABEL = { PRODUCTION: 'Production', BROODING: 'Brooding', GENERAL: 'General' };
+const PURPOSE_COLOR = { PRODUCTION: '#64748b', BROODING: '#f59e0b', GENERAL: '#94a3b8' };
+const PURPOSE_BG    = { PRODUCTION: '#f1f5f9', BROODING: '#fffbeb', GENERAL: '#f8fafc' };
+
 const OP_COLOR = { LAYER:'#f59e0b', BROILER:'#3b82f6', BREEDER:'#8b5cf6', TURKEY:'#22c55e' };
 const OP_ICON  = { LAYER:'🥚', BROILER:'🍗', BREEDER:'🔄', TURKEY:'🦃' };
 const OP_LABEL = { LAYER:'Layer', BROILER:'Broiler', BREEDER:'Breeder', TURKEY:'Turkey' };
@@ -70,6 +74,39 @@ function BroilerMetrics({ mx, compact=false }) {
   );
 }
 
+function BroodingMetrics({ mx, compact=false }) {
+  if (!mx) return null;
+  const tempVal = mx.latestBrooderTemp != null ? Number(mx.latestBrooderTemp) : null;
+  const tempColor = tempVal == null ? 'var(--text-muted)'
+    : (tempVal < 26 || tempVal > 38) ? '#ef4444'
+    : (tempVal < 28 || tempVal > 35) ? '#f59e0b' : '#22c55e';
+  return (
+    <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
+      <Chip icon="💀" value={mx.todayMortality}   sub="Dead today"  warn={mx.todayMortality > 5}  small={compact} />
+      <Chip icon="📉" value={`${mx.mortalityRate ?? 0}%`} sub="7d mort."  warn={(mx.mortalityRate||0) > 2} small={compact} />
+      <Chip icon="🌡️" value={tempVal != null ? `${tempVal.toFixed(1)}°C` : '—'}
+            sub="Brooder temp" color={tempColor} small={compact} />
+      <Chip icon="🌾" value={`${mx.avgDailyFeedKg ?? 0}kg`} sub="Feed/day" small={compact} />
+    </div>
+  );
+}
+
+function RearingMetrics({ mx, compact=false }) {
+  if (!mx) return null;
+  const fcrColor = mx.estimatedFCR
+    ? mx.estimatedFCR > 3.5 ? '#ef4444' : mx.estimatedFCR > 2.5 ? '#f59e0b' : '#22c55e'
+    : 'var(--text-muted)';
+  return (
+    <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
+      <Chip icon="💀" value={mx.todayMortality}   sub="Dead today"  warn={mx.todayMortality > 5}  small={compact} />
+      <Chip icon="📉" value={`${mx.mortalityRate ?? 0}%`} sub="7d mort."  warn={(mx.mortalityRate||0) > 1} small={compact} />
+      <Chip icon="⚖️" value={mx.latestWeightG ? `${mx.latestWeightG}g` : '—'} sub="Avg weight" color="#6c63ff" small={compact} />
+      <Chip icon="🔄" value={mx.estimatedFCR ?? '—'} sub="Rearing FCR" color={fcrColor} small={compact} />
+      <Chip icon="🌾" value={`${mx.avgDailyFeedKg ?? 0}kg`} sub="Feed/day" small={compact} />
+    </div>
+  );
+}
+
 function SectionCard({ section, penType, canManage, onEdit, onAssign }) {
   const occ   = section.occupancyPct || 0;
   const color = OP_COLOR[penType];
@@ -107,8 +144,10 @@ function SectionCard({ section, penType, canManage, onEdit, onAssign }) {
       )}
       {flock && mx && (
         <div style={{ marginTop:10 }}>
-          {mx.type === 'LAYER'   && <LayerMetrics   mx={mx} compact />}
-          {mx.type === 'BROILER' && <BroilerMetrics mx={mx} compact />}
+          {mx.stage === 'BROODING' && <BroodingMetrics mx={mx} compact />}
+          {mx.stage === 'REARING'  && <RearingMetrics  mx={mx} compact />}
+          {(mx.stage === 'PRODUCTION' || !mx.stage) && mx.type === 'LAYER'   && <LayerMetrics   mx={mx} compact />}
+          {(mx.stage === 'PRODUCTION' || !mx.stage) && mx.type === 'BROILER' && <BroilerMetrics mx={mx} compact />}
         </div>
       )}
       {section.workers.length > 0 && (
@@ -149,6 +188,115 @@ function SectionCard({ section, penType, canManage, onEdit, onAssign }) {
   );
 }
 
+// ── Pen Archive / Delete Confirmation Modal ───────────────────────────────────
+function PenArchiveModal({ pen, action, onClose, onSuccess, apiFetch }) {
+  const [confirmName, setConfirmName] = useState('');
+  const [saving,      setSaving]      = useState(false);
+  const [error,       setError]       = useState('');
+
+  const isDelete  = action === 'delete';
+  const nameMatch = confirmName.trim() === pen.name.trim();
+
+  async function handleSubmit() {
+    if (isDelete && !nameMatch)
+      return setError(`Type the pen name exactly: "${pen.name}"`);
+    setSaving(true); setError('');
+    try {
+      const res = await apiFetch(
+        `/api/farm-structure?type=pen&id=${pen.id}&action=${action}`,
+        { method: 'DELETE' }
+      );
+      const d = await res.json();
+      if (!res.ok) return setError(d.detail || d.error || 'Failed');
+      onSuccess(d.message);
+    } catch { setError('Network error'); }
+    setSaving(false);
+  }
+
+  return (
+    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.5)', display:'flex',
+      alignItems:'center', justifyContent:'center', zIndex:600, padding:16 }}
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div style={{ background:'#fff', borderRadius:14, width:'100%', maxWidth:460,
+        boxShadow:'0 8px 40px rgba(0,0,0,.2)', overflow:'hidden' }}>
+        {/* Header */}
+        <div style={{ padding:'18px 20px 14px', borderBottom:'1px solid var(--border)',
+          background: isDelete ? '#fef2f2' : '#fffbeb' }}>
+          <div style={{ fontWeight:700, fontSize:15, color: isDelete?'#991b1b':'#92400e' }}>
+            {isDelete ? '🗑 Permanently Delete Pen' : '📦 Archive Pen'}
+          </div>
+          <div style={{ fontSize:12, color:'var(--text-muted)', marginTop:3 }}>
+            {pen.name} · {pen.operationType}
+          </div>
+        </div>
+        <div style={{ padding:20 }}>
+          {error && (
+            <div style={{ background:'#fef2f2', border:'1px solid #fecaca', borderRadius:8,
+              padding:'10px 14px', fontSize:13, color:'#dc2626', marginBottom:14 }}>
+              ⚠ {error}
+            </div>
+          )}
+
+          {isDelete ? (
+            <>
+              <div style={{ background:'#fef2f2', border:'1px solid #fecaca', borderRadius:8,
+                padding:'12px 14px', fontSize:13, color:'#991b1b', marginBottom:16, lineHeight:1.6 }}>
+                <strong>This cannot be undone.</strong> The pen and all its sections will be
+                permanently removed. This is only allowed for pens with no flock history.
+              </div>
+              <div style={{ marginBottom:16 }}>
+                <label style={{ display:'block', fontSize:12, fontWeight:700, color:'var(--text-muted)',
+                  textTransform:'uppercase', letterSpacing:'.05em', marginBottom:6 }}>
+                  Type the pen name to confirm
+                </label>
+                <input
+                  value={confirmName}
+                  onChange={e => setConfirmName(e.target.value)}
+                  placeholder={pen.name}
+                  style={{ width:'100%', padding:'9px 12px', border:'1.5px solid #fecaca',
+                    borderRadius:8, fontSize:14, outline:'none', boxSizing:'border-box' }}
+                />
+                {confirmName.length > 0 && !nameMatch && (
+                  <div style={{ fontSize:11, color:'#dc2626', marginTop:4 }}>
+                    Name doesn't match — must be exact
+                  </div>
+                )}
+              </div>
+            </>
+          ) : (
+            <div style={{ background:'#fffbeb', border:'1px solid #fde68a', borderRadius:8,
+              padding:'12px 14px', fontSize:13, color:'#92400e', marginBottom:16, lineHeight:1.6 }}>
+              This pen will be hidden from Farm Structure and all active workflows.
+              All historical records (flocks, feed, eggs, mortality) are preserved.
+              You can contact your Super Admin to unarchive if needed.
+            </div>
+          )}
+
+          <div style={{ display:'flex', gap:10 }}>
+            <button onClick={onClose}
+              style={{ flex:1, padding:'9px', borderRadius:8, border:'1.5px solid var(--border)',
+                background:'#fff', fontWeight:600, fontSize:13, cursor:'pointer', color:'var(--text-secondary)' }}>
+              Cancel
+            </button>
+            <button
+              onClick={handleSubmit}
+              disabled={saving || (isDelete && !nameMatch)}
+              style={{ flex:2, padding:'9px', borderRadius:8, border:'none',
+                background: saving || (isDelete && !nameMatch)
+                  ? '#e2e8f0'
+                  : isDelete ? '#dc2626' : '#d97706',
+                color: saving || (isDelete && !nameMatch) ? '#94a3b8' : '#fff',
+                fontWeight:700, fontSize:13,
+                cursor: saving || (isDelete && !nameMatch) ? 'not-allowed' : 'pointer' }}>
+              {saving ? 'Processing…' : isDelete ? 'Delete Permanently' : 'Archive Pen'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PenSummaryMetrics({ pen }) {
   const totBirds = pen.sections.reduce((s, sec) => s + (sec.currentBirds || 0), 0);
   const totCap   = pen.sections.reduce((s, sec) => s + (sec.capacity || 0), 0);
@@ -164,9 +312,12 @@ function PenSummaryMetrics({ pen }) {
   );
 }
 
-function PenCard({ pen, canManage, onEditPen, onEditSection, onAddSection, onAssignWorkers, onAssignPenManager }) {
+function PenCard({ pen, canManage, userRole, onEditPen, onEditSection, onAddSection, onAssignWorkers, onAssignPenManager, onArchivePen, onDeletePen }) {
   const [expanded, setExpanded] = useState(false);
-  const color = OP_COLOR[pen.operationType];
+  const color       = OP_COLOR[pen.operationType];
+  const canArchive  = ['FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN'].includes(userRole);
+  const canDelete   = userRole === 'SUPER_ADMIN';
+  const hasHistory  = (pen.sections || []).some(s => (s._count?.flocks || 0) > 0);
   return (
     <div style={{ background:'#fff', border:'1.5px solid var(--border)', borderRadius:12, marginBottom:16, overflow:'hidden' }}>
       <div
@@ -180,8 +331,27 @@ function PenCard({ pen, canManage, onEditPen, onEditSection, onAddSection, onAss
           </div>
           <div style={{ minWidth:0 }}>
             <div style={{ fontWeight:700, fontSize:14, whiteSpace:'nowrap' }}>{pen.name}</div>
-            <div style={{ fontSize:11, color:'var(--text-muted)', marginTop:1 }}>
+            <div style={{ fontSize:11, color:'var(--text-muted)', marginTop:1, display:'flex', alignItems:'center', gap:6 }}>
               {pen.sectionCount} section{pen.sectionCount !== 1 ? 's' : ''} · {pen.operationType}
+              {pen.penPurpose && pen.penPurpose !== 'GENERAL' && (
+                <span style={{
+                  fontSize: 10, fontWeight: 700, borderRadius: 10, padding: '1px 7px',
+                  background: pen.penPurpose === 'BROODING'   ? '#fffbeb'
+                            : pen.penPurpose === 'PRODUCTION' ? '#f0fdf4'
+                            : '#eff6ff',
+                  color:     pen.penPurpose === 'BROODING'   ? '#92400e'
+                            : pen.penPurpose === 'PRODUCTION' ? '#166534'
+                            : '#1e40af',
+                  border: `1px solid ${
+                    pen.penPurpose === 'BROODING'   ? '#fde68a'
+                  : pen.penPurpose === 'PRODUCTION' ? '#bbf7d0'
+                  : '#bfdbfe'}`,
+                }}>
+                  {pen.penPurpose === 'BROODING'   ? '🐣 Brooding'
+                 : pen.penPurpose === 'PRODUCTION' ? '🏭 Production'
+                 : pen.penPurpose}
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -193,9 +363,9 @@ function PenCard({ pen, canManage, onEditPen, onEditSection, onAddSection, onAss
           return (
             <div style={{ display:'flex', alignItems:'center', gap:16, flexShrink:0 }}>
               {[
-                { val: totBirds.toLocaleString(), lbl: 'Live Birds',  color: OP_COLOR[pen.operationType] },
-                { val: `${occ}%`,                  lbl: 'Occupied',   color: occColor(occ) },
-                { val: totCap.toLocaleString(),    lbl: 'Capacity',   color: 'var(--text-primary)' },
+                { val: totBirds.toLocaleString(),                          lbl: 'Live Birds', color: OP_COLOR[pen.operationType] },
+              { val: `${occ}%`,                                          lbl: 'Occupied',   color: occColor(occ) },
+              { val: (pen.capacity || 0).toLocaleString(),               lbl: 'Capacity',   color: 'var(--text-primary)' },
               ].map(s => (
                 <div key={s.lbl} style={{ textAlign:'center' }}>
                   <div style={{ fontFamily:"'Poppins',sans-serif", fontSize:14, fontWeight:700, color:s.color, lineHeight:1, whiteSpace:'nowrap' }}>{s.val}</div>
@@ -210,6 +380,24 @@ function PenCard({ pen, canManage, onEditPen, onEditSection, onAddSection, onAss
                     onClick={e => { e.stopPropagation(); onAssignPenManager(pen); }}>
                     👷 Pen Manager
                   </button>
+                  {canArchive && (
+                    <button
+                      onClick={e => { e.stopPropagation(); onArchivePen(pen); }}
+                      style={{ padding:'4px 10px', fontSize:11, borderRadius:6,
+                        border:'1px solid #fde68a', background:'#fffbeb', color:'#92400e',
+                        fontWeight:600, cursor:'pointer', display:'inline-flex', alignItems:'center', gap:4 }}>
+                      📦 Archive
+                    </button>
+                  )}
+                  {canDelete && !hasHistory && (
+                    <button
+                      onClick={e => { e.stopPropagation(); onDeletePen(pen); }}
+                      style={{ padding:'4px 10px', fontSize:11, borderRadius:6,
+                        border:'1px solid #fecaca', background:'#fef2f2', color:'#dc2626',
+                        fontWeight:600, cursor:'pointer', display:'inline-flex', alignItems:'center', gap:4 }}>
+                      🗑 Delete
+                    </button>
+                  )}
                 </div>
               )}
               <span style={{ color:'var(--text-faint)', fontSize:14, transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)', transition:'transform 0.2s' }}>›</span>
@@ -220,6 +408,20 @@ function PenCard({ pen, canManage, onEditPen, onEditSection, onAddSection, onAss
       {expanded && (
         <div style={{ padding:14 }}>
           <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(210px, 1fr))', gap:10 }}>
+            {pen.sections.length === 0 && (
+              <div style={{ gridColumn:'1/-1', padding:'20px 16px', textAlign:'center',
+                background:'#f8fafc', borderRadius:10, border:'1.5px dashed #e2e8f0' }}>
+                <div style={{ fontSize:13, color:'var(--text-muted)', marginBottom:8 }}>
+                  No sections yet — capacity will show once sections are added.
+                </div>
+                {canManage && (
+                  <button className="btn btn-primary" style={{ fontSize:12, padding:'6px 16px' }}
+                    onClick={() => onAddSection(pen)}>
+                    + Add First Section
+                  </button>
+                )}
+              </div>
+            )}
             {pen.sections.map(sec => (
               <SectionCard key={sec.id} section={sec} penType={pen.operationType} canManage={canManage}
                 onEdit={() => onEditSection(sec, pen)}
@@ -395,16 +597,18 @@ function FarmModal({ mode, farm, managers, onClose, onSave }) {
 
 // ── Pen modal ─────────────────────────────────────────────────────────────────
 function PenModal({ mode, pen, farmId, farmName, onClose, onSave }) {
-  const [f, setF]       = useState({ name:pen?.name||'', operationType:pen?.operationType||'LAYER', capacity:pen?.totalCapacity||pen?.capacity||'', location:pen?.location||'', buildYear:pen?.buildYear||'' });
+  const [f, setF]       = useState({ name:pen?.name||'', operationType:pen?.operationType||'LAYER', penPurpose:pen?.penPurpose||'', capacity:pen?.totalCapacity||pen?.capacity||'', location:pen?.location||'', buildYear:pen?.buildYear||'' });
   const [saving, setSaving] = useState(false);
   const [error,  setError]  = useState('');
   const up = (k, v) => setF(p => ({ ...p, [k]:v }));
 
   async function save() {
-    if (!f.name.trim() || !f.capacity) return setError('Name and capacity required');
+    if (!f.name.trim() || !f.capacity || !f.penPurpose) return setError('Name, capacity, and pen purpose are required');
     setSaving(true); setError('');
     try {
-      const body = mode === 'edit' ? { id:pen.id, name:f.name, capacity:f.capacity, location:f.location, buildYear:f.buildYear } : { farmId, ...f };
+      const body = mode === 'edit'
+        ? { id:pen.id, name:f.name, penPurpose:f.penPurpose, capacity:f.capacity, location:f.location, buildYear:f.buildYear }
+        : { farmId, ...f };
       const res  = await fetch('/api/farm-structure?type=pen', { method: mode==='edit' ? 'PATCH':'POST', headers:{'Content-Type':'application/json'}, credentials:'include', body:JSON.stringify(body) });
       const d    = await res.json();
       if (!res.ok) return setError(d.error || 'Failed');
@@ -438,8 +642,17 @@ function PenModal({ mode, pen, farmId, farmName, onClose, onSave }) {
             </select>
             {mode === 'edit' && <div style={{ fontSize:10, color:'var(--text-muted)', marginTop:3 }}>Cannot change with active flocks</div>}
           </F>
-          <F label="Capacity *"><input className="input" type="number" value={f.capacity} onChange={e=>up('capacity',e.target.value)} placeholder="10000" min="1"/></F>
+        <F label="Capacity *"><input className="input" type="number" value={f.capacity} onChange={e=>up('capacity',e.target.value)} placeholder="10000" min="1"/></F>
         </G2>
+        <F label="Pen Purpose *">
+          <select className="input" value={f.penPurpose} onChange={e=>up('penPurpose',e.target.value)}>
+            <option value="">— Select purpose —</option>
+            <option value="PRODUCTION">🏭 Production — birds grow / lay here permanently</option>
+            <option value="BROODING">🐣 Brooding — dedicated brooding / rearing house</option>
+            <option value="GENERAL">📦 General — utility, quarantine, or unclassified</option>
+          </select>
+          {mode === 'edit' && <div style={{ fontSize:10, color:'var(--text-muted)', marginTop:3 }}>Changing purpose affects which flocks and KPIs appear here</div>}
+        </F>
         <G2>
           <F label="Location"><input className="input" value={f.location} onChange={e=>up('location',e.target.value)} placeholder="Block A"/></F>
           <F label="Year Built"><input className="input" type="number" value={f.buildYear} onChange={e=>up('buildYear',e.target.value)} placeholder="2023"/></F>
@@ -455,7 +668,7 @@ function SectionModal({ mode, section, pen, onClose, onSave }) {
   const [saving, setSaving] = useState(false);
   const [error,  setError]  = useState('');
   const up    = (k, v) => setF(p => ({ ...p, [k]:v }));
-  const color = OP_COLOR[pen.operationType];
+  const color = OP_COLOR[pen?.operationType] || 'var(--purple)';
 
   async function save() {
     if (!f.name.trim() || !f.capacity) return setError('Name and capacity required');
@@ -494,6 +707,16 @@ function SectionModal({ mode, section, pen, onClose, onSave }) {
             <div style={{ fontSize:11, color:'var(--red)', marginTop:4 }}>⚠ Below current bird count ({section.currentBirds?.toLocaleString()})</div>
           )}
         </F>
+		{pen.penPurpose && (
+          <span style={{ fontSize:10, fontWeight:700, borderRadius:20, padding:'2px 8px',
+          background: PURPOSE_BG[pen.penPurpose] || '#f1f5f9',
+          color: PURPOSE_COLOR[pen.penPurpose] || '#64748b',
+          border: `1px solid ${PURPOSE_COLOR[pen.penPurpose]}30` }}>
+           {pen.penPurpose === 'BROODING' ? '🐣' : pen.penPurpose === 'PRODUCTION' ? '🏭' : '📦'}{' '}
+           {PURPOSE_LABEL[pen.penPurpose]}
+          </span>
+        )}
+		
         <div style={{ padding:12, background:`${color}08`, borderRadius:8, border:`1px solid ${color}20`, fontSize:12, color:'var(--text-secondary)' }}>
           <strong>Pen type:</strong> {OP_ICON[pen.operationType]} {OP_LABEL[pen.operationType]} — sections inherit this type
         </div>
@@ -759,8 +982,9 @@ export default function FarmStructurePage() {
   const [farms,    setFarms]    = useState([]);
   const [managers, setManagers] = useState([]);
   const [loading,  setLoading]  = useState(true);
-  const [modal,    setModal]    = useState(null);
-  const [toast,    setToast]    = useState(null);
+  const [modal,       setModal]       = useState(null);
+  const [toast,       setToast]       = useState(null);
+  const [archivePen,  setArchivePen]  = useState(null); // { pen, action: 'archive'|'delete' }
 
   const isManager  = MANAGER_ROLES.includes(user?.role);
   const canManage  = isManager;
@@ -882,13 +1106,15 @@ export default function FarmStructurePage() {
             </div>
 
             {farm.pens.map(pen => (
-              <PenCard key={pen.id} pen={pen} canManage={canManage}
-                onEditPen={p    => setModal({ type:'pen',     mode:'edit',   target:p,   context:{ farmName:farm.name } })}
-                onEditSection={(sec, p) => setModal({ type:'section', mode:'edit',   target:sec, context:{ pen:p } })}
-                onAddSection={p => setModal({ type:'section', mode:'create',          context:{ pen:p } })}
-                onAssignWorkers={sec => setModal({ type:'assign', target:sec })}
-                onAssignPenManager={pen => setModal({ type:'assignPenManager', target:pen })}
-              />
+              <PenCard key={pen.id} pen={pen} canManage={canManage} userRole={user?.role}
+                      onEditPen={p    => setModal({ type:'pen',     mode:'edit',   target:p,   context:{ farmName:farm.name } })}
+                      onEditSection={(sec, p) => setModal({ type:'section', mode:'edit',   target:sec, context:{ pen:p } })}
+                      onAddSection={p => setModal({ type:'section', mode:'create',          context:{ pen:p } })}
+                      onAssignWorkers={sec => setModal({ type:'assign', target:sec })}
+                      onAssignPenManager={p => setModal({ type:'assignPenManager', target:p })}
+                      onArchivePen={p => setArchivePen({ pen:p, action:'archive' })}
+                      onDeletePen={p => setArchivePen({ pen:p, action:'delete' })}
+                    />
             ))}
           </div>
         ))}
@@ -900,6 +1126,19 @@ export default function FarmStructurePage() {
       {modal?.type === 'section' && <SectionModal mode={modal.mode} section={modal.target} pen={modal.context?.pen} onClose={() => setModal(null)} onSave={() => handleSave(modal.mode==='create' ? 'Section added' : 'Section updated')} />}
       {modal?.type === 'assign'           && <AssignWorkersModal    section={modal.target} apiFetch={apiFetch} onClose={() => setModal(null)} onSave={() => handleSave('Worker assignments updated')} />}
       {modal?.type === 'assignPenManager' && <AssignPenManagerModal pen={modal.target}     apiFetch={apiFetch} onClose={() => setModal(null)} onSave={() => handleSave('Pen manager assigned')} />}
+    {archivePen && (
+        <PenArchiveModal
+          pen={archivePen.pen}
+          action={archivePen.action}
+          apiFetch={apiFetch}
+          onClose={() => setArchivePen(null)}
+          onSuccess={msg => {
+            setArchivePen(null);
+            load();
+            showToast(msg);
+          }}
+        />
+      )}
     </AppShell>
   );
 }

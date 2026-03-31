@@ -395,17 +395,192 @@ function EditRecordModal({ item, sections, apiFetch, onClose, onSave }) {
   );
 }
 
+// ── Log Temperature Modal (Brooding workers) ─────────────────────────────────
+function LogTempModal({ section, apiFetch, onClose, onSave }) {
+  const flock = section.flock;
+  const [form, setForm] = useState({ zone:'Zone A', tempCelsius:'', humidity:'', notes:'' });
+  const [saving, setSaving] = useState(false);
+  const [error,  setError]  = useState('');
+  const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
+
+  async function save() {
+    if (!form.tempCelsius || Number(form.tempCelsius) <= 0)
+      return setError('Temperature is required');
+    if (!flock?.id) return setError('No active flock found for this section');
+    setSaving(true); setError('');
+    try {
+      const res = await apiFetch('/api/brooding/temperature', {
+        method: 'POST',
+        body: JSON.stringify({
+          flockId:     flock.id,
+          penSectionId: section.id,
+          zone:        form.zone,
+          tempCelsius: parseFloat(form.tempCelsius),
+          humidity:    form.humidity ? parseFloat(form.humidity) : null,
+          notes:       form.notes || null,
+        }),
+      });
+      const d = await res.json();
+      if (!res.ok) return setError(d.error || 'Failed to save');
+      onSave();
+    } catch { setError('Network error'); }
+    setSaving(false);
+  }
+
+  const temp = Number(form.tempCelsius);
+  const tempOk = temp >= 26 && temp <= 38;
+  const tempColor = !form.tempCelsius ? 'var(--text-muted)'
+    : tempOk ? '#16a34a' : temp < 26 ? '#2563eb' : '#dc2626';
+
+  return (
+    <ModalShell title="🌡️ Log Brooder Temperature" onClose={onClose}
+      footer={<>
+        <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+        <button className="btn btn-primary" onClick={save} disabled={saving}>
+          {saving ? 'Saving…' : 'Save Reading'}
+        </button>
+      </>}>
+      {error && <div className="alert alert-red" style={{marginBottom:12}}>⚠ {error}</div>}
+      <div style={{marginBottom:12,fontSize:12,color:'var(--text-muted)'}}>
+        {flock?.batchCode} · {section.penName} › {section.name} · Safe range: 26–38°C
+      </div>
+      <div style={{display:'flex',flexDirection:'column',gap:12}}>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+          <div>
+            <label className="label">Zone</label>
+            <select className="input" value={form.zone} onChange={e=>set('zone',e.target.value)}>
+              {['Zone A','Zone B','Zone C','Zone D'].map(z=>(
+                <option key={z} value={z}>{z}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="label">Temperature (°C) *</label>
+            <input type="number" className="input" step="0.1" min="0" max="50"
+              value={form.tempCelsius} placeholder="e.g. 32"
+              onChange={e=>set('tempCelsius',e.target.value)}
+              style={{borderColor: form.tempCelsius ? (tempOk?'#bbf7d0':'#fecaca') : undefined}}/>
+            {form.tempCelsius && (
+              <div style={{fontSize:11,marginTop:3,color:tempColor,fontWeight:600}}>
+                {tempOk ? '✓ Within safe range' : temp < 26 ? '⚠ Below safe range (too cold)' : '⚠ Above safe range (too hot)'}
+              </div>
+            )}
+          </div>
+        </div>
+        <div>
+          <label className="label">Humidity (%)</label>
+          <input type="number" className="input" min="0" max="100" step="1"
+            value={form.humidity} placeholder="Optional"
+            onChange={e=>set('humidity',e.target.value)}/>
+        </div>
+        <div>
+          <label className="label">Notes</label>
+          <textarea className="input" rows={2} value={form.notes}
+            placeholder="Heat source status, tarpaulin adjustments…"
+            onChange={e=>set('notes',e.target.value)}/>
+        </div>
+      </div>
+    </ModalShell>
+  );
+}
+
+// ── Log Weight Modal (Rearing + Broiler workers) ─────────────────────────────
+function LogWeightModal({ section, apiFetch, onClose, onSave }) {
+  const flock = section.flock;
+  const today = new Date().toISOString().split('T')[0];
+  const [form, setForm] = useState({
+    sampleDate: today, sampleCount:'30', meanWeightG:'',
+    minWeightG:'', maxWeightG:'', uniformityPct:'', notes:'',
+  });
+  const [saving, setSaving] = useState(false);
+  const [error,  setError]  = useState('');
+  const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
+
+  async function save() {
+    if (!form.meanWeightG||Number(form.meanWeightG)<=0) return setError('Average weight is required');
+    if (!form.sampleCount||Number(form.sampleCount)<1)  return setError('Sample count must be at least 1');
+    setSaving(true); setError('');
+    try {
+      const res = await apiFetch('/api/weight-samples', {
+        method:'POST',
+        body: JSON.stringify({
+          flockId:       flock?.id,
+          penSectionId:  section.id,
+          sampleDate:    form.sampleDate||today,
+          sampleCount:   parseInt(form.sampleCount,10),
+          meanWeightG:   parseFloat(form.meanWeightG),
+          minWeightG:    form.minWeightG    ? parseFloat(form.minWeightG)    : null,
+          maxWeightG:    form.maxWeightG    ? parseFloat(form.maxWeightG)    : null,
+          uniformityPct: form.uniformityPct ? parseFloat(form.uniformityPct) : null,
+          notes:         form.notes||null,
+        }),
+      });
+      const d = await res.json();
+      if (!res.ok) return setError(d.error||'Failed to save');
+      onSave();
+    } catch { setError('Network error'); }
+    setSaving(false);
+  }
+
+  return (
+    <ModalShell title="⚖️ Log Weekly Weigh-In" onClose={onClose}
+      footer={<>
+        <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+        <button className="btn btn-primary" onClick={save} disabled={saving}>
+          {saving?'Saving…':'Save Weight Record'}
+        </button>
+      </>}>
+      {error&&<div className="alert alert-red" style={{marginBottom:12}}>⚠ {error}</div>}
+      <div style={{marginBottom:12,fontSize:12,color:'var(--text-muted)'}}>
+        {flock?.batchCode} · {section.penName} › {section.name} ·
+        Weigh a random sample of at least 30 birds
+      </div>
+      <div style={{display:'flex',flexDirection:'column',gap:12}}>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+          <div><label className="label">Date</label>
+            <input type="date" className="input" value={form.sampleDate}
+              onChange={e=>set('sampleDate',e.target.value)}/></div>
+          <div><label className="label">Sample Size (birds)</label>
+            <input type="number" className="input" min="1" value={form.sampleCount}
+              onChange={e=>set('sampleCount',e.target.value)}/></div>
+        </div>
+        <div><label className="label">Avg Weight (g) *</label>
+          <input type="number" className="input" min="1" value={form.meanWeightG}
+            placeholder="e.g. 850" onChange={e=>set('meanWeightG',e.target.value)}/></div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12}}>
+          <div><label className="label">Min (g)</label>
+            <input type="number" className="input" min="1" value={form.minWeightG}
+              placeholder="Optional" onChange={e=>set('minWeightG',e.target.value)}/></div>
+          <div><label className="label">Max (g)</label>
+            <input type="number" className="input" min="1" value={form.maxWeightG}
+              placeholder="Optional" onChange={e=>set('maxWeightG',e.target.value)}/></div>
+          <div><label className="label">Uniformity (%)</label>
+            <input type="number" className="input" min="0" max="100" step="0.1"
+              value={form.uniformityPct} placeholder="e.g. 82"
+              onChange={e=>set('uniformityPct',e.target.value)}/></div>
+        </div>
+        <div><label className="label">Notes</label>
+          <textarea className="input" rows={2} value={form.notes}
+            placeholder="Body condition observations…"
+            onChange={e=>set('notes',e.target.value)}/></div>
+      </div>
+    </ModalShell>
+  );
+}
+
 // ── Section Task Card ─────────────────────────────────────────────────────────
 // Each section gets its own card. Tasks for that section are listed inline.
 // The DailySummaryCard sits below the task list inside the same card.
 
-function SectionTaskCard({ sec, sectionTasks, onComplete, saving, apiFetch, onLogEggs, onLogMortality, onLogWater, onLogFeed, refreshKey = 0 }) {
+function SectionTaskCard({ sec, sectionTasks, onComplete, saving, apiFetch, onLogEggs, onLogMortality, onLogWater, onLogFeed, onLogWeight, onLogTemp, refreshKey = 0 }) {
   const flock      = sec.flock || null;                          // API returns sec.flock (singular, pre-resolved)
   const isLayer    = sec.penOperationType === 'LAYER';           // API returns sec.penOperationType (flat field)
+  const secStage   = sec.metrics?.stage || flock?.stage || 'PRODUCTION';
+  const isBroodingOrRearing = isLayer && (secStage === 'BROODING' || secStage === 'REARING');
   const metrics    = sec.metrics || {};
   const hasFlock   = !!flock;
   const opColor    = isLayer ? '#d97706' : '#3b82f6';
-  const opIcon     = isLayer ? '🥚' : '🍗';
+  const opIcon     = isBroodingOrRearing ? '🐣' : isLayer ? '🥚' : '🍗';
 
   const sectionDone  = sectionTasks.filter(t => t.status === 'COMPLETED').length;
   const sectionTotal = sectionTasks.length;
@@ -485,10 +660,16 @@ function SectionTaskCard({ sec, sectionTasks, onComplete, saving, apiFetch, onLo
         borderBottom: '1px solid var(--border-card)',
         display: 'flex', gap: 6, flexWrap: 'wrap',
       }}>
-        {isLayer && (
+        {isLayer && !isBroodingOrRearing && (
           <button onClick={onLogEggs} title="Log egg collection"
             style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px', borderRadius: 7, border: '1px solid #fde68a', background: '#fffbeb', color: '#d97706', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
             🥚 Log Eggs
+          </button>
+        )}
+        {((secStage === 'REARING') || (!isLayer && secStage !== 'BROODING')) && hasFlock && (
+          <button onClick={onLogWeight} title="Log weekly weigh-in"
+            style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px', borderRadius: 7, border: '1px solid #ddd6fe', background: '#f5f3ff', color: '#6c63ff', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
+            ⚖️ Log Weight
           </button>
         )}
         <button onClick={onLogFeed} title="Log feed distribution"
@@ -520,8 +701,10 @@ function SectionTaskCard({ sec, sectionTasks, onComplete, saving, apiFetch, onLo
       {hasFlock && (
         <div style={{ padding: '12px 16px 0', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <KpiChip label="Live Birds"  value={fmt(flock.currentCount)}         color="var(--text-primary)" />
-          {isLayer && <KpiChip label="Today's Eggs"  value={fmt(metrics.todayEggs || 0)}       color="var(--amber)" />}
-          {isLayer && <KpiChip label="7d Lay Rate"   value={fmtPct(metrics.avgLayingRate)}     color="var(--amber)" />}
+          {isBroodingOrRearing && <KpiChip label="Feed/Day" value={metrics.avgDailyFeedKg!=null?`${metrics.avgDailyFeedKg}kg`:'—'} color="#6c63ff" />}
+          {isBroodingOrRearing && secStage === 'REARING' && metrics.latestWeightG && <KpiChip label="Avg Weight" value={`${metrics.latestWeightG}g`} color="#6c63ff" />}
+          {!isBroodingOrRearing && isLayer && <KpiChip label="Today's Eggs"  value={fmt(metrics.todayEggs || 0)}       color="var(--amber)" />}
+          {!isBroodingOrRearing && isLayer && <KpiChip label="7d Lay Rate"   value={fmtPct(metrics.avgLayingRate)}     color="var(--amber)" />}
           {!isLayer && metrics.latestWeight && <KpiChip label="Avg Weight" value={`${metrics.latestWeight.avgWeightG}g`} color="#3b82f6" />}
           <KpiChip
             label="Deaths Today"
@@ -618,7 +801,7 @@ function SectionTaskCard({ sec, sectionTasks, onComplete, saving, apiFetch, onLo
       {/* ── Daily Summary Card — sits at the bottom of every section ── */}
       {hasFlock && (
         <div style={{ padding: '0 16px 16px' }}>
-          <DailySummaryCard penSectionId={sec.id} isLayer={isLayer} apiFetch={apiFetch} refreshKey={refreshKey} />
+          <DailySummaryCard penSectionId={sec.id} isLayer={isLayer} stage={secStage} apiFetch={apiFetch} refreshKey={refreshKey} />
         </div>
       )}
     </div>
@@ -653,6 +836,8 @@ export default function WorkerPage() {
   const [mortModal,      setMortModal]      = useState(null);  // section
   const [waterModal,     setWaterModal]     = useState(null);  // section
   const [feedModal,      setFeedModal]      = useState(null);  // section
+  const [weightModal,    setWeightModal]    = useState(null);  // section
+  const [tempModal,      setTempModal]      = useState(null);  // section
   const [editRecord,     setEditRecord]     = useState(null);  // { record, type, section }
   const [rejected,       setRejected]       = useState([]);
   const [toast,          setToast]          = useState(null);
@@ -756,6 +941,11 @@ export default function WorkerPage() {
         setTaskLinkedModal({ task, type: 'mortality' }); setMortModal(section); return;
       }
       if (task.taskType === 'INSPECTION') {
+        // BROODING sections: Inspect = temperature check; others: water meter
+        const secStage = section?.metrics?.stage || section?.flock?.stage || 'PRODUCTION';
+        if (secStage === 'BROODING') {
+          setTaskLinkedModal({ task, type: 'temp' }); setTempModal(section); return;
+        }
         setTaskLinkedModal({ task, type: 'water' }); setWaterModal(section); return;
       }
     }
@@ -914,6 +1104,8 @@ export default function WorkerPage() {
                 onLogMortality={() => setMortModal(sec)}
                 onLogWater={() => setWaterModal(sec)}
                 onLogFeed={() => setFeedModal(sec)}
+                onLogWeight={() => setWeightModal(sec)}
+                onLogTemp={() => setTempModal(sec)}
                 refreshKey={saveCount}
               />
             ))}
@@ -946,6 +1138,22 @@ export default function WorkerPage() {
             setWaterModal(null); bumpSave(); showToast('Water meter reading saved ✓');
             if (taskLinkedModal?.type === 'water') completeLinkedTask(taskLinkedModal.task.id);
           }} />
+      )}
+      {tempModal && (
+        <LogTempModal section={tempModal} apiFetch={apiFetch}
+          onClose={() => { setTempModal(null); setTaskLinkedModal(null); }}
+          onSave={() => {
+            setTempModal(null);
+            if (taskLinkedModal?.type === 'temp') completeLinkedTask(taskLinkedModal.task.id);
+            bumpSave(); load(); showToast('Temperature reading saved ✓');
+          }}
+        />
+      )}
+      {weightModal && (
+        <LogWeightModal section={weightModal} apiFetch={apiFetch}
+          onClose={() => setWeightModal(null)}
+          onSave={() => { setWeightModal(null); bumpSave(); load(); showToast('Weight record saved ✓'); }}
+        />
       )}
       {feedModal && (
         <WorkerFeedModal section={feedModal} apiFetch={apiFetch}
