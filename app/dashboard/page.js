@@ -112,8 +112,8 @@ function ChartTip({ active, payload, label, unit='' }) {
 
 // ── Floating chart modal ─────────────────────────────────────────────────────
 function ChartModal({ sectionId, sectionName, penName, opType, stage = 'PRODUCTION', onClose }) {
-  const isL         = opType === 'LAYER';
-  const isBrooding  = isL && (stage === 'BROODING' || stage === 'REARING');
+  const isL       = opType === 'LAYER';
+  const isBrooding = stage === 'BROODING';
   const [days, setDays] = useState(isL ? 7 : 14);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -140,89 +140,6 @@ function ChartModal({ sectionId, sectionName, penName, opType, stage = 'PRODUCTI
     <div style={{ background: '#fff', borderRadius: 12, padding: '14px 16px', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column' }}>
       <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 10 }}>{title}</div>
       {children}
-    </div>
-  );
-
-  // Brooding / Rearing charts — feed + mortality + temperature only (no eggs)
-  const broodingCharts = (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gridTemplateRows: '1fr 1fr', gap: 14, flex: 1, minHeight: 0 }}>
-      {/* Top Left: Daily Feed Consumption */}
-      <Tile title="🌾 Daily Feed Consumption">
-        {loading ? <Spinner /> : (
-          <ResponsiveContainer width="100%" height={220}>
-            <ComposedChart data={chart} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-              <XAxis dataKey="label" tick={{ fontSize: 10 }} />
-              <YAxis yAxisId="kg" tick={{ fontSize: 10 }} width={45} unit="kg" />
-              <YAxis yAxisId="gpb" orientation="right" tick={{ fontSize: 10 }} width={40} unit="g" />
-              <Tooltip content={<ChartTip />} />
-              <Legend wrapperStyle={{ fontSize: 10 }} />
-              <Bar yAxisId="kg" dataKey="feedKg" name="Feed (kg)" fill="#6c63ff" opacity={0.8} radius={[3, 3, 0, 0]} />
-              <Line yAxisId="gpb" type="monotone" dataKey="feedGpb" name="g/bird/day" stroke="#f59e0b" strokeWidth={2} dot={{ r: 2 }} connectNulls />
-            </ComposedChart>
-          </ResponsiveContainer>
-        )}
-      </Tile>
-      {/* Top Right: Daily Water Intake */}
-      <Tile title="💧 Daily Water Intake">
-        {loading ? <Spinner /> : chart.every(d => !d.waterL) ? (
-          <div style={{ height: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 12 }}>
-            Log water readings to see data
-          </div>
-        ) : (
-          <ResponsiveContainer width="100%" height={220}>
-            <ComposedChart data={chart} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-              <XAxis dataKey="label" tick={{ fontSize: 10 }} />
-              <YAxis yAxisId="L" tick={{ fontSize: 10 }} width={45} unit="L" />
-              <YAxis yAxisId="lpb" orientation="right" tick={{ fontSize: 10 }} width={45} unit="L/b" />
-              <Tooltip content={<ChartTip />} />
-              <Legend wrapperStyle={{ fontSize: 10 }} />
-              <Bar yAxisId="L" dataKey="waterL" name="Water (L)" fill="#0ea5e9" opacity={0.8} radius={[3, 3, 0, 0]} />
-              <Line yAxisId="lpb" type="monotone" dataKey="waterLpb" name="L/bird" stroke="#0369a1" strokeWidth={2} dot={{ r: 2 }} connectNulls />
-            </ComposedChart>
-          </ResponsiveContainer>
-        )}
-      </Tile>
-      {/* Bottom Left: Brooder Temperature or Rearing Weight */}
-      <Tile title={stage === 'REARING' ? '⚖️ Weekly Weight (Rearing)' : '🌡️ Brooder Temperature'}>
-        {loading ? <Spinner /> : chart.length === 0 ? (
-          <div style={{ height: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 12 }}>
-            {stage === 'REARING' ? 'Log weekly weigh-ins to see data' : 'Log temperature readings in the Brooding page'}
-          </div>
-        ) : (
-          <ResponsiveContainer width="100%" height={220}>
-            <LineChart data={chart} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-              <XAxis dataKey="label" tick={{ fontSize: 10 }} />
-              <YAxis tick={{ fontSize: 10 }} width={45} unit={stage === 'REARING' ? 'g' : '°C'} />
-              <Tooltip content={<ChartTip unit={stage === 'REARING' ? 'g' : '°C'} />} />
-              {stage === 'REARING'
-                ? <Line type="monotone" dataKey="avgWeightG" name="Avg Weight (g)" stroke="#6c63ff" strokeWidth={2.5} dot={{ r: 3 }} connectNulls />
-                : <>
-                    <Line type="monotone" dataKey="avgWeightG" name="Brooder Temp °C" stroke="#f59e0b" strokeWidth={2} dot={{ r: 2 }} connectNulls />
-                    <ReferenceLine y={38} stroke="#ef4444" strokeDasharray="3 3" label={{ value: 'Max 38°C', fontSize: 9, fill: '#ef4444' }} />
-                    <ReferenceLine y={26} stroke="#3b82f6" strokeDasharray="3 3" label={{ value: 'Min 26°C', fontSize: 9, fill: '#3b82f6' }} />
-                  </>
-              }
-            </LineChart>
-          </ResponsiveContainer>
-        )}
-      </Tile>
-      {/* Bottom Right: Daily Mortality */}
-      <Tile title="💀 Daily Mortality">
-        {loading ? <Spinner /> : (
-          <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={chart} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-              <XAxis dataKey="label" tick={{ fontSize: 10 }} />
-              <YAxis tick={{ fontSize: 10 }} width={35} allowDecimals={false} />
-              <Tooltip content={<ChartTip />} />
-              <Bar dataKey="mortality" name="Deaths" fill="#ef4444" opacity={0.8} radius={[3, 3, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        )}
-      </Tile>
     </div>
   );
 
@@ -273,7 +190,7 @@ function ChartModal({ sectionId, sectionName, penName, opType, stage = 'PRODUCTI
           </ResponsiveContainer>
         )}
       </Tile>
-      <Tile title="🌾 Daily Feed Consumption">
+      <Tile title={isBrooding ? "🌾 Feed Consumption & Brooder Temperature" : "🌾 Daily Feed Consumption"}>
         {loading ? <Spinner /> : (
           <ResponsiveContainer width="100%" height={220}>
             <ComposedChart data={chart} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
@@ -281,10 +198,22 @@ function ChartModal({ sectionId, sectionName, penName, opType, stage = 'PRODUCTI
               <XAxis dataKey="label" tick={{ fontSize: 10 }} />
               <YAxis yAxisId="kg" tick={{ fontSize: 10 }} width={45} unit="kg" />
               <YAxis yAxisId="gpb" orientation="right" tick={{ fontSize: 10 }} width={40} unit="g" />
+              {isBrooding && (
+                <YAxis yAxisId="temp" orientation="right" tick={{ fontSize: 10 }} width={38}
+                  unit="°C" domain={[20, 42]} />
+              )}
               <Tooltip content={<ChartTip />} />
               <Legend wrapperStyle={{ fontSize: 10 }} />
               <Bar yAxisId="kg" dataKey="feedKg" name="Feed (kg)" fill="#6c63ff" opacity={0.8} radius={[3, 3, 0, 0]} />
               <Line yAxisId="gpb" type="monotone" dataKey="feedGpb" name="g/bird/day" stroke="#f59e0b" strokeWidth={2} dot={{ r: 2 }} connectNulls />
+              {isBrooding && <>
+                <Line yAxisId="temp" type="monotone" dataKey="avgTemp" name="Avg Temp °C"
+                  stroke="#ef4444" strokeWidth={2} dot={{ r: 2 }} connectNulls />
+                <ReferenceLine yAxisId="temp" y={38} stroke="#ef4444" strokeDasharray="3 3"
+                  label={{ value: 'Max 38°C', fontSize: 9, fill: '#ef4444' }} />
+                <ReferenceLine yAxisId="temp" y={26} stroke="#3b82f6" strokeDasharray="3 3"
+                  label={{ value: 'Min 26°C', fontSize: 9, fill: '#3b82f6' }} />
+              </>}
             </ComposedChart>
           </ResponsiveContainer>
         )}
@@ -338,7 +267,7 @@ function ChartModal({ sectionId, sectionName, penName, opType, stage = 'PRODUCTI
           </ResponsiveContainer>
         )}
       </Tile>
-      <Tile title="🌾 Daily Feed Intake">
+      <Tile title={isBrooding ? "🌾 Feed Intake & Brooder Temperature" : "🌾 Daily Feed Intake"}>
         {loading ? <Spinner /> : (
           <ResponsiveContainer width="100%" height={220}>
             <ComposedChart data={chart} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
@@ -346,10 +275,22 @@ function ChartModal({ sectionId, sectionName, penName, opType, stage = 'PRODUCTI
               <XAxis dataKey="label" tick={{ fontSize: 10 }} />
               <YAxis yAxisId="kg" tick={{ fontSize: 10 }} width={45} unit="kg" />
               <YAxis yAxisId="gpb" orientation="right" tick={{ fontSize: 10 }} width={40} unit="g" />
+              {isBrooding && (
+                <YAxis yAxisId="temp" orientation="right" tick={{ fontSize: 10 }} width={38}
+                  unit="°C" domain={[20, 42]} />
+              )}
               <Tooltip content={<ChartTip />} />
               <Legend wrapperStyle={{ fontSize: 10 }} />
               <Bar yAxisId="kg" dataKey="feedKg" name="Feed (kg)" fill="#6c63ff" opacity={0.8} radius={[3, 3, 0, 0]} />
               <Line yAxisId="gpb" type="monotone" dataKey="feedGpb" name="g/bird/day" stroke="#f59e0b" strokeWidth={2} dot={{ r: 2 }} connectNulls />
+              {isBrooding && <>
+                <Line yAxisId="temp" type="monotone" dataKey="avgTemp" name="Avg Temp °C"
+                  stroke="#ef4444" strokeWidth={2} dot={{ r: 2 }} connectNulls />
+                <ReferenceLine yAxisId="temp" y={38} stroke="#ef4444" strokeDasharray="3 3"
+                  label={{ value: 'Max 38°C', fontSize: 9, fill: '#ef4444' }} />
+                <ReferenceLine yAxisId="temp" y={26} stroke="#3b82f6" strokeDasharray="3 3"
+                  label={{ value: 'Min 26°C', fontSize: 9, fill: '#3b82f6' }} />
+              </>}
             </ComposedChart>
           </ResponsiveContainer>
         )}
@@ -375,9 +316,7 @@ function ChartModal({ sectionId, sectionName, penName, opType, stage = 'PRODUCTI
               {OP_ICON[opType]} {penName} — {sectionName}
             </div>
             <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-              {isBrooding
-                ? `${stage === 'BROODING' ? 'Brooding' : 'Rearing'} — feed & mortality trends`
-                : isL ? 'Layer production trends' : 'Broiler growth & performance trends'}
+              {isL ? 'Layer production trends' : 'Broiler growth & performance trends'}
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -389,7 +328,7 @@ function ChartModal({ sectionId, sectionName, penName, opType, stage = 'PRODUCTI
         {/* Charts 2×2 grid */}
         <div style={{ flex: 1, padding: '16px 20px 20px', overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
           {!data && !loading && <div style={{ textAlign: 'center', padding: 60, color: 'var(--text-muted)' }}>No data available</div>}
-          {isBrooding ? broodingCharts : isL ? layerCharts : broilerCharts}
+          {isL ? layerCharts : broilerCharts}
         </div>
 
       </div>
@@ -410,8 +349,6 @@ function WorkerSectionGridCard({ sec, highlighted = false }) {
   const cardRef = useRef(null);
   const mx      = sec.metrics;
   const isL     = sec.penOperationType === 'LAYER';
-  const secStage = sec.metrics?.stage || sec.flock?.stage || 'PRODUCTION';
-  const isBroodingOrRearing = isL && (secStage === 'BROODING' || secStage === 'REARING');
   const flag    = (sec.flags||[])[0];
   const isCrit  = flag?.type === 'critical';
   const isWarn  = flag?.type === 'warn';
@@ -485,12 +422,7 @@ function WorkerSectionGridCard({ sec, highlighted = false }) {
         {/* ── Metric grid ── */}
         {hasFlock ? (
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
-            {isBroodingOrRearing ? (<>
-              <MiniStat label="Live Birds"   value={fmt(sec.flock?.currentCount||0)} color="var(--text-secondary)" />
-              <MiniStat label="Feed/Day"     value={mx.avgDailyFeedKg!=null?`${mx.avgDailyFeedKg}kg`:'—'} color="#6c63ff" />
-              <MiniStat label="Deaths Today" value={fmt(mx.todayMortality||0)} color={mx.todayMortality>5?'#ef4444':'var(--text-secondary)'} />
-              <MiniStat label="7d Mortality" value={fmt(mx.weekMortality||0)} color="var(--text-secondary)" />
-            </>) : isL ? (<>
+            {isL ? (<>
               <MiniStat label="Eggs Today"  value={fmt(mx.todayEggs||0)} color="#f59e0b" />
               <MiniStat label="Lay Rate"    value={layRate!=null?`${layRate}%`:'—'} color={rateColor} />
               <MiniStat label="Deaths Today" value={fmt(mx.todayMortality||0)} color={mx.todayMortality>5?'#ef4444':'var(--text-secondary)'} />
@@ -531,7 +463,6 @@ function WorkerSectionGridCard({ sec, highlighted = false }) {
           sectionName={sec.name}
           penName={sec.penName}
           opType={sec.penOperationType}
-          stage={sec.metrics?.stage || sec.flock?.stage || 'PRODUCTION'}
           onClose={() => setModal(false)}
         />
       )}
@@ -960,7 +891,20 @@ function WorkerDashboard({ sections, tasks, user, apiFetch }) {
       delta:todayEggs>0?`${fmt(todayEggs)} collected`:'None yet',
       trend:'stable', status:todayEggs>0?'good':'neutral', icon:'🥚', context:'Your sections' },
     mortCard, taskCard,
+  ] : dominantStage==='BROODING' ? [
+    // Broiler worker in BROODING stage — show Brooder Temp prominently
+    { label:'Live Chicks', value:fmt(totBirds),
+      sub:`${sections.length} brooding section${sections.length!==1?'s':''}`,
+      delta:'', trend:'stable', status:'neutral', icon:'🐣', context:'Your sections' },
+    { label:'Brooder Temp',
+      value:latestBrooderTemp!=null?`${Number(latestBrooderTemp).toFixed(1)}°C`:'—',
+      sub:'Latest reading · Safe range 26–38°C',
+      delta:latestBrooderTemp!=null?(latestBrooderTemp<26||latestBrooderTemp>38?'⚠ Out of range':'✓ In range'):'No reading yet',
+      trend:tempStatus==='critical'?'down':'stable', status:tempStatus,
+      icon:'🌡️', context:'Log in Brooding page' },
+    mortCard, taskCard,
   ] : [
+    // Broiler worker in PRODUCTION stage
     {
       label:'Live Birds', value: fmt(totBirds),
       sub:`${sections.length} section${sections.length!==1?'s':''}`,

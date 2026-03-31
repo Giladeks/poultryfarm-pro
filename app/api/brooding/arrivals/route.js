@@ -193,6 +193,38 @@ export async function POST(request) {
       tasksCreated++;
     }
 
+    // ── Broiler weight spot tasks: Day 1, 3, 7, 14 ─────────────────────────────
+    // These are date-specific tasks, not recurring weekly — critical for FCR baseline
+    if (opType === 'BROILER') {
+      const weightDays = [
+        { day: 1,  title: 'Day 1 Baseline Weigh-In',  desc: 'Weigh 30+ birds to establish placement weight baseline. Compare to hatchery certificate.' },
+        { day: 3,  title: 'Day 3 Weight Check',        desc: 'Early weight check — birds should show 3-4g/day gain. Flag poor starters.' },
+        { day: 7,  title: 'Day 7 Weekly Weigh-In',     desc: 'End of week 1. Target: ~170g (Ross 308). Record uniformity %.' },
+        { day: 14, title: 'Day 14 Weigh-In (End Brooding)', desc: 'End of brooding weight. Critical FCR baseline. Compare to breed standard.' },
+      ];
+      for (const wt of weightDays) {
+        const wtDueDate = new Date(arrivalDateUTC);
+        wtDueDate.setUTCDate(wtDueDate.getUTCDate() + wt.day);
+        wtDueDate.setUTCHours(10, 0, 0, 0); // Due at 10:00 AM
+        await prisma.task.create({
+          data: {
+            tenantId:     user.tenantId,
+            penSectionId: data.penSectionId,
+            assignedToId,
+            createdById:  user.sub,
+            taskType:     'WEIGHT_RECORDING',
+            title:        `[${data.batchCode}] ${wt.title}`,
+            description:  wt.desc,
+            dueDate:      wtDueDate,
+            priority:     wt.day === 1 ? 'HIGH' : 'NORMAL',
+            status:       'PENDING',
+            isRecurring:  false,
+          },
+        });
+        tasksCreated++;
+      }
+    }
+
     return NextResponse.json({
       arrival,
       tasksGenerated: tasksCreated,

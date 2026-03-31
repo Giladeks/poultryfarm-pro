@@ -33,9 +33,10 @@ const CHECKLIST_LABELS = {
   cageDoorsInspected:  'Cage doors inspected',
 };
 
-export default function DailySummaryCard({ penSectionId, isLayer = true, stage = 'PRODUCTION', apiFetch, refreshKey = 0 }) {
-  // Eggs are only tracked in PRODUCTION stage — hide for BROODING / REARING
-  const showEggs = isLayer && (stage === 'PRODUCTION' || !stage);
+export default function DailySummaryCard({ penSectionId, isLayer = true, stage = 'PRODUCTION', brooderTemp = null, apiFetch, refreshKey = 0 }) {
+  // stage: 'BROODING' | 'REARING' | 'PRODUCTION'
+  // brooderTemp: latest reading from parent (already fetched by dashboard API)
+  const isBrooding = stage === 'BROODING';
   const [summary,    setSummary]    = useState(null);
   const [loading,    setLoading]    = useState(true);
   const [saving,     setSaving]     = useState(false);
@@ -164,10 +165,17 @@ export default function DailySummaryCard({ penSectionId, isLayer = true, stage =
         {/* Production totals */}
         <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
           {[
-            { label: 'Eggs',   value: fmt(summary.totalEggsCollected), icon: '🥚', show: showEggs },
+            { label: 'Eggs',   value: fmt(summary.totalEggsCollected), icon: '🥚', show: isLayer && !isBrooding },
             { label: 'Feed',   value: fmtKg(summary.totalFeedKg),      icon: '🍽️', show: true },
             { label: 'Deaths', value: fmt(summary.totalMortality),     icon: '💀', show: true },
             { label: 'Water',  value: fmtL(summary.waterConsumptionL), icon: '💧', show: Number(summary.waterConsumptionL) > 0 },
+            { label: 'Temp',   value: brooderTemp != null ? `${Number(brooderTemp).toFixed(1)}°C` : '—',
+              icon: brooderTemp != null ? (brooderTemp < 26 || brooderTemp > 38 ? '🔴' : '🌡️') : '🌡️',
+              show: isBrooding,
+              color: brooderTemp == null ? 'var(--text-muted)'
+                : brooderTemp < 26 || brooderTemp > 38 ? '#dc2626'
+                : brooderTemp < 28 || brooderTemp > 35 ? '#d97706' : '#16a34a',
+            },
           ].filter(i => i.show).map(item => (
             <div key={item.label} style={{
               flex: 1, minWidth: 72,
@@ -176,7 +184,7 @@ export default function DailySummaryCard({ penSectionId, isLayer = true, stage =
               border: '1px solid var(--border)',
             }}>
               <div style={{ fontSize: 14, marginBottom: 2 }}>{item.icon}</div>
-              <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text-primary)', fontFamily: "'Poppins',sans-serif" }}>{item.value}</div>
+              <div style={{ fontSize: 13, fontWeight: 800, color: item.color || 'var(--text-primary)', fontFamily: "'Poppins',sans-serif" }}>{item.value}</div>
               <div style={{ fontSize: 9, color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{item.label}</div>
             </div>
           ))}
@@ -255,10 +263,10 @@ export default function DailySummaryCard({ penSectionId, isLayer = true, stage =
         </div>
 
         {/* Pending verification flags */}
-        {(summary.pendingFeedVerifications > 0 || summary.pendingMortalityVerifications > 0 || (showEggs && summary.pendingEggVerifications > 0)) && (
+        {(summary.pendingEggVerifications > 0 || summary.pendingFeedVerifications > 0 || summary.pendingMortalityVerifications > 0) && (
           <div style={{ marginBottom: 10, padding: '8px 12px', background: 'var(--amber-bg)', border: '1px solid var(--amber-border)', borderRadius: 8, fontSize: 12, color: '#92400e' }}>
             ⏳ Awaiting PM verification:
-            {showEggs && summary.pendingEggVerifications > 0 && ` ${summary.pendingEggVerifications} egg`}
+            {summary.pendingEggVerifications > 0 && ` ${summary.pendingEggVerifications} egg`}
             {summary.pendingFeedVerifications > 0 && ` · ${summary.pendingFeedVerifications} feed`}
             {summary.pendingMortalityVerifications > 0 && ` · ${summary.pendingMortalityVerifications} mortality`}
           </div>

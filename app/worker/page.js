@@ -395,89 +395,135 @@ function EditRecordModal({ item, sections, apiFetch, onClose, onSave }) {
   );
 }
 
-// ── Log Temperature Modal (Brooding workers) ─────────────────────────────────
+// ── Log Temperature Modal (Brooding workers) — 5-zone dice pattern ───────────
+const TEMP_ZONES  = ['NW','NE','CTR','SW','SE'];
+const ZONE_LABELS = { NW:'North West', NE:'North East', CTR:'Centre', SW:'South West', SE:'South East' };
+
+function ZoneInput({ zoneKey, value, onChange }) {
+  const num    = Number(value);
+  const hasVal = value !== '';
+  const ok     = hasVal && num >= 26 && num <= 38;
+  const cold   = hasVal && num < 26;
+  const borderC = !hasVal ? 'var(--border)' : ok ? '#bbf7d0' : cold ? '#bfdbfe' : '#fecaca';
+  const labelC  = !hasVal ? 'var(--text-muted)' : ok ? '#16a34a' : cold ? '#2563eb' : '#dc2626';
+  return (
+    <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:4}}>
+      <div style={{fontSize:10,fontWeight:700,color:'var(--text-muted)',
+        textTransform:'uppercase',letterSpacing:'.05em',textAlign:'center'}}>
+        {ZONE_LABELS[zoneKey]}
+      </div>
+      <input type="number" step="0.1" min="0" max="50" value={value} placeholder="°C"
+        onChange={e => onChange(zoneKey, e.target.value)}
+        style={{ width:72, padding:'7px 6px', textAlign:'center',
+          border:`1.5px solid ${borderC}`, borderRadius:8,
+          fontSize:14, fontWeight:700, color:labelC,
+          background: !hasVal?'var(--bg-elevated)':ok?'#f0fdf4':cold?'#eff6ff':'#fef2f2',
+          outline:'none', transition:'all 0.15s' }}/>
+      {hasVal && (
+        <div style={{fontSize:9,color:labelC,fontWeight:600}}>
+          {ok?'✓ OK':cold?'❄ Cold':'🔥 Hot'}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function LogTempModal({ section, apiFetch, onClose, onSave }) {
   const flock = section.flock;
-  const [form, setForm] = useState({ zone:'Zone A', tempCelsius:'', humidity:'', notes:'' });
-  const [saving, setSaving] = useState(false);
-  const [error,  setError]  = useState('');
-  const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
+  const [zones,    setZones]    = useState({NW:'',NE:'',CTR:'',SW:'',SE:''});
+  const [humidity, setHumidity] = useState('');
+  const [notes,    setNotes]    = useState('');
+  const [saving,   setSaving]   = useState(false);
+  const [error,    setError]    = useState('');
+
+  const filledZones = TEMP_ZONES.filter(z => zones[z] !== '');
+  const avgTemp = filledZones.length > 0
+    ? (filledZones.reduce((s,z) => s + Number(zones[z]), 0) / filledZones.length).toFixed(1)
+    : null;
+
+  const setZone = (key, val) => setZones(p => ({ ...p, [key]: val }));
+
+  function copyToAll() {
+    const first = TEMP_ZONES.find(z => zones[z] !== '');
+    if (!first) return;
+    const val = zones[first];
+    setZones({ NW:val, NE:val, CTR:val, SW:val, SE:val });
+  }
 
   async function save() {
-    if (!form.tempCelsius || Number(form.tempCelsius) <= 0)
-      return setError('Temperature is required');
+    if (filledZones.length === 0) return setError('Enter at least one zone temperature');
     if (!flock?.id) return setError('No active flock found for this section');
     setSaving(true); setError('');
     try {
-      const res = await apiFetch('/api/brooding/temperature', {
+      const saves = filledZones.map(z => apiFetch('/api/brooding/temperature', {
         method: 'POST',
         body: JSON.stringify({
-          flockId:     flock.id,
+          flockId:      flock.id,
           penSectionId: section.id,
-          zone:        form.zone,
-          tempCelsius: parseFloat(form.tempCelsius),
-          humidity:    form.humidity ? parseFloat(form.humidity) : null,
-          notes:       form.notes || null,
+          zone:         ZONE_LABELS[z],
+          tempCelsius:  parseFloat(zones[z]),
+          humidity:     humidity ? parseFloat(humidity) : null,
+          notes:        notes || null,
         }),
-      });
-      const d = await res.json();
-      if (!res.ok) return setError(d.error || 'Failed to save');
+      }));
+      const results = await Promise.all(saves);
+      if (results.some(r => !r.ok)) return setError('Some zones failed to save');
       onSave();
     } catch { setError('Network error'); }
     setSaving(false);
   }
-
-  const temp = Number(form.tempCelsius);
-  const tempOk = temp >= 26 && temp <= 38;
-  const tempColor = !form.tempCelsius ? 'var(--text-muted)'
-    : tempOk ? '#16a34a' : temp < 26 ? '#2563eb' : '#dc2626';
 
   return (
     <ModalShell title="🌡️ Log Brooder Temperature" onClose={onClose}
       footer={<>
         <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
         <button className="btn btn-primary" onClick={save} disabled={saving}>
-          {saving ? 'Saving…' : 'Save Reading'}
+          {saving ? 'Saving…' : `Save ${filledZones.length||''} Reading${filledZones.length!==1?'s':''}`}
         </button>
       </>}>
       {error && <div className="alert alert-red" style={{marginBottom:12}}>⚠ {error}</div>}
-      <div style={{marginBottom:12,fontSize:12,color:'var(--text-muted)'}}>
-        {flock?.batchCode} · {section.penName} › {section.name} · Safe range: 26–38°C
+      <div style={{marginBottom:12,fontSize:12,color:'var(--text-muted)',
+        display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+        <span>{flock?.batchCode} · {section.penName} › {section.name} · Safe range: 26–38°C</span>
+        {avgTemp && <span style={{fontWeight:700,color:'var(--purple)',fontSize:13}}>Avg: {avgTemp}°C</span>}
       </div>
-      <div style={{display:'flex',flexDirection:'column',gap:12}}>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
-          <div>
-            <label className="label">Zone</label>
-            <select className="input" value={form.zone} onChange={e=>set('zone',e.target.value)}>
-              {['Zone A','Zone B','Zone C','Zone D'].map(z=>(
-                <option key={z} value={z}>{z}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="label">Temperature (°C) *</label>
-            <input type="number" className="input" step="0.1" min="0" max="50"
-              value={form.tempCelsius} placeholder="e.g. 32"
-              onChange={e=>set('tempCelsius',e.target.value)}
-              style={{borderColor: form.tempCelsius ? (tempOk?'#bbf7d0':'#fecaca') : undefined}}/>
-            {form.tempCelsius && (
-              <div style={{fontSize:11,marginTop:3,color:tempColor,fontWeight:600}}>
-                {tempOk ? '✓ Within safe range' : temp < 26 ? '⚠ Below safe range (too cold)' : '⚠ Above safe range (too hot)'}
-              </div>
-            )}
-          </div>
+      {/* ── Dice layout ── */}
+      <div style={{marginBottom:14}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
+          <label className="label" style={{margin:0}}>Zone Temperatures</label>
+          <button onClick={copyToAll} type="button"
+            style={{fontSize:11,padding:'3px 10px',borderRadius:6,border:'1px solid var(--border)',
+              background:'var(--bg-elevated)',cursor:'pointer',color:'var(--text-muted)',fontWeight:600}}>
+            Copy to all zones
+          </button>
         </div>
+        {/* Row 1: NW · · NE */}
+        <div style={{display:'flex',justifyContent:'space-around',marginBottom:14}}>
+          <ZoneInput zoneKey="NW" value={zones.NW} onChange={setZone}/>
+          <div style={{width:72}}/>
+          <ZoneInput zoneKey="NE" value={zones.NE} onChange={setZone}/>
+        </div>
+        {/* Row 2: · CTR · */}
+        <div style={{display:'flex',justifyContent:'center',marginBottom:14}}>
+          <ZoneInput zoneKey="CTR" value={zones.CTR} onChange={setZone}/>
+        </div>
+        {/* Row 3: SW · · SE */}
+        <div style={{display:'flex',justifyContent:'space-around'}}>
+          <ZoneInput zoneKey="SW" value={zones.SW} onChange={setZone}/>
+          <div style={{width:72}}/>
+          <ZoneInput zoneKey="SE" value={zones.SE} onChange={setZone}/>
+        </div>
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
         <div>
-          <label className="label">Humidity (%)</label>
+          <label className="label">Humidity (%) — optional</label>
           <input type="number" className="input" min="0" max="100" step="1"
-            value={form.humidity} placeholder="Optional"
-            onChange={e=>set('humidity',e.target.value)}/>
+            value={humidity} placeholder="e.g. 65" onChange={e=>setHumidity(e.target.value)}/>
         </div>
         <div>
-          <label className="label">Notes</label>
-          <textarea className="input" rows={2} value={form.notes}
-            placeholder="Heat source status, tarpaulin adjustments…"
-            onChange={e=>set('notes',e.target.value)}/>
+          <label className="label">Notes — optional</label>
+          <input type="text" className="input" value={notes}
+            placeholder="Heat source / tarpaulin…" onChange={e=>setNotes(e.target.value)}/>
         </div>
       </div>
     </ModalShell>
@@ -801,7 +847,14 @@ function SectionTaskCard({ sec, sectionTasks, onComplete, saving, apiFetch, onLo
       {/* ── Daily Summary Card — sits at the bottom of every section ── */}
       {hasFlock && (
         <div style={{ padding: '0 16px 16px' }}>
-          <DailySummaryCard penSectionId={sec.id} isLayer={isLayer} stage={secStage} apiFetch={apiFetch} refreshKey={refreshKey} />
+          <DailySummaryCard
+            penSectionId={sec.id}
+            isLayer={isLayer}
+            stage={secStage}
+            brooderTemp={sec.metrics?.latestBrooderTemp ?? null}
+            apiFetch={apiFetch}
+            refreshKey={refreshKey}
+          />
         </div>
       )}
     </div>
