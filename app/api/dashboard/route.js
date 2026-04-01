@@ -77,7 +77,7 @@ export async function GET(request) {
     const sectionIds = sections.map(s => s.id);
 
     // ── Fetch all metrics in parallel ─────────────────────────────────────────
-    const [todayMort, weekMort, weekFeed, todayEggs, weekEggs, weekWeights, todayTasks, latestTemps] =
+    const [todayMort, weekMort, weekFeed, todayEggs, weekEggs, weekWeights, todayTasks] =
       await Promise.all([
         // Today mortality
         prisma.mortalityRecord.groupBy({
@@ -126,13 +126,6 @@ export async function GET(request) {
           select: { penSectionId: true, avgWeightG: true, ageInDays: true, uniformityPct: true },
         }),
 
-        // Latest brooder temperature per section (for BROODING sections)
-        prisma.temperature_logs.findMany({
-          where:   { penSectionId: { in: sectionIds }, loggedAt: { gte: sevenDaysAgo } },
-          orderBy: { loggedAt: 'desc' },
-          select:  { penSectionId: true, tempCelsius: true, loggedAt: true },
-        }),
-
         // Today's tasks for this user
         prisma.task.findMany({
           where: {
@@ -149,6 +142,29 @@ export async function GET(request) {
           take: 20,
         }),
       ]);
+
+    // Fetch brooder temperatures SEPARATELY — outside Promise.all to avoid position mismatch
+    let latestTemps = [];
+    if (sectionIds.length > 0) {
+      try {
+        const placeholders = sectionIds.map((_, i) => `$${i + 1}`).join(',');
+        const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+        latestTemps = await prisma.$queryRawUnsafe(
+          `SELECT DISTINCT ON ("penSectionId")
+             "penSectionId", "tempCelsius"::float as "tempCelsius"
+           FROM temperature_logs
+           WHERE "penSectionId" IN (${placeholders})
+             AND "loggedAt" >= $${sectionIds.length + 1}
+           ORDER BY "penSectionId", "loggedAt" DESC`,
+          ...sectionIds,
+          cutoff
+        );
+        console.log('[TEMP] fetched:', JSON.stringify(latestTemps));
+      } catch (tempErr) {
+        console.error('[TEMP] error:', tempErr?.message);
+        latestTemps = [];
+      }
+    }
 
     // Index metrics
     const idx = {
@@ -170,10 +186,10 @@ export async function GET(request) {
         cracked: r._sum.crackedCount || 0,
         rate:    parseFloat((r._avg.layingRatePct || 0).toFixed(1)),
       }])),
-      latestBrooderTemp: latestTemps.reduce((acc, t) => {
-        if (!acc[t.penSectionId]) acc[t.penSectionId] = Number(t.tempCelsius);
-        return acc;
-      }, {}),
+      // latestTemps from raw SQL DISTINCT ON already has one row per section
+      latestBrooderTemp: Object.fromEntries(
+        (latestTemps || []).map(t => [t.penSectionId, Number(t.tempCelsius)])
+      ),
       latestWeight: weekWeights.reduce((acc, w) => {
         if (!acc[w.penSectionId]) acc[w.penSectionId] = w;
         return acc;
@@ -239,11 +255,12 @@ export async function GET(request) {
           avgDailyFeedKg: avgDailyFeed, feedGramsPerBird: feedData.gpb,
         } : {
           type: 'BROILER',
+          stage: flock?.stage || 'PRODUCTION',   // ← expose stage for BROILER sections too
           todayMortality: todayDead, weekMortality: weekDead, mortalityRate,
           latestWeightG, uniformityPct: wt?.uniformityPct ? parseFloat(parseFloat(wt.uniformityPct).toFixed(1)) : null,
           estimatedFCR, daysToHarvest, ageInDays,
           weekFeedKg: feedData.kg, avgDailyFeedKg: avgDailyFeed, feedGramsPerBird: feedData.gpb,
-          latestBrooderTemp: idx.latestBrooderTemp[sec.id] ?? null,
+          latestBrooderTemp: idx.latestBrooderTemp[sec.id] !== undefined ? idx.latestBrooderTemp[sec.id] : null,
         },
       };
     });

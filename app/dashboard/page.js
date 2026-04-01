@@ -112,8 +112,9 @@ function ChartTip({ active, payload, label, unit='' }) {
 
 // ── Floating chart modal ─────────────────────────────────────────────────────
 function ChartModal({ sectionId, sectionName, penName, opType, stage = 'PRODUCTION', onClose }) {
-  const isL       = opType === 'LAYER';
+  const isL        = opType === 'LAYER';
   const isBrooding = stage === 'BROODING';
+  console.log('[ChartModal] stage:', stage, '| isBrooding:', isBrooding, '| opType:', opType);
   const [days, setDays] = useState(isL ? 7 : 14);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -197,23 +198,32 @@ function ChartModal({ sectionId, sectionName, penName, opType, stage = 'PRODUCTI
               <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
               <XAxis dataKey="label" tick={{ fontSize: 10 }} />
               <YAxis yAxisId="kg" tick={{ fontSize: 10 }} width={45} unit="kg" />
-              <YAxis yAxisId="gpb" orientation="right" tick={{ fontSize: 10 }} width={40} unit="g" />
-              {isBrooding && (
-                <YAxis yAxisId="temp" orientation="right" tick={{ fontSize: 10 }} width={38}
-                  unit="°C" domain={[20, 42]} />
-              )}
+              <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }}
+                width={isBrooding ? 38 : 40}
+                unit={isBrooding ? '°C' : 'g'}
+                domain={isBrooding ? [20, 42] : ['auto', 'auto']} />
               <Tooltip content={<ChartTip />} />
               <Legend wrapperStyle={{ fontSize: 10 }} />
               <Bar yAxisId="kg" dataKey="feedKg" name="Feed (kg)" fill="#6c63ff" opacity={0.8} radius={[3, 3, 0, 0]} />
-              <Line yAxisId="gpb" type="monotone" dataKey="feedGpb" name="g/bird/day" stroke="#f59e0b" strokeWidth={2} dot={{ r: 2 }} connectNulls />
-              {isBrooding && <>
-                <Line yAxisId="temp" type="monotone" dataKey="avgTemp" name="Avg Temp °C"
-                  stroke="#ef4444" strokeWidth={2} dot={{ r: 2 }} connectNulls />
-                <ReferenceLine yAxisId="temp" y={38} stroke="#ef4444" strokeDasharray="3 3"
-                  label={{ value: 'Max 38°C', fontSize: 9, fill: '#ef4444' }} />
-                <ReferenceLine yAxisId="temp" y={26} stroke="#3b82f6" strokeDasharray="3 3"
-                  label={{ value: 'Min 26°C', fontSize: 9, fill: '#3b82f6' }} />
-              </>}
+              <Line yAxisId="right" type="monotone"
+                dataKey={isBrooding ? 'avgTemp' : 'feedGpb'}
+                name={isBrooding ? 'Avg Temp °C' : 'g/bird/day'}
+                stroke={isBrooding ? '#ef4444' : '#f59e0b'}
+                strokeWidth={2}
+                dot={isBrooding
+                  ? (props) => {
+                      const { cx, cy, value } = props;
+                      if (value == null || cx == null) return <g key="empty"/>;
+                      return <circle key={`t-${cx}-${cy}`} cx={cx} cy={cy} r={5} fill="#ef4444" stroke="#fff" strokeWidth={1.5}/>;
+                    }
+                  : { r: 2 }
+                }
+                activeDot={{ r: 6 }}
+                connectNulls />
+              {isBrooding && <ReferenceLine yAxisId="right" y={38} stroke="#ef4444" strokeDasharray="3 3"
+                label={{ value: 'Max 38°C', fontSize: 9, fill: '#ef4444' }} />}
+              {isBrooding && <ReferenceLine yAxisId="right" y={26} stroke="#3b82f6" strokeDasharray="3 3"
+                label={{ value: 'Min 26°C', fontSize: 9, fill: '#3b82f6' }} />}
             </ComposedChart>
           </ResponsiveContainer>
         )}
@@ -274,23 +284,32 @@ function ChartModal({ sectionId, sectionName, penName, opType, stage = 'PRODUCTI
               <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
               <XAxis dataKey="label" tick={{ fontSize: 10 }} />
               <YAxis yAxisId="kg" tick={{ fontSize: 10 }} width={45} unit="kg" />
-              <YAxis yAxisId="gpb" orientation="right" tick={{ fontSize: 10 }} width={40} unit="g" />
-              {isBrooding && (
-                <YAxis yAxisId="temp" orientation="right" tick={{ fontSize: 10 }} width={38}
-                  unit="°C" domain={[20, 42]} />
-              )}
+              <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }}
+                width={isBrooding ? 38 : 40}
+                unit={isBrooding ? '°C' : 'g'}
+                domain={isBrooding ? [20, 42] : ['auto', 'auto']} />
               <Tooltip content={<ChartTip />} />
               <Legend wrapperStyle={{ fontSize: 10 }} />
               <Bar yAxisId="kg" dataKey="feedKg" name="Feed (kg)" fill="#6c63ff" opacity={0.8} radius={[3, 3, 0, 0]} />
-              <Line yAxisId="gpb" type="monotone" dataKey="feedGpb" name="g/bird/day" stroke="#f59e0b" strokeWidth={2} dot={{ r: 2 }} connectNulls />
-              {isBrooding && <>
-                <Line yAxisId="temp" type="monotone" dataKey="avgTemp" name="Avg Temp °C"
-                  stroke="#ef4444" strokeWidth={2} dot={{ r: 2 }} connectNulls />
-                <ReferenceLine yAxisId="temp" y={38} stroke="#ef4444" strokeDasharray="3 3"
-                  label={{ value: 'Max 38°C', fontSize: 9, fill: '#ef4444' }} />
-                <ReferenceLine yAxisId="temp" y={26} stroke="#3b82f6" strokeDasharray="3 3"
-                  label={{ value: 'Min 26°C', fontSize: 9, fill: '#3b82f6' }} />
-              </>}
+              <Line yAxisId="right" type="monotone"
+                dataKey={isBrooding ? 'avgTemp' : 'feedGpb'}
+                name={isBrooding ? 'Avg Temp °C' : 'g/bird/day'}
+                stroke={isBrooding ? '#ef4444' : '#f59e0b'}
+                strokeWidth={2}
+                dot={isBrooding
+                  ? (props) => {
+                      const { cx, cy, value } = props;
+                      if (value == null || cx == null) return <g key="empty"/>;
+                      return <circle key={`t-${cx}-${cy}`} cx={cx} cy={cy} r={5} fill="#ef4444" stroke="#fff" strokeWidth={1.5}/>;
+                    }
+                  : { r: 2 }
+                }
+                activeDot={{ r: 6 }}
+                connectNulls />
+              {isBrooding && <ReferenceLine yAxisId="right" y={38} stroke="#ef4444" strokeDasharray="3 3"
+                label={{ value: 'Max 38°C', fontSize: 9, fill: '#ef4444' }} />}
+              {isBrooding && <ReferenceLine yAxisId="right" y={26} stroke="#3b82f6" strokeDasharray="3 3"
+                label={{ value: 'Min 26°C', fontSize: 9, fill: '#3b82f6' }} />}
             </ComposedChart>
           </ResponsiveContainer>
         )}
@@ -463,6 +482,7 @@ function WorkerSectionGridCard({ sec, highlighted = false }) {
           sectionName={sec.name}
           penName={sec.penName}
           opType={sec.penOperationType}
+          stage={sec.flock?.stage || sec.metrics?.stage || 'PRODUCTION'}
           onClose={() => setModal(false)}
         />
       )}

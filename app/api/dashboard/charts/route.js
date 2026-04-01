@@ -8,14 +8,13 @@
 // Fix: all date keys are built using toLocaleDateString('en-CA') which gives
 // YYYY-MM-DD in local time, avoiding UTC shift bugs when the server runs in
 // a non-UTC timezone (e.g. WAT UTC+1).
+// Phase 8C: broiler series now includes avgTemp from temperature_logs (raw SQL).
 
 import { NextResponse } from 'next/server';
 import { prisma }       from '@/lib/db/prisma';
 import { verifyToken }  from '@/lib/middleware/auth';
 
 // Timezone-safe YYYY-MM-DD from any Date object
-// Uses local date parts so a date stored as 2026-03-20T00:00:00Z is always
-// keyed as '2026-03-20' regardless of server timezone.
 function toDateKey(d) {
   const dt = new Date(d);
   const y  = dt.getFullYear();
@@ -40,14 +39,14 @@ export async function GET(request) {
   });
   if (!section) return NextResponse.json({ error: 'Section not found' }, { status: 404 });
 
-  // Build `from` at local midnight to match how @db.Date records are stored
+  // Build `from` at local midnight
   const from = new Date();
   from.setHours(0, 0, 0, 0);
   from.setDate(from.getDate() - (days - 1));
 
   const isLayer = section.pen.operationType === 'LAYER';
 
-  // Build dateRange using local date parts — avoids UTC shift
+  // Build dateRange using local date parts
   const dateRange = Array.from({ length: days }, (_, i) => {
     const d = new Date(from);
     d.setDate(d.getDate() + i);
@@ -76,10 +75,36 @@ export async function GET(request) {
       }),
     ]);
 
-    // Key all indexes using timezone-safe date keys
     const eggIdx  = Object.fromEntries(eggs.map(r     => [toDateKey(r.collectionDate), r]));
     const mortIdx = Object.fromEntries(mortality.map(r => [toDateKey(r.recordDate), r]));
     const feedIdx = Object.fromEntries(feed.map(r      => [toDateKey(r.recordedDate), r]));
+
+    // Also fetch temperature for BROODING layer sections
+    let tempIdx = {};
+    try {
+      const tempRows = await prisma.$queryRawUnsafe(
+        `SELECT
+           date_trunc('day', "loggedAt") as day,
+           AVG("tempCelsius"::float)     as avg_temp
+         FROM temperature_logs
+         WHERE "penSectionId" = $1
+           AND "loggedAt" >= $2
+         GROUP BY date_trunc('day', "loggedAt")
+         ORDER BY day ASC`,
+        sectionId, from
+      );
+      tempIdx = Object.fromEntries(
+        tempRows.map(r => [
+          // r.day is a JS Date from Prisma raw — use toLocaleDateString to avoid UTC shift
+          r.day instanceof Date
+            ? r.day.toLocaleDateString('en-CA')   // 'en-CA' gives YYYY-MM-DD in local time
+            : String(r.day).slice(0, 10),           // fallback: slice the ISO string
+          parseFloat(Number(r.avg_temp).toFixed(1)),
+        ])
+      );
+    } catch (e) {
+      console.error('[Charts] layer temp fetch error:', e?.message);
+    }
 
     const series = dateRange.map(date => {
       const e = eggIdx[date];
@@ -102,6 +127,7 @@ export async function GET(request) {
         mortality:     mortIdx[date]?.count ?? 0,
         feedKg:        feedIdx[date] ? parseFloat(parseFloat(feedIdx[date].quantityKg).toFixed(1)) : null,
         feedGpb:       feedIdx[date]?.gramsPerBird ? parseFloat(parseFloat(feedIdx[date].gramsPerBird).toFixed(0)) : null,
+        avgTemp:       tempIdx[date] ?? null,
       };
     });
 
@@ -115,6 +141,7 @@ export async function GET(request) {
     });
 
   } else {
+    // ── BROILER ───────────────────────────────────────────────────────────────
     const [weights, mortality, feed] = await Promise.all([
       prisma.weightRecord.findMany({
         where:   { penSectionId: sectionId, recordDate: { gte: from } },
@@ -132,6 +159,33 @@ export async function GET(request) {
         orderBy: { recordedDate: 'asc' },
       }),
     ]);
+
+    // Fetch temperature separately using raw SQL (prisma.temperature_logs has naming conflicts)
+    let tempIdx = {};
+    try {
+      const tempRows = await prisma.$queryRawUnsafe(
+        `SELECT
+           date_trunc('day', "loggedAt") as day,
+           AVG("tempCelsius"::float)     as avg_temp
+         FROM temperature_logs
+         WHERE "penSectionId" = $1
+           AND "loggedAt" >= $2
+         GROUP BY date_trunc('day', "loggedAt")
+         ORDER BY day ASC`,
+        sectionId, from
+      );
+      tempIdx = Object.fromEntries(
+        tempRows.map(r => [
+          r.day instanceof Date
+            ? r.day.toLocaleDateString('en-CA')
+            : String(r.day).slice(0, 10),
+          parseFloat(Number(r.avg_temp).toFixed(1)),
+        ])
+      );
+    } catch (e) {
+      console.error('[Charts] broiler temp fetch error:', e?.message);
+    }
+    console.log('[Charts] broiler tempIdx:', JSON.stringify(tempIdx));
 
     const wtIdx   = Object.fromEntries(weights.map(r   => [toDateKey(r.recordDate), r]));
     const mortIdx = Object.fromEntries(mortality.map(r  => [toDateKey(r.recordDate), r]));
@@ -151,8 +205,13 @@ export async function GET(request) {
         mortality:     mortIdx[date]?.count ?? 0,
         feedKg:        feedIdx[date] ? parseFloat(parseFloat(feedIdx[date].quantityKg).toFixed(1)) : null,
         feedGpb:       feedIdx[date]?.gramsPerBird ? parseFloat(parseFloat(feedIdx[date].gramsPerBird).toFixed(0)) : null,
+        avgTemp:       tempIdx[date] ?? null,
       };
     });
+
+    // Debug: log entries that have avgTemp
+    const tempEntries = series.filter(s => s.avgTemp != null);
+    console.log('[Charts] series entries with avgTemp:', JSON.stringify(tempEntries));
 
     return NextResponse.json({
       isLayer:     false,
