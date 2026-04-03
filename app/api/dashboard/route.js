@@ -143,6 +143,36 @@ export async function GET(request) {
         }),
       ]);
 
+    // Fetch 7-day water consumption per section
+    // consumptionLPB is pre-computed in the table (consumptionL / bird count at time of reading)
+    let waterIdx = {};
+    if (sectionIds.length > 0) {
+      try {
+        const placeholders = sectionIds.map((_, i) => `$${i + 1}`).join(',');
+        const waterRows = await prisma.$queryRawUnsafe(
+          `SELECT DISTINCT ON ("penSectionId")
+             "penSectionId",
+             "consumptionL"::float    as consumption_l,
+             "consumptionLPB"::float  as consumption_lpb
+           FROM water_meter_readings
+           WHERE "penSectionId" IN (${placeholders})
+             AND "readingDate" >= $${sectionIds.length + 1}
+             AND "consumptionL" IS NOT NULL
+           ORDER BY "penSectionId", "readingDate" DESC`,
+          ...sectionIds,
+          sevenDaysAgo
+        );
+        waterIdx = Object.fromEntries(
+          waterRows.map(r => [r.penSectionId, {
+            latestConsumptionL:   parseFloat(Number(r.consumption_l  || 0).toFixed(2)),
+            latestConsumptionLPB: parseFloat(Number(r.consumption_lpb || 0).toFixed(3)),
+          }])
+        );
+      } catch (waterErr) {
+        console.error('[Dashboard] water fetch error:', waterErr?.message);
+      }
+    }
+
     // Fetch brooder temperatures SEPARATELY — outside Promise.all to avoid position mismatch
     let latestTemps = [];
     if (sectionIds.length > 0) {
@@ -253,6 +283,8 @@ export async function GET(request) {
           todayGradeAPct: gradeAPct, todayLayingRate: tEgg.rate,
           weekEggs: wEgg.total, weekGradeAPct: wGradeAPct, avgLayingRate: wEgg.rate,
           avgDailyFeedKg: avgDailyFeed, feedGramsPerBird: feedData.gpb,
+          avgWaterLPB: waterIdx[sec.id]?.latestConsumptionLPB ?? null,
+          latestWaterL: waterIdx[sec.id]?.latestConsumptionL ?? null,
         } : {
           type: 'BROILER',
           stage: flock?.stage || 'PRODUCTION',   // ← expose stage for BROILER sections too
@@ -261,6 +293,8 @@ export async function GET(request) {
           estimatedFCR, daysToHarvest, ageInDays,
           weekFeedKg: feedData.kg, avgDailyFeedKg: avgDailyFeed, feedGramsPerBird: feedData.gpb,
           latestBrooderTemp: idx.latestBrooderTemp[sec.id] !== undefined ? idx.latestBrooderTemp[sec.id] : null,
+          avgWaterLPB: waterIdx[sec.id]?.latestConsumptionLPB ?? null,
+          latestWaterL: waterIdx[sec.id]?.latestConsumptionL ?? null,
         },
       };
     });

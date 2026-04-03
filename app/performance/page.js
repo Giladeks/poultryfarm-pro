@@ -1,86 +1,81 @@
 'use client';
-// app/performance/page.js — Layer Performance
-// For PRODUCTION workers: egg collection charts and records (unchanged)
-// For BROODING/REARING workers: weight growth, FCR, uniformity charts and weight records
+// app/eggs/page.js — Layer Performance (formerly Egg Collection)
 import { useState, useEffect, useCallback } from 'react';
 import AppShell from '@/components/layout/AppShell';
 import { useAuth } from '@/components/layout/AuthProvider';
 import PortalModal from '@/components/ui/Modal';
 import {
   ComposedChart, LineChart, Line, BarChart, Bar, XAxis, YAxis,
-  CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine,
+  CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from 'recharts';
 
 const PERIOD_OPTIONS = [7, 14, 30, 90];
 const GRADE_COLORS   = { gradeA: '#16a34a', gradeB: '#f59e0b', cracked: '#ef4444', dirty: '#9ca3af' };
 const fmt            = n => Number(n || 0).toLocaleString('en-NG');
 const fmtDate        = d => new Date(d).toLocaleDateString('en-NG', { day: 'numeric', month: 'short' });
-const fmtWt          = g => g != null ? `${(g / 1000).toFixed(3)} kg` : '—';
 
-// ── ISA Brown / Lohmann standard pullet weight by week (grams) ────────────────
-const PULLET_STANDARD = { 1:70, 2:120, 3:180, 4:250, 5:330, 6:420, 7:520, 8:630, 9:750, 10:880, 11:1020, 12:1170, 13:1320, 14:1470, 15:1600, 16:1700, 17:1780, 18:1830 };
-function getPulletStandard(ageInDays) {
-  const week = Math.floor(ageInDays / 7);
-  const keys = Object.keys(PULLET_STANDARD).map(Number).sort((a,b)=>a-b);
-  for (let i = keys.length-1; i>=0; i--) { if (week >= keys[i]) return PULLET_STANDARD[keys[i]]; }
-  return PULLET_STANDARD[1];
+// ── Status helpers ────────────────────────────────────────────────────────────
+function layRateStatus(r)     { if (r==null) return 'neutral'; return r>=82?'good':r>=70?'warn':'critical'; }
+function gradeAStatus(p)      { if (p==null) return 'neutral'; return p>=85?'good':p>=75?'warn':'critical'; }
+function mortalityStatus(r7d) { if (r7d==null) return 'neutral'; return r7d<=0.05?'good':r7d<=0.15?'warn':'critical'; }
+function waterStatus(a, b)    { if (!a||!b) return 'neutral'; const r=a/b; return r>=0.85?'good':r>=0.65?'warn':'critical'; }
+function layerWaterBenchmark(age) {
+  if (!age) return 0.30;
+  if (age < 28)  return 0.08;
+  if (age < 119) return 0.18;
+  return 0.30;
 }
 
-// ── Status helpers ─────────────────────────────────────────────────────────────
-function layRateStatus(r)       { return r==null?'neutral':r>=82?'good':r>=70?'warn':'critical'; }
-function gradeAStatus(p)        { return p==null?'neutral':p>=85?'good':p>=75?'warn':'critical'; }
-function mortalityStatus(r7d)   { return r7d==null?'neutral':r7d<=0.05?'good':r7d<=0.15?'warn':'critical'; }
-function waterStatus(a,b)       { if(!a||!b)return'neutral'; const r=a/b; return r>=0.85?'good':r>=0.65?'warn':'critical'; }
-function fcrStatus(f)           { return !f?'neutral':f<=2.5?'good':f<=3.5?'warn':'critical'; }
-function uniformityStatus(p)    { return p==null?'neutral':p>=80?'good':p>=70?'warn':'critical'; }
-function weightStatus(a,s)      { if(!a||!s)return'neutral'; const p=a/s; return p>=0.95?'good':p>=0.85?'warn':'critical'; }
-function layerWaterBenchmark(age){ if(!age)return 0.30; if(age<28)return 0.08; if(age<119)return 0.18; return 0.30; }
+const STATUS_COLOR = { good:'#16a34a', warn:'#d97706', critical:'#ef4444', neutral:'#6b7280' };
+const STATUS_BG    = { good:'#f0fdf4', warn:'#fffbeb', critical:'#fef2f2', neutral:'#f8fafc' };
+const STATUS_BORDER= { good:'#bbf7d0', warn:'#fde68a', critical:'#fecaca', neutral:'#e2e8f0' };
 
-const STATUS_COLOR  = { good:'#16a34a', warn:'#d97706', critical:'#ef4444', neutral:'#6b7280' };
-const STATUS_BG     = { good:'#f0fdf4', warn:'#fffbeb', critical:'#fef2f2', neutral:'#f8fafc' };
-const STATUS_BORDER = { good:'#bbf7d0', warn:'#fde68a', critical:'#fecaca', neutral:'#e2e8f0' };
-
-function PerfKpiCard({ icon, label, value, sub, delta, status='neutral' }) {
-  const col=STATUS_COLOR[status]; const bg=STATUS_BG[status]; const bdr=STATUS_BORDER[status];
+// ── Performance KPI card ──────────────────────────────────────────────────────
+function PerfKpiCard({ icon, label, value, sub, delta, status = 'neutral' }) {
+  const col = STATUS_COLOR[status] || STATUS_COLOR.neutral;
+  const bg  = STATUS_BG[status]    || STATUS_BG.neutral;
+  const bdr = STATUS_BORDER[status]|| STATUS_BORDER.neutral;
   return (
-    <div style={{ background:bg, border:`1.5px solid ${bdr}`, borderRadius:14, padding:'16px 18px', display:'flex', flexDirection:'column', gap:6 }}>
-      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start' }}>
-        <span style={{ fontSize:10, fontWeight:700, textTransform:'uppercase', letterSpacing:'0.07em', color:'var(--text-muted)' }}>{label}</span>
-        <span style={{ fontSize:20 }}>{icon}</span>
+    <div style={{ background: bg, border: `1.5px solid ${bdr}`, borderRadius: 14, padding: '16px 18px', display:'flex', flexDirection:'column', gap: 6 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-muted)' }}>{label}</span>
+        <span style={{ fontSize: 20 }}>{icon}</span>
       </div>
-      <div style={{ fontFamily:"'Poppins',sans-serif", fontSize:24, fontWeight:700, color:col, lineHeight:1 }}>{value}</div>
-      {sub   && <div style={{ fontSize:11, color:'var(--text-muted)' }}>{sub}</div>}
-      {delta && <div style={{ fontSize:11, fontWeight:600, color:col }}>{delta}</div>}
+      <div style={{ fontFamily: "'Poppins',sans-serif", fontSize: 24, fontWeight: 700, color: col, lineHeight: 1 }}>{value}</div>
+      {sub   && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{sub}</div>}
+      {delta && <div style={{ fontSize: 11, fontWeight: 600, color: col }}>{delta}</div>}
     </div>
   );
 }
 
+// ── Simple egg-page KPI card (period aggregates) ───────────────────────────────
 function KpiCard({ icon, label, value, sub, color }) {
   return (
-    <div className="card" style={{ padding:'16px 20px' }}>
-      <div style={{ display:'flex', justifyContent:'space-between', marginBottom:10 }}>
-        <span style={{ fontSize:11, fontWeight:700, textTransform:'uppercase', letterSpacing:'0.07em', color:'var(--text-muted)' }}>{label}</span>
-        <span style={{ fontSize:20 }}>{icon}</span>
+    <div className="card" style={{ padding: '16px 20px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
+        <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-muted)' }}>{label}</span>
+        <span style={{ fontSize: 20 }}>{icon}</span>
       </div>
-      <div style={{ fontFamily:"'Poppins',sans-serif", fontSize:24, fontWeight:700, color:color||'var(--text-primary)', lineHeight:1 }}>{value}</div>
-      {sub && <div style={{ fontSize:11, color:'var(--text-muted)', marginTop:6 }}>{sub}</div>}
+      <div style={{ fontFamily: "'Poppins',sans-serif", fontSize: 24, fontWeight: 700, color: color || 'var(--text-primary)', lineHeight: 1 }}>{value}</div>
+      {sub && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6 }}>{sub}</div>}
     </div>
   );
 }
 
-function Skeleton({ h=60 }) { return <div style={{ height:h, background:'var(--bg-elevated)', borderRadius:8, animation:'pulse 1.5s infinite' }} />; }
-function EmptyState({ msg='No data for this period' }) { return <div style={{ height:120, display:'flex', alignItems:'center', justifyContent:'center', color:'var(--text-muted)', fontSize:12 }}>{msg}</div>; }
+function Skeleton({ h = 60 }) {
+  return <div style={{ height: h, background: 'var(--bg-elevated)', borderRadius: 8, animation: 'pulse 1.5s infinite' }} />;
+}
 
 function ChartTooltip({ active, payload, label }) {
-  if (!active||!payload?.length) return null;
+  if (!active || !payload?.length) return null;
   return (
-    <div style={{ background:'#fff', border:'1px solid var(--border)', borderRadius:9, padding:'10px 14px', fontSize:12, boxShadow:'0 4px 16px rgba(0,0,0,0.08)' }}>
-      <div style={{ fontWeight:700, marginBottom:6 }}>{label}</div>
-      {payload.map((p,i) => (
-        <div key={i} style={{ display:'flex', gap:6, alignItems:'center', marginTop:2 }}>
-          <span style={{ width:8, height:8, borderRadius:'50%', background:p.color, display:'inline-block' }} />
-          <span style={{ color:'var(--text-secondary)' }}>{p.name}:</span>
-          <span style={{ fontWeight:700, color:p.color }}>{typeof p.value==='number'?p.value.toLocaleString('en-NG',{maximumFractionDigits:2}):p.value}</span>
+    <div style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: 9, padding: '10px 14px', fontSize: 12, boxShadow: '0 4px 16px rgba(0,0,0,0.08)' }}>
+      <div style={{ fontWeight: 700, marginBottom: 6 }}>{label}</div>
+      {payload.map((p, i) => (
+        <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 2 }}>
+          <span style={{ width: 8, height: 8, borderRadius: '50%', background: p.color, display: 'inline-block' }} />
+          <span style={{ color: 'var(--text-secondary)' }}>{p.name}:</span>
+          <span style={{ fontWeight: 700, color: p.color }}>{fmt(p.value)}</span>
         </div>
       ))}
     </div>
@@ -90,40 +85,200 @@ function ChartTooltip({ active, payload, label }) {
 // ── Log Egg Modal ─────────────────────────────────────────────────────────────
 function LogEggModal({ flocks, onClose, onSave, apiFetch }) {
   const today = new Date().toISOString().split('T')[0];
-  const [form, setForm] = useState({ flockId:'', penSectionId:'', collectionDate:today, collectionSession:'1', cratesCollected:'', looseEggs:'', crackedCount:'' });
+  const [form, setForm] = useState({
+    flockId: '', penSectionId: '',
+    collectionDate:   today,
+    collectionSession: '1',
+    cratesCollected:  '',
+    looseEggs:        '',
+    crackedCount:     '',
+  });
   const [saving, setSaving] = useState(false);
   const [error,  setError]  = useState('');
-  const set = (k,v) => setForm(p=>({...p,[k]:v}));
-  const selectedFlock = flocks.find(f=>f.id===form.flockId);
-  const crates = Math.max(0,Number(form.cratesCollected)||0);
-  const loose  = Math.max(0,Number(form.looseEggs)||0);
-  const cracked= Math.max(0,Number(form.crackedCount)||0);
-  const total  = crates*30+loose;
+  const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
+
+  const selectedFlock = flocks.find(f => f.id === form.flockId);
+  const crates  = Math.max(0, Number(form.cratesCollected) || 0);
+  const loose   = Math.max(0, Number(form.looseEggs)       || 0);
+  const cracked = Math.max(0, Number(form.crackedCount)    || 0);
+  const total   = (crates * 30) + loose + cracked;
+  const layingPct = selectedFlock?.currentCount > 0 ? ((total / selectedFlock.currentCount) * 100).toFixed(1) : null;
+
   async function save() {
-    if (!form.flockId||crates===0&&loose===0) return setError('Select a flock and enter at least one crate or loose eggs');
+    if (!form.flockId)             return setError('Select a flock');
+    if (crates <= 0 && loose <= 0) return setError('Enter at least crates or loose eggs collected');
     setSaving(true); setError('');
     try {
-      const res = await apiFetch('/api/eggs', { method:'POST', body:JSON.stringify({ flockId:form.flockId, penSectionId:selectedFlock?.penSectionId||'', collectionDate:form.collectionDate, collectionSession:Number(form.collectionSession), cratesCollected:crates, looseEggs:loose, crackedCount:cracked, totalEggs:total }) });
+      const res = await apiFetch('/api/eggs', {
+        method: 'POST',
+        body: JSON.stringify({
+          flockId: form.flockId, penSectionId: form.penSectionId,
+          collectionDate:   form.collectionDate,
+          collectionSession: Number(form.collectionSession),
+          cratesCollected:  crates,
+          looseEggs:        loose,
+          crackedCount:     cracked,
+          totalEggs:        total,
+        }),
+      });
       const d = await res.json();
-      if (!res.ok) return setError(d.error||'Failed');
+      if (!res.ok) return setError(d.error || 'Failed to save');
       onSave();
     } finally { setSaving(false); }
   }
+
   return (
-    <PortalModal title="🥚 Log Egg Collection" onClose={onClose} footer={<><button className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-primary" onClick={save} disabled={saving}>{saving?'Saving…':'Save'}</button></>}>
-      {error && <div className="alert alert-red" style={{marginBottom:12}}>⚠ {error}</div>}
-      <div style={{display:'flex',flexDirection:'column',gap:12}}>
-        <div><label className="label">Flock *</label><select className="input" value={form.flockId} onChange={e=>{const f=flocks.find(x=>x.id===e.target.value);set('flockId',e.target.value);set('penSectionId',f?.penSectionId||'');}}><option value="">Select flock</option>{flocks.map(f=><option key={f.id} value={f.id}>{f.batchCode} — {f.penSection?.pen?.name} · {f.penSection?.name}</option>)}</select></div>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
-          <div><label className="label">Date</label><input type="date" className="input" value={form.collectionDate} onChange={e=>set('collectionDate',e.target.value)}/></div>
-          <div><label className="label">Session</label><select className="input" value={form.collectionSession} onChange={e=>set('collectionSession',e.target.value)}><option value="1">Morning</option><option value="2">Afternoon</option></select></div>
+    <PortalModal title="🥚 Log Egg Collection" width={480} onClose={onClose}
+      footer={<><button className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save Record'}</button></>}>
+      {error && <div className="alert alert-red" style={{ marginBottom: 12 }}>⚠ {error}</div>}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div>
+          <label className="label">Layer Flock *</label>
+          <select className="input" value={form.flockId} onChange={e => { const f = flocks.find(x => x.id === e.target.value); set('flockId', e.target.value); set('penSectionId', f?.penSectionId || ''); }}>
+            <option value="">— Select flock —</option>
+            {flocks.map(f => <option key={f.id} value={f.id}>{f.batchCode} · {f.penSection?.pen?.name} › {f.penSection?.name} · {fmt(f.currentCount)} birds</option>)}
+          </select>
         </div>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12}}>
-          <div><label className="label">Crates (×30)</label><input type="number" className="input" min="0" value={form.cratesCollected} onChange={e=>set('cratesCollected',e.target.value)}/></div>
-          <div><label className="label">Loose Eggs</label><input type="number" className="input" min="0" max="29" value={form.looseEggs} onChange={e=>set('looseEggs',e.target.value)}/></div>
-          <div><label className="label">Cracked</label><input type="number" className="input" min="0" value={form.crackedCount} onChange={e=>set('crackedCount',e.target.value)}/></div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div>
+            <label className="label">Collection Date *</label>
+            <input type="date" className="input" value={form.collectionDate} onChange={e => set('collectionDate', e.target.value)} max={today} />
+          </div>
+          <div>
+            <label className="label">Session *</label>
+            <select className="input" value={form.collectionSession} onChange={e => set('collectionSession', e.target.value)}>
+              <option value="1">Morning (Batch 1)</option>
+              <option value="2">Afternoon (Batch 2)</option>
+            </select>
+          </div>
         </div>
-        {total>0&&<div style={{textAlign:'right',fontSize:12,color:'var(--purple)',fontWeight:700}}>Total: {fmt(total)} eggs</div>}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10 }}>
+          <div>
+            <label className="label">Full Crates *</label>
+            <input type="number" className="input" min="0" value={form.cratesCollected} onChange={e => set('cratesCollected', e.target.value)} placeholder="0" />
+            <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 3 }}>30 eggs each</div>
+          </div>
+          <div>
+            <label className="label">Loose Eggs</label>
+            <input type="number" className="input" min="0" max="29" value={form.looseEggs} onChange={e => set('looseEggs', e.target.value)} placeholder="0" />
+            <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 3 }}>Under 1 crate</div>
+          </div>
+          <div>
+            <label className="label">Cracked</label>
+            <input type="number" className="input" min="0" value={form.crackedCount} onChange={e => set('crackedCount', e.target.value)} placeholder="0" />
+            <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 3 }}>Reduced price</div>
+          </div>
+        </div>
+        <div style={{ padding: '12px 14px', background: 'var(--purple-light)', borderRadius: 9, border: '1px solid #d4d8ff' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: 12, color: 'var(--purple)', fontWeight: 700 }}>Total: {fmt(total)} eggs</span>
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>({crates} × 30) + {loose} loose + {cracked} cracked</span>
+          </div>
+          {layingPct && (
+            <div style={{ fontSize: 11, marginTop: 4 }}>
+              Laying rate: <strong style={{ color: Number(layingPct) >= 80 ? 'var(--green)' : Number(layingPct) >= 70 ? 'var(--amber)' : 'var(--red)' }}>{layingPct}%</strong>
+              <span style={{ color: 'var(--text-muted)', marginLeft: 6 }}>Grade A % set by Pen Manager on verification</span>
+            </div>
+          )}
+        </div>
+      </div>
+    </PortalModal>
+  );
+}
+
+// ── Edit Egg Modal ────────────────────────────────────────────────────────────
+function EditEggModal({ record, flocks, onClose, onSave, apiFetch }) {
+  const today = new Date().toISOString().split('T')[0];
+  const [form, setForm] = useState({
+    collectionDate:   record.collectionDate?.split('T')[0] || today,
+    collectionSession: String(record.collectionSession || '1'),
+    cratesCollected:  String(record.cratesCollected || ''),
+    looseEggs:        String(record.looseEggs        || ''),
+    crackedCount:     String(record.crackedCount     || ''),
+  });
+  const [saving, setSaving] = useState(false);
+  const [error,  setError]  = useState('');
+  const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
+
+  const selectedFlock = flocks.find(f => f.id === record.flockId);
+  const crates  = Math.max(0, Number(form.cratesCollected) || 0);
+  const loose   = Math.max(0, Number(form.looseEggs)       || 0);
+  const cracked = Math.max(0, Number(form.crackedCount)    || 0);
+  const total   = (crates * 30) + loose + cracked;
+  const layingPct = selectedFlock?.currentCount > 0 ? ((total / selectedFlock.currentCount) * 100).toFixed(1) : null;
+
+  async function save() {
+    if (crates <= 0 && loose <= 0) return setError('Enter at least crates or loose eggs collected');
+    setSaving(true); setError('');
+    try {
+      const res = await apiFetch(`/api/eggs/${record.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          collectionDate:   form.collectionDate,
+          collectionSession: Number(form.collectionSession),
+          cratesCollected:  crates,
+          looseEggs:        loose,
+          crackedCount:     cracked,
+          totalEggs:        total,
+        }),
+      });
+      const d = await res.json();
+      if (!res.ok) return setError(d.error || 'Failed to save');
+      onSave();
+    } finally { setSaving(false); }
+  }
+
+  return (
+    <PortalModal title="✏️ Correct & Resubmit" width={480} onClose={onClose}
+      footer={<><button className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Resubmit Record'}</button></>}>
+      {record.rejectionReason && (
+        <div style={{ marginBottom: 14, padding: '10px 14px', background: '#fff5f5', border: '1px solid #fecaca', borderRadius: 8, fontSize: 12 }}>
+          <div style={{ fontWeight: 700, color: '#dc2626', marginBottom: 2 }}>↩ Returned for correction</div>
+          <div style={{ color: '#7f1d1d' }}>{record.rejectionReason}</div>
+        </div>
+      )}
+      {error && <div className="alert alert-red" style={{ marginBottom: 12 }}>⚠ {error}</div>}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div style={{ padding: '9px 12px', background: 'var(--bg-elevated)', borderRadius: 8, border: '1px solid var(--border)', fontSize: 13, color: 'var(--text-muted)' }}>
+          {record.flock?.batchCode} · {record.penSection?.pen?.name} › {record.penSection?.name}
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div>
+            <label className="label">Collection Date *</label>
+            <input type="date" className="input" value={form.collectionDate} onChange={e => set('collectionDate', e.target.value)} max={today} />
+          </div>
+          <div>
+            <label className="label">Session *</label>
+            <select className="input" value={form.collectionSession} onChange={e => set('collectionSession', e.target.value)}>
+              <option value="1">Morning (Batch 1)</option>
+              <option value="2">Afternoon (Batch 2)</option>
+            </select>
+          </div>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10 }}>
+          <div>
+            <label className="label">Full Crates *</label>
+            <input type="number" className="input" min="0" value={form.cratesCollected} onChange={e => set('cratesCollected', e.target.value)} placeholder="0" />
+            <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 3 }}>30 eggs each</div>
+          </div>
+          <div>
+            <label className="label">Loose Eggs</label>
+            <input type="number" className="input" min="0" max="29" value={form.looseEggs} onChange={e => set('looseEggs', e.target.value)} placeholder="0" />
+            <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 3 }}>Under 1 crate</div>
+          </div>
+          <div>
+            <label className="label">Cracked</label>
+            <input type="number" className="input" min="0" value={form.crackedCount} onChange={e => set('crackedCount', e.target.value)} placeholder="0" />
+            <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 3 }}>Reduced price</div>
+          </div>
+        </div>
+        <div style={{ padding: '12px 14px', background: 'var(--purple-light)', borderRadius: 9, border: '1px solid #d4d8ff' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: 12, color: 'var(--purple)', fontWeight: 700 }}>Total: {fmt(total)} eggs</span>
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>({crates} × 30) + {loose} + {cracked}</span>
+          </div>
+          {layingPct && <div style={{ fontSize: 11, marginTop: 4, color: 'var(--text-muted)' }}>Laying rate: <strong style={{ color: Number(layingPct) >= 80 ? 'var(--green)' : Number(layingPct) >= 70 ? 'var(--amber)' : 'var(--red)' }}>{layingPct}%</strong></div>}
+        </div>
       </div>
     </PortalModal>
   );
@@ -132,65 +287,71 @@ function LogEggModal({ flocks, onClose, onSave, apiFetch }) {
 // ── Main Page ─────────────────────────────────────────────────────────────────
 export default function EggsPage() {
   const { apiFetch, user } = useAuth();
-  const [days,         setDays]         = useState(30);
-  const [data,         setData]         = useState(null);
-  const [weightData,   setWeightData]   = useState(null); // for brooding workers
-  const [flocks,       setFlocks]       = useState([]);
-  const [flockFilter,  setFlockFilter]  = useState('');
-  const [loading,      setLoading]      = useState(true);
-  const [showModal,    setShowModal]    = useState(false);
-  const [tab,          setTab]          = useState('overview');
-  const [dashData,     setDashData]     = useState(null);
 
-  const canLog   = ['PEN_WORKER','PEN_MANAGER','FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN'].includes(user?.role);
+  const [days,        setDays]        = useState(30);
+  const [data,        setData]        = useState(null);
+  const [flocks,      setFlocks]      = useState([]);
+  const [flockFilter, setFlockFilter] = useState('');
+  const [loading,     setLoading]     = useState(true);
+  const [showModal,   setShowModal]   = useState(false);
+  const [editRecord,  setEditRecord]  = useState(null);
+  const [tab,         setTab]         = useState('overview');
+
+  // Section-level KPI data from dashboard API
+  const [dashData, setDashData] = useState(null);
+
+  const canLog = ['PEN_WORKER','PEN_MANAGER','FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN'].includes(user?.role);
+  const isWorker = user?.role === 'PEN_WORKER';
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [eggRes, flockRes, dashRes, weightRes] = await Promise.all([
-        apiFetch(`/api/eggs?days=${days}${flockFilter?`&flockId=${flockFilter}`:''}`),
+      // Fetch eggs, farm-structure, dashboard, and charts (for feed-by-date)
+      // We get the first layer section from dashboard to use for the charts feed query.
+      const [eggRes, flockRes, dashRes] = await Promise.all([
+        apiFetch(`/api/eggs?days=${days}${flockFilter ? `&flockId=${flockFilter}` : ''}`),
         apiFetch('/api/farm-structure'),
         apiFetch('/api/dashboard'),
-        apiFetch(`/api/weight-samples?days=${days}`),
       ]);
-
-      // Parse dashRes ONCE
-      const dashJson = dashRes?.ok ? await dashRes.json().catch(()=>null) : null;
+      // Parse dashRes once — it's used both for chart section lookup and for setDashData
+      const dashJson = dashRes?.ok ? await dashRes.json().catch(() => null) : null;
       if (dashJson) setDashData(dashJson);
 
       if (eggRes.ok) {
         const eggData = await eggRes.json();
-        // Feed overlay for production layer sections
-        const layerSec = (dashJson?.sections||[]).find(
-          s=>(s.penOperationType==='LAYER'||s.metrics?.type==='LAYER')&&(s.metrics?.stage==='PRODUCTION'||!s.metrics?.stage)
-        );
-        if (layerSec?.id) {
-          const chartRes = await apiFetch(`/api/dashboard/charts?sectionId=${layerSec.id}&days=${days}`);
-          if (chartRes?.ok) {
-            const chartJson = await chartRes.json();
-            const feedByDate={};
-            (chartJson.series||chartJson.chart||[]).forEach(pt=>{
-              if(pt.date&&pt.feedKg!=null) feedByDate[pt.date]=parseFloat(Number(pt.feedKg).toFixed(1));
-            });
-            eggData._feedByDate=feedByDate;
+        // Get the first layer section to fetch chart data with server-aggregated feed
+        if (dashJson) {
+          const layerSec = (dashJson.sections || []).find(
+            s => s.penOperationType === 'LAYER' || s.metrics?.type === 'LAYER'
+          );
+          if (layerSec?.id) {
+            const chartRes = await apiFetch(
+              `/api/dashboard/charts?sectionId=${layerSec.id}&days=${days}`
+            );
+            if (chartRes?.ok) {
+              const chartJson = await chartRes.json();
+              const feedByDate = {};
+              (chartJson.series || chartJson.chart || []).forEach(pt => {
+                if (pt.date && pt.feedKg != null) {
+                  feedByDate[pt.date] = parseFloat(Number(pt.feedKg).toFixed(1));
+                }
+              });
+              eggData._feedByDate = feedByDate;
+            }
           }
         }
         setData(eggData);
+      } else {
+        const errBody = await eggRes.json().catch(() => ({}));
+        console.error('Eggs API error', eggRes.status, errBody?.detail || errBody?.error || errBody);
       }
-
-      if (weightRes?.ok) {
-        const wd = await weightRes.json();
-        setWeightData(wd);
-      }
-
       if (flockRes.ok) {
         const d = await flockRes.json();
-        const layerFlocks = (d.farms||[]).flatMap(farm=>
-          farm.pens.filter(p=>p.operationType==='LAYER').flatMap(pen=>
-            pen.sections.filter(sec=>sec.activeFlock).map(sec=>({
-              ...sec.activeFlock, penSectionId:sec.id,
-              penSection:{id:sec.id,name:sec.name,pen:{name:pen.name}},
-            }))
+        const layerFlocks = (d.farms || []).flatMap(farm =>
+          farm.pens.filter(p => p.operationType === 'LAYER').flatMap(pen =>
+            pen.sections
+              .filter(sec => sec.activeFlock)
+              .map(sec => ({ ...sec.activeFlock, penSectionId: sec.id, penSection: { id: sec.id, name: sec.name, pen: { name: pen.name } } }))
           )
         );
         setFlocks(layerFlocks);
@@ -198,502 +359,359 @@ export default function EggsPage() {
     } finally { setLoading(false); }
   }, [apiFetch, days, flockFilter]);
 
-  useEffect(()=>{load();},[load]);
+  useEffect(() => { load(); }, [load]);
 
-  // ── Section classification ─────────────────────────────────────────────────
-  const sections         = dashData?.sections || [];
-  const layerSections    = sections.filter(s=>s.penOperationType==='LAYER'||s.metrics?.type==='LAYER');
-  const productionSections = layerSections.filter(s=>!s.metrics?.stage||s.metrics.stage==='PRODUCTION');
-  const broodingSections   = layerSections.filter(s=>s.metrics?.stage==='BROODING'||s.metrics?.stage==='REARING');
-  const workerIsBroodingOnly = layerSections.length>0 && productionSections.length===0;
-  const broodingStage    = broodingSections[0]?.metrics?.stage || 'REARING';
-
-  // ── Egg page aggregates ────────────────────────────────────────────────────
-  const {summary={},records=[]} = data||{};
-  const chartData = buildChartData(records);
-  if (data?._feedByDate && Object.keys(data._feedByDate).length>0) {
-    chartData.forEach(d=>{ const k=String(d.date).slice(0,10); const f=data._feedByDate[k]; d.feedKg=f!=null?parseFloat(Number(f).toFixed(1)):null; });
+  const { summary = {}, records = [] } = data || {};
+  const chartData = buildChartData(records, days);
+  // Merge server-aggregated feed into chart data by date key
+  if (data?._feedByDate && Object.keys(data._feedByDate).length > 0) {
+    chartData.forEach(d => {
+      const key    = d.date ? String(d.date).slice(0, 10) : '';
+      const feedKg = data._feedByDate[key];
+      d.feedKg     = feedKg != null ? parseFloat(Number(feedKg).toFixed(1)) : null;
+    });
   }
-  const gradeData=[
-    {name:'Grade A',value:summary.totalGradeA||0,color:GRADE_COLORS.gradeA},
-    {name:'Grade B',value:summary.totalGradeB||0,color:GRADE_COLORS.gradeB},
-    {name:'Cracked',value:summary.totalCracked||0,color:GRADE_COLORS.cracked},
-    {name:'Dirty',  value:summary.totalDirty||0,  color:GRADE_COLORS.dirty},
-  ].filter(g=>g.value>0);
+  const gradeData = [
+    { name: 'Grade A', value: summary.totalGradeA || 0, color: GRADE_COLORS.gradeA },
+    { name: 'Grade B', value: summary.totalGradeB || 0, color: GRADE_COLORS.gradeB },
+    { name: 'Cracked', value: summary.totalCracked || 0, color: GRADE_COLORS.cracked },
+    { name: 'Dirty',   value: summary.totalDirty || 0,   color: GRADE_COLORS.dirty },
+  ].filter(g => g.value > 0);
 
-  // ── Egg section KPIs ──────────────────────────────────────────────────────
-  const eggSections  = productionSections;
-  const totBirds     = layerSections.reduce((a,s)=>a+(s.currentBirds||0),0);
-  const totDead7     = layerSections.reduce((a,s)=>a+(s.metrics?.weekMortality||0),0);
-  const mortRate     = totBirds>0?parseFloat(((totDead7/totBirds)*100).toFixed(2)):0;
-  const todayEggs    = eggSections.reduce((a,s)=>a+(s.metrics?.todayEggs||0),0);
-  const weekEggs     = eggSections.reduce((a,s)=>a+(s.metrics?.weekEggs||0),0);
-  const rateSecns    = eggSections.filter(s=>(s.metrics?.todayLayingRate||0)>0);
-  const avgRate      = rateSecns.length?parseFloat((rateSecns.reduce((a,s)=>a+(s.metrics?.todayLayingRate||0),0)/rateSecns.length).toFixed(1)):null;
-  const gradeASecns  = eggSections.filter(s=>(s.metrics?.todayGradeAPct||0)>0);
-  const gradeAPct    = gradeASecns.length?parseFloat((gradeASecns.reduce((a,s)=>a+(s.metrics?.todayGradeAPct||0),0)/gradeASecns.length).toFixed(1)):null;
-  const waterSecns   = layerSections.filter(s=>s.metrics?.avgWaterLPB!=null);
-  const avgWater     = waterSecns.length?parseFloat((waterSecns.reduce((a,s)=>a+(s.metrics?.avgWaterLPB||0),0)/waterSecns.length).toFixed(2)):null;
-  const avgAge       = layerSections.length?Math.round(layerSections.reduce((a,s)=>a+(s.ageInDays||180),0)/layerSections.length):180;
-  const waterBench   = layerWaterBenchmark(avgAge);
+  // ── Build section-scoped KPI cards from dashboard data ─────────────────────
+  // For PEN_WORKER: use sections[]. For PEN_MANAGER/FARM_MANAGER: use pens[].
+  const sections = dashData?.sections || [];
+  const layerSections = sections.filter(s => s.penOperationType === 'LAYER' || s.metrics?.type === 'LAYER');
 
-  // ── Weight / brooding aggregates ───────────────────────────────────────────
-  const weightSamples   = weightData?.samples || [];
-  const wSummary        = weightData?.summary || {};
-  const latestWt        = weightSamples.length ? weightSamples[weightSamples.length-1] : null;
-  const latestAvgG      = latestWt ? Number(latestWt.meanWeightG||latestWt.avgWeightG||0) : null;
-  const latestAgeInDays = latestWt ? Number(latestWt.ageInDays||latestWt.sampleDate&&Math.floor((Date.now()-new Date(latestWt.sampleDate))/86400000)||0) : null;
-  const standardG       = latestAgeInDays ? getPulletStandard(latestAgeInDays) : null;
-  const latestUniformity= latestWt ? Number(latestWt.uniformityPct||0)||null : null;
+  const totBirds   = layerSections.reduce((a, s) => a + (s.currentBirds || 0), 0);
+  const totDead7   = layerSections.reduce((a, s) => a + (s.metrics?.weekMortality || 0), 0);
+  const mortRate   = totBirds > 0 ? parseFloat(((totDead7 / totBirds) * 100).toFixed(2)) : 0;
+  const todayEggs  = layerSections.reduce((a, s) => a + (s.metrics?.todayEggs || 0), 0);
+  const weekEggs   = layerSections.reduce((a, s) => a + (s.metrics?.weekEggs || 0), 0);
+  const rateSecns  = layerSections.filter(s => (s.metrics?.todayLayingRate || 0) > 0);
+  const avgRate    = rateSecns.length ? parseFloat((rateSecns.reduce((a, s) => a + (s.metrics?.todayLayingRate || 0), 0) / rateSecns.length).toFixed(1)) : null;
+  const gradeASecns= layerSections.filter(s => (s.metrics?.todayGradeAPct || 0) > 0);
+  const gradeAPct  = gradeASecns.length ? parseFloat((gradeASecns.reduce((a, s) => a + (s.metrics?.todayGradeAPct || 0), 0) / gradeASecns.length).toFixed(1)) : null;
+  const waterSecns = layerSections.filter(s => s.metrics?.avgWaterLPB != null);
+  const avgWater   = waterSecns.length ? parseFloat((waterSecns.reduce((a, s) => a + (s.metrics?.avgWaterLPB || 0), 0) / waterSecns.length).toFixed(2)) : null;
+  const avgAge     = layerSections.length ? Math.round(layerSections.reduce((a, s) => a + (s.ageInDays || 180), 0) / layerSections.length) : 180;
+  const waterBench = layerWaterBenchmark(avgAge);
 
-  // FCR from brooding section metrics
-  const broodingFCRSecs = broodingSections.filter(s=>s.metrics?.estimatedFCR);
-  const avgBroodingFCR  = broodingFCRSecs.length
-    ? parseFloat((broodingFCRSecs.reduce((a,s)=>a+s.metrics.estimatedFCR,0)/broodingFCRSecs.length).toFixed(2)) : null;
-  const broodingTotBirds= broodingSections.reduce((a,s)=>a+(s.currentBirds||0),0);
-  const broodingTotDead = broodingSections.reduce((a,s)=>a+(s.metrics?.weekMortality||0),0);
-  const broodingMortRate= broodingTotBirds>0?parseFloat(((broodingTotDead/broodingTotBirds)*100).toFixed(2)):0;
-  const broodingFeedKg  = broodingSections.reduce((a,s)=>a+(s.metrics?.avgDailyFeedKg||0),0);
-  const broodingWaterL  = broodingSections.reduce((a,s)=>a+(s.metrics?.avgWaterLPB||0)*( s.currentBirds||0),0);
-
-  // Weight chart data
-  const weightChartData = weightSamples.map(s=>({
-    date:      s.sampleDate||s.recordDate,
-    meanWeightG: Number(s.meanWeightG||s.avgWeightG||0),
-    standardG: s.ageInDays ? getPulletStandard(Number(s.ageInDays)) : null,
-    uniformityPct: s.uniformityPct ? Number(s.uniformityPct) : null,
-  })).sort((a,b)=>String(a.date).localeCompare(String(b.date)));
-
-  // By-flock weight summary
-  const byFlockWeight = weightSamples.reduce((acc,s)=>{
-    const k = s.flock?.batchCode||s.batchCode||'Unknown';
-    if (!acc[k]) acc[k]={batchCode:k,pen:s.penSection?.pen?.name||'—',samples:[]};
-    acc[k].samples.push(Number(s.meanWeightG||s.avgWeightG||0));
-    return acc;
-  },{});
-  const flockWeightSummary = Object.values(byFlockWeight).map(f=>({
-    ...f, latestWt: f.samples[f.samples.length-1]||0,
-    avgWt: f.samples.length?parseFloat((f.samples.reduce((a,v)=>a+v,0)/f.samples.length).toFixed(0)):0,
-  }));
-
-  // ── Section KPIs ──────────────────────────────────────────────────────────
-  const sectionKpis = workerIsBroodingOnly ? [
+  const sectionKpis = layerSections.length > 0 ? [
     {
-      icon: broodingStage==='REARING'?'🌱':'🐣',
-      label: broodingStage==='REARING'?'Live Pullets':'Live Chicks',
-      value: fmt(broodingTotBirds),
-      sub: `${broodingSections.length} section${broodingSections.length!==1?'s':''}`,
-      delta:'', status:'neutral',
+      icon: '🐦', label: 'Live Birds',
+      value: fmt(totBirds),
+      sub: `${layerSections.length} section${layerSections.length !== 1 ? 's' : ''}`,
+      delta: '', status: 'neutral',
     },
     {
-      icon:'⚖️', label:'Avg Live Weight',
-      value: latestAvgG!=null?fmtWt(latestAvgG):'—',
-      sub: latestAvgG&&standardG ? `Standard: ${fmtWt(standardG)}` : 'No weigh-in yet',
-      delta: latestAvgG&&standardG ? (latestAvgG>=standardG*0.95?'On track':'Below standard') : '',
-      status: weightStatus(latestAvgG,standardG),
+      icon: '📊', label: 'Lay Rate (Today)',
+      value: avgRate != null ? `${avgRate}%` : '—',
+      sub: 'Target 82%',
+      delta: avgRate != null ? (avgRate >= 82 ? `+${(avgRate - 82).toFixed(1)}% above target` : `${(avgRate - 82).toFixed(1)}% below target`) : 'No data yet',
+      status: avgRate != null ? layRateStatus(avgRate) : 'neutral',
     },
     {
-      icon:'🔄', label:'Feed Conversion Ratio',
-      value: avgBroodingFCR!=null?String(avgBroodingFCR):'—',
-      sub:'Feed consumed ÷ weight gain',
-      delta: avgBroodingFCR!=null?(avgBroodingFCR<=2.5?'Good efficiency':'Review feed intake'):'',
-      status: fcrStatus(avgBroodingFCR),
+      icon: '🥚', label: 'Eggs Today',
+      value: fmt(todayEggs),
+      sub: `7d total ${fmt(weekEggs)}`,
+      delta: todayEggs > 0 ? `${fmt(todayEggs)} collected today` : 'None recorded yet',
+      status: todayEggs > 0 ? 'good' : 'neutral',
     },
     {
-      icon:'💧', label:'Water Intake',
-      value: broodingWaterL>0?`${broodingWaterL.toFixed(0)} L`:'—',
-      sub:'Total across sections today',
-      delta:'', status:'neutral',
+      icon: '⭐', label: 'Grade A Rate',
+      value: gradeAPct != null ? `${gradeAPct}%` : '—',
+      sub: 'Target ≥85%',
+      delta: gradeAPct != null ? (gradeAPct >= 85 ? `+${(gradeAPct - 85).toFixed(1)}% above target` : `${(gradeAPct - 85).toFixed(1)}% below target`) : 'No data yet',
+      status: gradeAStatus(gradeAPct),
     },
     {
-      icon:'💀', label:'Mortality (7d)',
-      value: fmt(broodingTotDead),
-      sub:`${broodingMortRate}% of flock`,
-      delta: broodingMortRate<=0.5?'Within normal range':broodingMortRate<=1?'Slightly elevated':'Elevated',
-      status: broodingMortRate<=0.5?'good':broodingMortRate<=1?'warn':'critical',
+      icon: '💧', label: 'Water Intake',
+      value: avgWater != null ? `${avgWater} L/bird` : '—',
+      sub: avgWater != null ? `Benchmark ${waterBench} L/bird · age ${avgAge}d` : 'Not tracked yet',
+      delta: avgWater != null ? (avgWater >= waterBench * 0.85 ? 'Within normal range' : 'Below recommended level') : '',
+      status: avgWater != null ? waterStatus(avgWater, waterBench) : 'neutral',
     },
-  ] : layerSections.length>0 ? [
-    { icon:'🐦', label:'Live Birds', value:fmt(totBirds), sub:`${layerSections.length} section${layerSections.length!==1?'s':''}`, delta:'', status:'neutral' },
-    { icon:'📊', label:'Lay Rate (Today)', value:avgRate!=null?`${avgRate}%`:'—', sub:'Target 82%', delta:avgRate!=null?(avgRate>=82?`+${(avgRate-82).toFixed(1)}% above target`:`${(avgRate-82).toFixed(1)}% below target`):'No data yet', status:avgRate!=null?layRateStatus(avgRate):'neutral' },
-    { icon:'🥚', label:'Eggs Today', value:fmt(todayEggs), sub:`7d total ${fmt(weekEggs)}`, delta:todayEggs>0?`${fmt(todayEggs)} collected today`:'None recorded yet', status:todayEggs>0?'good':'neutral' },
-    { icon:'⭐', label:'Grade A Rate', value:gradeAPct!=null?`${gradeAPct}%`:'—', sub:'Target ≥85%', delta:gradeAPct!=null?(gradeAPct>=85?`+${(gradeAPct-85).toFixed(1)}% above target`:`${(gradeAPct-85).toFixed(1)}% below target`):'No data yet', status:gradeAStatus(gradeAPct) },
-    { icon:'💧', label:'Water Intake', value:avgWater!=null?`${avgWater} L/bird`:'—', sub:avgWater!=null?`Benchmark ${waterBench} L/bird · age ${avgAge}d`:'Not tracked yet', delta:avgWater!=null?(avgWater>=waterBench*0.85?'Within normal range':'Below recommended level'):'', status:avgWater!=null?waterStatus(avgWater,waterBench):'neutral' },
-    { icon:'📉', label:'Mortality (7d)', value:fmt(totDead7), sub:`${mortRate}% of flock`, delta:mortRate<=0.05?'Within normal range':mortRate<=0.15?'Slightly elevated':'Elevated', status:mortalityStatus(mortRate) },
+    {
+      icon: '📉', label: 'Mortality (7d)',
+      value: fmt(totDead7),
+      sub: `${mortRate}% of flock`,
+      delta: mortRate <= 0.05 ? 'Within normal range' : mortRate <= 0.15 ? 'Slightly elevated' : 'Elevated — investigate',
+      status: mortalityStatus(mortRate),
+    },
   ] : [];
 
-  const pgCols = sectionKpis.length<=3?`repeat(${sectionKpis.length},1fr)`:'repeat(5,1fr)';
-
-  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <AppShell>
       <div className="animate-in">
 
-        {/* Header */}
-        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:24 }}>
+        {/* ── Header ── */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 }}>
           <div>
-            <h1 style={{ fontFamily:"'Poppins',sans-serif", fontSize:22, fontWeight:700, margin:0 }}>
-              {workerIsBroodingOnly ? (broodingStage==='REARING'?'🌱 Rearing Performance':'🐣 Brooding Performance') : '📊 Performance'}
-            </h1>
-            <p style={{ color:'var(--text-muted)', fontSize:12, marginTop:3 }}>
-              {workerIsBroodingOnly ? `${broodingStage==='REARING'?'Rearing':'Brooding'} — weight tracking, feed & mortality` : 'Layer section metrics & egg production records'}
-            </p>
+            <h1 style={{ fontFamily: "'Poppins',sans-serif", fontSize: 22, fontWeight: 700, margin: 0 }}>📊 Performance</h1>
+            <p style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 3 }}>Layer section metrics & egg production records</p>
           </div>
-          <div style={{ display:'flex', gap:8, alignItems:'center' }}>
-            {PERIOD_OPTIONS.map(d=>(
-              <button key={d} onClick={()=>setDays(d)} className="btn"
-                style={{ fontSize:11, padding:'5px 12px', background:days===d?'var(--purple-light)':'#fff', color:days===d?'var(--purple)':'var(--text-muted)', border:`1px solid ${days===d?'#d4d8ff':'var(--border)'}`, fontWeight:days===d?700:600 }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            {PERIOD_OPTIONS.map(d => (
+              <button key={d} onClick={() => setDays(d)} className="btn"
+                style={{ fontSize: 11, padding: '5px 12px', background: days === d ? 'var(--purple-light)' : '#fff', color: days === d ? 'var(--purple)' : 'var(--text-muted)', border: `1px solid ${days === d ? '#d4d8ff' : 'var(--border)'}`, fontWeight: days === d ? 700 : 600 }}>
                 {d}d
               </button>
             ))}
-            {canLog && !workerIsBroodingOnly && <button className="btn btn-primary" onClick={()=>setShowModal(true)}>+ Log Collection</button>}
+            {canLog && <button className="btn btn-primary" onClick={() => setShowModal(true)}>+ Log Collection</button>}
           </div>
         </div>
 
-        {/* My Section Performance */}
-        {sectionKpis.length>0 && (
-          <div style={{ marginBottom:24 }}>
-            <div style={{ fontSize:11, fontWeight:700, color:'var(--text-muted)', textTransform:'uppercase', letterSpacing:'.06em', marginBottom:12 }}>
+        {/* ── Section KPI cards — scoped to this worker/manager's sections ── */}
+        {sectionKpis.length > 0 && (
+          <div style={{ marginBottom: 24 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 12 }}>
               My Section Performance
             </div>
-            <div style={{ display:'grid', gridTemplateColumns:pgCols, gap:12 }}>
-              {loading ? Array(sectionKpis.length).fill(0).map((_,i)=><Skeleton key={i} h={110}/>) : sectionKpis.map(k=><PerfKpiCard key={k.label} {...k}/>)}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 12 }}>
+              {loading
+                ? Array(6).fill(0).map((_, i) => <Skeleton key={i} h={110} />)
+                : sectionKpis.map(k => <PerfKpiCard key={k.label} {...k} />)
+              }
             </div>
           </div>
         )}
 
-        {/* ── BROODING MODE ─────────────────────────────────────────────────── */}
-        {workerIsBroodingOnly ? (
-          <>
-            {/* Weight Records summary row */}
-            <div style={{ borderTop:'1px solid var(--border)', marginBottom:20, paddingTop:20 }}>
-              <div style={{ fontSize:11, fontWeight:700, color:'var(--text-muted)', textTransform:'uppercase', letterSpacing:'.06em', marginBottom:16 }}>
-                Weight Records · Last {days} days
-              </div>
-              <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:12, marginBottom:20 }}>
-                {loading ? Array(4).fill(0).map((_,i)=><Skeleton key={i} h={88}/>) : <>
-                  <KpiCard icon="⚖️" label="Latest Avg Weight" value={latestAvgG!=null?fmtWt(latestAvgG):'—'} sub={`from ${latestWt?.sampleSize||latestWt?.sampleCount||'—'} birds sampled`} color="var(--purple)" />
-                  <KpiCard icon="📈" label="Weight Gain (7d)" value={wSummary.weightGain7d!=null?`${wSummary.weightGain7d}g`:'—'} sub="grams gained last 7 days" color="var(--green)" />
-                  <KpiCard icon="🌾" label="Est. FCR" value={avgBroodingFCR!=null?String(avgBroodingFCR):'—'} sub="feed consumed / weight gained" color={avgBroodingFCR!=null?(avgBroodingFCR<=2.5?'var(--green)':avgBroodingFCR<=3.5?'var(--amber)':'var(--red)'):'var(--text-muted)'} />
-                  <KpiCard icon="📊" label="Uniformity" value={latestUniformity!=null?`${latestUniformity.toFixed(2)}%`:'—'} sub="birds within ±10% of mean" color={latestUniformity!=null?(latestUniformity>=80?'var(--green)':latestUniformity>=70?'var(--amber)':'var(--red)'):'var(--text-muted)'} />
-                </>}
-              </div>
-            </div>
+        {/* ── Divider ── */}
+        <div style={{ borderTop: '1px solid var(--border)', marginBottom: 20, paddingTop: 20 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 16 }}>
+            Production Records · Last {days} days
+          </div>
 
-            {/* Flock filter */}
-            {flocks.length>1 && (
-              <div style={{ marginBottom:16 }}>
-                <select className="input" style={{ maxWidth:300 }} value={flockFilter} onChange={e=>setFlockFilter(e.target.value)}>
-                  <option value="">All flocks</option>
-                  {flocks.map(f=><option key={f.id} value={f.id}>{f.batchCode} — {f.penSection?.pen?.name}</option>)}
-                </select>
-              </div>
-            )}
+          {/* Period aggregate KPI row */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12, marginBottom: 20 }}>
+            {loading ? Array(5).fill(0).map((_, i) => <Skeleton key={i} h={88} />) : <>
+              <KpiCard icon="🥚" label="Total Eggs"      value={fmt(summary.totalEggs)}           sub={`last ${days} days`}              color="var(--amber)" />
+              <KpiCard icon="📊" label="Avg Laying Rate" value={`${summary.avgLayingRate || 0}%`} sub="of active birds"                  color={Number(summary.avgLayingRate) >= 80 ? 'var(--green)' : 'var(--amber)'} />
+              <KpiCard icon="⭐" label="Grade A"         value={fmt(summary.totalGradeA)}         sub={`${gradeAPct2(summary)}% of total`} color="var(--green)" />
+              <KpiCard icon="🧺" label="Total Crates"    value={fmt(summary.totalCrates)}         sub="30 eggs per crate"                color="var(--purple)" />
+              <KpiCard icon="📅" label="Daily Average"   value={fmt(summary.avgDailyEggs)}        sub="eggs per day"                     color="var(--blue)" />
+            </>}
+          </div>
+        </div>
 
-            {/* Tabs */}
-            <div style={{ display:'flex', borderBottom:'2px solid var(--border)', marginBottom:20 }}>
-              {[['overview','📊 Overview'],['log','📋 Weight Log']].map(([key,label])=>(
-                <button key={key} onClick={()=>setTab(key)}
-                  style={{ padding:'10px 20px', border:'none', background:'none', cursor:'pointer', fontSize:13, fontWeight:700, fontFamily:'inherit', color:tab===key?'var(--purple)':'var(--text-muted)', borderBottom:`3px solid ${tab===key?'var(--purple)':'transparent'}`, marginBottom:-2, transition:'all 0.15s' }}>
-                  {label}
-                </button>
-              ))}
-            </div>
+        {/* Flock filter */}
+        {flocks.length > 1 && (
+          <div style={{ marginBottom: 16 }}>
+            <select className="input" style={{ maxWidth: 300 }} value={flockFilter} onChange={e => setFlockFilter(e.target.value)}>
+              <option value="">All layer flocks</option>
+              {flocks.map(f => <option key={f.id} value={f.id}>{f.batchCode} — {f.penSection?.pen?.name}</option>)}
+            </select>
+          </div>
+        )}
 
-            {/* Overview tab */}
-            {tab==='overview' && (
-              <div style={{ display:'grid', gridTemplateColumns:'3fr 2fr', gap:16 }}>
-                <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
-                  {/* Weight Growth Trend */}
-                  <div className="card">
-                    <div style={{ fontWeight:700, fontSize:14, marginBottom:4 }}>Weight Growth Trend</div>
-                    <div style={{ fontSize:11, color:'var(--text-muted)', marginBottom:16 }}>Mean live weight vs ISA Brown / Lohmann standard curve</div>
-                    {loading?<Skeleton h={220}/>:weightChartData.length===0?<EmptyState msg="No weight records yet — log weekly weigh-ins"/>:(
-                      <ResponsiveContainer width="100%" height={220}>
-                        <LineChart data={weightChartData} margin={{top:4,right:8,bottom:4,left:0}}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false}/>
-                          <XAxis dataKey="date" tickFormatter={fmtDate} tick={{fontSize:10,fill:'var(--text-muted)'}}/>
-                          <YAxis tick={{fontSize:10,fill:'var(--text-muted)'}} width={55} tickFormatter={v=>`${(v/1000).toFixed(1)}kg`}/>
-                          <Tooltip content={<ChartTooltip/>}/>
-                          <Line type="monotone" dataKey="meanWeightG" name="Actual (g)" stroke="var(--purple)" strokeWidth={2.5} dot={{r:3}} activeDot={{r:5}}/>
-                          <Line type="monotone" dataKey="standardG" name="Breed Standard (g)" stroke="#94a3b8" strokeWidth={1.5} strokeDasharray="5 4" dot={false}/>
-                        </LineChart>
-                      </ResponsiveContainer>
-                    )}
-                  </div>
-                  {/* FCR Trend */}
-                  <div className="card">
-                    <div style={{ fontWeight:700, fontSize:14, marginBottom:4 }}>Feed Conversion Ratio</div>
-                    <div style={{ fontSize:11, color:'var(--text-muted)', marginBottom:16 }}>Lower is better · target ≤ 2.5 for rearing</div>
-                    {loading?<Skeleton h={160}/>:avgBroodingFCR==null?<EmptyState msg="Insufficient data to calculate FCR"/>:(
-                      <div style={{ display:'flex', alignItems:'center', justifyContent:'center', height:160 }}>
-                        <div style={{ textAlign:'center' }}>
-                          <div style={{ fontFamily:"'Poppins',sans-serif", fontSize:52, fontWeight:800, color:avgBroodingFCR<=2.5?'var(--green)':avgBroodingFCR<=3.5?'var(--amber)':'var(--red)', lineHeight:1 }}>{avgBroodingFCR}</div>
-                          <div style={{ fontSize:13, color:'var(--text-muted)', marginTop:8 }}>feed consumed / weight gained</div>
-                          <div style={{ marginTop:10, fontSize:12, fontWeight:700, color:avgBroodingFCR<=2.5?'var(--green)':avgBroodingFCR<=3.5?'#d97706':'var(--red)' }}>
-                            {avgBroodingFCR<=2.5?'✓ Good efficiency':avgBroodingFCR<=3.5?'⚠ Acceptable':'⚠ Review feed intake'}
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
+        {/* Tab bar */}
+        <div style={{ display: 'flex', borderBottom: '2px solid var(--border)', marginBottom: 20 }}>
+          {[['overview', '📊 Overview'], ['log', '📋 Daily Log']].map(([key, label]) => (
+            <button key={key} onClick={() => setTab(key)}
+              style={{ padding: '10px 20px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 700, fontFamily: 'inherit', color: tab === key ? 'var(--purple)' : 'var(--text-muted)', borderBottom: `3px solid ${tab === key ? 'var(--purple)' : 'transparent'}`, marginBottom: -2, transition: 'all 0.15s' }}>
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {/* Overview tab */}
+        {tab === 'overview' && (
+          <div style={{ display: 'grid', gridTemplateColumns: '3fr 2fr', gap: 16 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <div className="card">
+                <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>Daily Eggs Collected &amp; Feed Consumed</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 16 }}>
+                  Eggs (bars, left axis) · Feed kg (line, right axis) — {days} days
                 </div>
-                <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
-                  {/* Uniformity */}
-                  <div className="card">
-                    <div style={{ fontWeight:700, fontSize:14, marginBottom:16 }}>Flock Uniformity</div>
-                    {loading?<Skeleton h={140}/>:latestUniformity==null?<EmptyState msg="Log weigh-ins to see uniformity"/>:(
-                      <div>
-                        <div style={{ display:'flex', justifyContent:'space-between', fontSize:12, marginBottom:8 }}>
-                          <span style={{ fontWeight:700 }}>Birds within ±10% of mean</span>
-                          <span style={{ fontWeight:800, color:latestUniformity>=80?'var(--green)':latestUniformity>=70?'var(--amber)':'var(--red)', fontFamily:"'Poppins',sans-serif", fontSize:20 }}>{latestUniformity.toFixed(1)}%</span>
-                        </div>
-                        <div style={{ height:10, background:'var(--border)', borderRadius:5, overflow:'hidden', marginBottom:10 }}>
-                          <div style={{ height:'100%', width:`${Math.min(latestUniformity,100)}%`, background:latestUniformity>=80?'#16a34a':latestUniformity>=70?'#f59e0b':'#ef4444', borderRadius:5, transition:'width 0.6s ease' }}/>
-                        </div>
-                        {[{label:'Excellent',pct:90,color:'#16a34a'},{label:'Good',pct:80,color:'#16a34a'},{label:'Acceptable',pct:70,color:'#f59e0b'},{label:'Poor',pct:0,color:'#ef4444'}].map(b=>(
-                          <div key={b.label} style={{ display:'flex', justifyContent:'space-between', fontSize:11, color:latestUniformity>=b.pct?b.color:'var(--text-muted)', fontWeight:latestUniformity>=b.pct?700:400, padding:'3px 0' }}>
-                            <span>{b.label}</span><span>{b.pct}%+</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  {/* By Flock */}
-                  <div className="card">
-                    <div style={{ fontWeight:700, fontSize:14, marginBottom:16 }}>By Flock</div>
-                    {loading?<Skeleton h={160}/>:flockWeightSummary.length===0?<EmptyState msg="No weight records"/>:(
-                      <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
-                        {flockWeightSummary.map(f=>(
-                          <div key={f.batchCode} style={{ padding:'10px 12px', background:'var(--bg-elevated)', borderRadius:9, border:'1px solid var(--border)' }}>
-                            <div style={{ display:'flex', justifyContent:'space-between', marginBottom:4 }}>
-                              <span style={{ fontWeight:700, fontSize:12 }}>{f.batchCode}</span>
-                              <span style={{ fontSize:12, fontWeight:700, color:'var(--purple)' }}>{fmtWt(f.latestWt)}</span>
+                {loading ? <Skeleton h={240} /> : chartData.length === 0 ? <EmptyState /> : (
+                  <ResponsiveContainer width="100%" height={240}>
+                    <ComposedChart data={chartData} margin={{ top: 4, right: 44, bottom: 4, left: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+                      <XAxis dataKey="date" tickFormatter={fmtDate} tick={{ fontSize: 10, fill: 'var(--text-muted)' }} />
+                      <YAxis yAxisId="eggs" orientation="left"
+                        tick={{ fontSize: 10, fill: 'var(--text-muted)' }} width={50} tickFormatter={v => fmt(v)} />
+                      <YAxis yAxisId="feed" orientation="right"
+                        tick={{ fontSize: 10, fill: '#16a34a' }} width={44} tickFormatter={v => `${v}kg`} />
+                      <Tooltip
+                        content={({ active, payload, label }) => {
+                          if (!active || !payload?.length) return null;
+                          return (
+                            <div style={{ background:'#fff', border:'1px solid var(--border)', borderRadius:8, padding:'10px 14px', fontSize:12 }}>
+                              <div style={{ fontWeight:700, color:'var(--text-muted)', marginBottom:6 }}>{fmtDate(label)}</div>
+                              {payload.map((p,i) => (
+                                <div key={i} style={{ color:p.color, marginBottom:2 }}>
+                                  {p.name}: <strong>{p.name==='Feed (kg)' ? `${Number(p.value).toFixed(1)} kg` : fmt(p.value)}</strong>
+                                </div>
+                              ))}
                             </div>
-                            <div style={{ fontSize:11, color:'var(--text-muted)' }}>{f.pen} · avg {fmtWt(f.avgWt)} · {f.samples.length} weigh-in{f.samples.length!==1?'s':''}</div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Weight Log tab */}
-            {tab==='log' && (
-              <div className="card" style={{ padding:0, overflow:'hidden' }}>
-                {loading?<div style={{padding:40,textAlign:'center'}}><Skeleton h={200}/></div>:weightSamples.length===0?(
-                  <div style={{padding:60,textAlign:'center'}}>
-                    <div style={{fontSize:40,marginBottom:12}}>⚖️</div>
-                    <div style={{fontWeight:600,color:'var(--text-muted)'}}>No weight records in this period</div>
-                    <div style={{fontSize:12,color:'var(--text-muted)',marginTop:8}}>Log weekly weigh-ins via the Weigh-In task on your My Tasks page</div>
-                  </div>
-                ):(
-                  <table className="table">
-                    <thead>
-                      <tr>
-                        <th>Date</th><th>Flock</th><th>Pen · Section</th>
-                        <th style={{textAlign:'right'}}>Sample Size</th>
-                        <th style={{textAlign:'right'}}>Avg Weight</th>
-                        <th style={{textAlign:'right'}}>Min</th>
-                        <th style={{textAlign:'right'}}>Max</th>
-                        <th style={{textAlign:'right'}}>Uniformity</th>
-                        <th>Recorded By</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {[...weightSamples].reverse().map((r,i)=>(
-                        <tr key={r.id||i}>
-                          <td style={{fontWeight:600,whiteSpace:'nowrap'}}>{fmtDate(r.sampleDate||r.recordDate)}</td>
-                          <td><span style={{fontWeight:700,color:'var(--purple)'}}>{r.flock?.batchCode||r.batchCode||'—'}</span></td>
-                          <td style={{fontSize:11,color:'var(--text-muted)'}}>{r.penSection?.pen?.name||'—'} › {r.penSection?.name||'—'}</td>
-                          <td style={{textAlign:'right'}}>{r.sampleSize||r.sampleCount||'—'}</td>
-                          <td style={{textAlign:'right',fontWeight:700,color:'var(--purple)'}}>{fmtWt(r.meanWeightG||r.avgWeightG)}</td>
-                          <td style={{textAlign:'right',color:'var(--text-muted)'}}>{r.minWeightG?fmtWt(r.minWeightG):'—'}</td>
-                          <td style={{textAlign:'right',color:'var(--text-muted)'}}>{r.maxWeightG?fmtWt(r.maxWeightG):'—'}</td>
-                          <td style={{textAlign:'right'}}>
-                            {r.uniformityPct!=null
-                              ? <span style={{fontWeight:700,color:Number(r.uniformityPct)>=80?'var(--green)':Number(r.uniformityPct)>=70?'var(--amber)':'var(--red)'}}>{Number(r.uniformityPct).toFixed(1)}%</span>
-                              : <span style={{color:'var(--text-muted)'}}>—</span>}
-                          </td>
-                          <td style={{fontSize:11,color:'var(--text-muted)'}}>{r.recordedBy?.firstName||'—'} {r.recordedBy?.lastName?.[0]||''}.</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                          );
+                        }}
+                      />
+                      <Legend iconSize={10} wrapperStyle={{ fontSize:11 }} />
+                      <Bar yAxisId="eggs" dataKey="totalEggs" name="Total Eggs" fill="var(--amber)" radius={[3,3,0,0]} />
+                      <Line yAxisId="feed" type="monotone" dataKey="feedKg" name="Feed (kg)"
+                        stroke="#16a34a" strokeWidth={2} dot={{ r:3, fill:'#16a34a' }}
+                        activeDot={{ r:5 }} connectNulls />
+                    </ComposedChart>
+                  </ResponsiveContainer>
                 )}
               </div>
-            )}
-          </>
-        ) : (
-        /* ── PRODUCTION MODE (unchanged egg performance) ────────────────── */
-          <>
-            <div style={{ borderTop:'1px solid var(--border)', marginBottom:20, paddingTop:20 }}>
-              <div style={{ fontSize:11, fontWeight:700, color:'var(--text-muted)', textTransform:'uppercase', letterSpacing:'.06em', marginBottom:16 }}>
-                Production Records · Last {days} days
-              </div>
-              <div style={{ display:'grid', gridTemplateColumns:'repeat(5,1fr)', gap:12, marginBottom:20 }}>
-                {loading?Array(5).fill(0).map((_,i)=><Skeleton key={i} h={88}/>):<>
-                  <KpiCard icon="🥚" label="Total Eggs"      value={fmt(summary.totalEggs)}           sub={`last ${days} days`}              color="var(--amber)"/>
-                  <KpiCard icon="📊" label="Avg Laying Rate" value={`${summary.avgLayingRate||0}%`}   sub="of active birds"                  color={Number(summary.avgLayingRate)>=80?'var(--green)':'var(--amber)'}/>
-                  <KpiCard icon="⭐" label="Grade A"         value={fmt(summary.totalGradeA)}         sub={`${gradeAPct2(summary)}% of total`} color="var(--green)"/>
-                  <KpiCard icon="🧺" label="Total Crates"    value={fmt(summary.totalCrates)}         sub="30 eggs per crate"                color="var(--purple)"/>
-                  <KpiCard icon="📅" label="Daily Average"   value={fmt(summary.avgDailyEggs)}        sub="eggs per day"                     color="var(--blue)"/>
-                </>}
-              </div>
-            </div>
-
-            {flocks.length>1&&(
-              <div style={{marginBottom:16}}>
-                <select className="input" style={{maxWidth:300}} value={flockFilter} onChange={e=>setFlockFilter(e.target.value)}>
-                  <option value="">All layer flocks</option>
-                  {flocks.map(f=><option key={f.id} value={f.id}>{f.batchCode} — {f.penSection?.pen?.name}</option>)}
-                </select>
-              </div>
-            )}
-
-            <div style={{display:'flex',borderBottom:'2px solid var(--border)',marginBottom:20}}>
-              {[['overview','📊 Overview'],['log','📋 Daily Log']].map(([key,label])=>(
-                <button key={key} onClick={()=>setTab(key)}
-                  style={{padding:'10px 20px',border:'none',background:'none',cursor:'pointer',fontSize:13,fontWeight:700,fontFamily:'inherit',color:tab===key?'var(--purple)':'var(--text-muted)',borderBottom:`3px solid ${tab===key?'var(--purple)':'transparent'}`,marginBottom:-2,transition:'all 0.15s'}}>
-                  {label}
-                </button>
-              ))}
-            </div>
-
-            {tab==='overview'&&(
-              <div style={{display:'grid',gridTemplateColumns:'3fr 2fr',gap:16}}>
-                <div style={{display:'flex',flexDirection:'column',gap:16}}>
-                  <div className="card">
-                    <div style={{fontWeight:700,fontSize:14,marginBottom:4}}>Daily Eggs Collected &amp; Feed Consumed</div>
-                    <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:16}}>Eggs (bars, left axis) · Feed kg (line, right axis) — {days} days</div>
-                    {loading?<Skeleton h={240}/>:chartData.length===0?<EmptyState/>:(
-                      <ResponsiveContainer width="100%" height={240}>
-                        <ComposedChart data={chartData} margin={{top:4,right:44,bottom:4,left:0}}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false}/>
-                          <XAxis dataKey="date" tickFormatter={fmtDate} tick={{fontSize:10,fill:'var(--text-muted)'}}/>
-                          <YAxis yAxisId="eggs" orientation="left" tick={{fontSize:10,fill:'var(--text-muted)'}} width={50} tickFormatter={v=>fmt(v)}/>
-                          <YAxis yAxisId="feed" orientation="right" tick={{fontSize:10,fill:'#16a34a'}} width={44} tickFormatter={v=>`${v}kg`}/>
-                          <Tooltip content={({active,payload,label})=>{
-                            if(!active||!payload?.length)return null;
-                            return(<div style={{background:'#fff',border:'1px solid var(--border)',borderRadius:8,padding:'10px 14px',fontSize:12}}>
-                              <div style={{fontWeight:700,color:'var(--text-muted)',marginBottom:6}}>{fmtDate(label)}</div>
-                              {payload.map((p,i)=><div key={i} style={{color:p.color,marginBottom:2}}>{p.name}: <strong>{p.name==='Feed (kg)'?`${Number(p.value).toFixed(1)} kg`:fmt(p.value)}</strong></div>)}
-                            </div>);
-                          }}/>
-                          <Legend iconSize={10} wrapperStyle={{fontSize:11}}/>
-                          <Bar yAxisId="eggs" dataKey="totalEggs" name="Total Eggs" fill="var(--amber)" radius={[3,3,0,0]}/>
-                          <Line yAxisId="feed" type="monotone" dataKey="feedKg" name="Feed (kg)" stroke="#16a34a" strokeWidth={2} dot={{r:3,fill:'#16a34a'}} activeDot={{r:5}} connectNulls/>
-                        </ComposedChart>
-                      </ResponsiveContainer>
-                    )}
-                  </div>
-                  <div className="card">
-                    <div style={{fontWeight:700,fontSize:14,marginBottom:4}}>Laying Rate Trend</div>
-                    <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:16}}>Daily laying rate % (target: 80%+)</div>
-                    {loading?<Skeleton h={180}/>:chartData.length===0?<EmptyState/>:(
-                      <ResponsiveContainer width="100%" height={180}>
-                        <LineChart data={chartData} margin={{top:4,right:8,bottom:4,left:0}}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false}/>
-                          <XAxis dataKey="date" tickFormatter={fmtDate} tick={{fontSize:10,fill:'var(--text-muted)'}}/>
-                          <YAxis domain={[0,100]} tick={{fontSize:10,fill:'var(--text-muted)'}} width={35} tickFormatter={v=>`${v}%`}/>
-                          <Tooltip content={<ChartTooltip/>}/>
-                          <Line type="monotone" dataKey="layingRate" name="Laying Rate %" stroke="var(--green)" strokeWidth={2} dot={false} activeDot={{r:4}}/>
-                        </LineChart>
-                      </ResponsiveContainer>
-                    )}
-                  </div>
-                </div>
-                <div style={{display:'flex',flexDirection:'column',gap:16}}>
-                  <div className="card">
-                    <div style={{fontWeight:700,fontSize:14,marginBottom:16}}>Grade Breakdown</div>
-                    {loading?<Skeleton h={140}/>:gradeData.length===0?<EmptyState msg="No grade data recorded"/>:(
-                      <div style={{display:'flex',flexDirection:'column',gap:10}}>
-                        {[{label:'Grade A',value:summary.totalGradeA,color:GRADE_COLORS.gradeA,pct:gradePct(summary.totalGradeA,summary.totalEggs)},{label:'Grade B',value:summary.totalGradeB,color:GRADE_COLORS.gradeB,pct:gradePct(summary.totalGradeB,summary.totalEggs)},{label:'Cracked',value:summary.totalCracked,color:GRADE_COLORS.cracked,pct:gradePct(summary.totalCracked,summary.totalEggs)}].map(g=>(
-                          <div key={g.label}>
-                            <div style={{display:'flex',justifyContent:'space-between',fontSize:12,marginBottom:4}}>
-                              <span style={{fontWeight:700,color:g.color}}>{g.label}</span>
-                              <span style={{color:'var(--text-muted)'}}>{fmt(g.value)} ({g.pct}%)</span>
-                            </div>
-                            <div style={{height:6,background:'var(--border)',borderRadius:3}}><div style={{height:'100%',width:`${g.pct}%`,background:g.color,borderRadius:3,transition:'width 0.6s ease'}}/></div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  <div className="card">
-                    <div style={{fontWeight:700,fontSize:14,marginBottom:16}}>By Flock</div>
-                    {loading?<Skeleton h={160}/>:(
-                      <div style={{display:'flex',flexDirection:'column',gap:8}}>
-                        {buildFlockSummary(records).map(f=>(
-                          <div key={f.batchCode} style={{padding:'10px 12px',background:'var(--bg-elevated)',borderRadius:9,border:'1px solid var(--border)'}}>
-                            <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
-                              <span style={{fontWeight:700,fontSize:12}}>{f.batchCode}</span>
-                              <span style={{fontSize:12,fontWeight:700,color:'var(--amber)'}}>{fmt(f.total)} eggs</span>
-                            </div>
-                            <div style={{fontSize:11,color:'var(--text-muted)'}}>{f.pen} · avg {f.avgRate}% lay rate</div>
-                          </div>
-                        ))}
-                        {records.length===0&&<EmptyState msg="No records in this period"/>}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {tab==='log'&&(
-              <div className="card" style={{padding:0,overflow:'hidden'}}>
-                {loading?<div style={{padding:40,textAlign:'center'}}><Skeleton h={200}/></div>:records.length===0?(
-                  <div style={{padding:60,textAlign:'center'}}>
-                    <div style={{fontSize:40,marginBottom:12}}>🥚</div>
-                    <div style={{fontWeight:600,color:'var(--text-muted)'}}>No egg records in this period</div>
-                    {canLog&&<button className="btn btn-primary" style={{marginTop:16}} onClick={()=>setShowModal(true)}>Log First Collection</button>}
-                  </div>
-                ):(
-                  <table className="table">
-                    <thead><tr><th>Date</th><th>Session</th><th>Flock</th><th>Pen · Section</th><th style={{textAlign:'right'}}>Crates</th><th style={{textAlign:'right'}}>Loose</th><th style={{textAlign:'right'}}>Total</th><th style={{textAlign:'right'}}>Grade A</th><th style={{textAlign:'right'}}>Grade B</th><th style={{textAlign:'right'}}>Cracked</th><th style={{textAlign:'right'}}>Lay Rate</th><th>Recorded By</th></tr></thead>
-                    <tbody>
-                      {[...records].reverse().map(r=>(
-                        <tr key={r.id} style={{background:r.rejectionReason?'#fff5f5':undefined}}>
-                          <td style={{fontWeight:600,whiteSpace:'nowrap'}}>{fmtDate(r.collectionDate)}{r.rejectionReason&&<div style={{fontSize:10,fontWeight:700,color:'#dc2626',marginTop:2}}>↩ Needs correction</div>}</td>
-                          <td style={{fontSize:11,color:'var(--text-muted)'}}>{r.collectionSession===2?'Afternoon':'Morning'}</td>
-                          <td><span style={{fontWeight:700,color:'var(--amber)'}}>{r.flock?.batchCode}</span></td>
-                          <td style={{fontSize:11,color:'var(--text-muted)'}}>{r.penSection?.pen?.name} › {r.penSection?.name}</td>
-                          <td style={{textAlign:'right'}}>{r.cratesCollected??Math.floor((r.totalEggs||0)/30)}</td>
-                          <td style={{textAlign:'right',color:'var(--text-muted)'}}>{r.looseEggs??((r.totalEggs||0)%30)}</td>
-                          <td style={{textAlign:'right',fontWeight:700}}>{fmt(r.totalEggs)}</td>
-                          <td style={{textAlign:'right',color:GRADE_COLORS.gradeA,fontWeight:600}}>{r.gradeACount!=null?fmt(r.gradeACount):<span style={{fontSize:10,color:'var(--text-muted)'}}>Pending</span>}</td>
-                          <td style={{textAlign:'right',color:GRADE_COLORS.gradeB,fontWeight:600}}>{r.gradeBCount!=null?fmt(r.gradeBCount):<span style={{fontSize:10,color:'var(--text-muted)'}}>—</span>}</td>
-                          <td style={{textAlign:'right',color:GRADE_COLORS.cracked,fontWeight:600}}>{fmt(r.crackedCount)}</td>
-                          <td style={{textAlign:'right'}}><span style={{fontWeight:700,color:Number(r.layingRatePct)>=80?'var(--green)':'var(--amber)'}}>{Number(r.layingRatePct||0).toFixed(1)}%</span></td>
-                          <td style={{fontSize:11,color:'var(--text-muted)'}}>{r.recordedBy?.firstName} {r.recordedBy?.lastName?.[0]}.</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+              <div className="card">
+                <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>Laying Rate Trend</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 16 }}>Daily laying rate % (target: 80%+)</div>
+                {loading ? <Skeleton h={180} /> : chartData.length === 0 ? <EmptyState /> : (
+                  <ResponsiveContainer width="100%" height={180}>
+                    <LineChart data={chartData} margin={{ top: 4, right: 8, bottom: 4, left: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+                      <XAxis dataKey="date" tickFormatter={fmtDate} tick={{ fontSize: 10, fill: 'var(--text-muted)' }} />
+                      <YAxis domain={[0, 100]} tick={{ fontSize: 10, fill: 'var(--text-muted)' }} width={35} tickFormatter={v => `${v}%`} />
+                      <Tooltip content={<ChartTooltip />} />
+                      <Line type="monotone" dataKey="layingRate" name="Laying Rate %" stroke="var(--green)" strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
+                    </LineChart>
+                  </ResponsiveContainer>
                 )}
               </div>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <div className="card">
+                <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 16 }}>Grade Breakdown</div>
+                {loading ? <Skeleton h={140} /> : gradeData.length === 0 ? <EmptyState msg="No grade data recorded" /> : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {[
+                      { label: 'Grade A', value: summary.totalGradeA,  color: GRADE_COLORS.gradeA,   pct: gradePct(summary.totalGradeA,  summary.totalEggs) },
+                      { label: 'Grade B', value: summary.totalGradeB,  color: GRADE_COLORS.gradeB,   pct: gradePct(summary.totalGradeB,  summary.totalEggs) },
+                      { label: 'Cracked', value: summary.totalCracked, color: GRADE_COLORS.cracked,  pct: gradePct(summary.totalCracked, summary.totalEggs) },
+                    ].map(g => (
+                      <div key={g.label}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 4 }}>
+                          <span style={{ fontWeight: 700, color: g.color }}>{g.label}</span>
+                          <span style={{ color: 'var(--text-muted)' }}>{fmt(g.value)} ({g.pct}%)</span>
+                        </div>
+                        <div style={{ height: 6, background: 'var(--border)', borderRadius: 3 }}>
+                          <div style={{ height: '100%', width: `${g.pct}%`, background: g.color, borderRadius: 3, transition: 'width 0.6s ease' }} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="card">
+                <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 16 }}>By Flock</div>
+                {loading ? <Skeleton h={160} /> : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {buildFlockSummary(records).map(f => (
+                      <div key={f.batchCode} style={{ padding: '10px 12px', background: 'var(--bg-elevated)', borderRadius: 9, border: '1px solid var(--border)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                          <span style={{ fontWeight: 700, fontSize: 12 }}>{f.batchCode}</span>
+                          <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--amber)' }}>{fmt(f.total)} eggs</span>
+                        </div>
+                        <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{f.pen} · avg {f.avgRate}% lay rate</div>
+                      </div>
+                    ))}
+                    {records.length === 0 && <EmptyState msg="No records in this period" />}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Daily Log tab */}
+        {tab === 'log' && (
+          <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+            {loading ? <div style={{ padding: 40, textAlign: 'center' }}><Skeleton h={200} /></div> : records.length === 0 ? (
+              <div style={{ padding: 60, textAlign: 'center' }}>
+                <div style={{ fontSize: 40, marginBottom: 12 }}>🥚</div>
+                <div style={{ fontWeight: 600, color: 'var(--text-muted)' }}>No egg records in this period</div>
+                {canLog && <button className="btn btn-primary" style={{ marginTop: 16 }} onClick={() => setShowModal(true)}>Log First Collection</button>}
+              </div>
+            ) : (
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Date</th><th>Session</th><th>Flock</th><th>Pen · Section</th>
+                    <th style={{ textAlign: 'right' }}>Crates</th>
+                    <th style={{ textAlign: 'right' }}>Loose</th>
+                    <th style={{ textAlign: 'right' }}>Total</th>
+                    <th style={{ textAlign: 'right' }}>Grade A</th>
+                    <th style={{ textAlign: 'right' }}>Grade B</th>
+                    <th style={{ textAlign: 'right' }}>Cracked</th>
+                    <th style={{ textAlign: 'right' }}>Lay Rate</th>
+                    <th>Recorded By</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[...records].reverse().map(r => (
+                    <tr key={r.id} style={{ background: r.rejectionReason ? '#fff5f5' : undefined }}>
+                      <td style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>
+                        {fmtDate(r.collectionDate)}
+                        {r.rejectionReason && <div style={{ fontSize: 10, fontWeight: 700, color: '#dc2626', marginTop: 2 }}>↩ Needs correction</div>}
+                      </td>
+                      <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{r.collectionSession === 2 ? 'Afternoon' : 'Morning'}</td>
+                      <td><span style={{ fontWeight: 700, color: 'var(--amber)' }}>{r.flock?.batchCode}</span></td>
+                      <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{r.penSection?.pen?.name} › {r.penSection?.name}</td>
+                      <td style={{ textAlign: 'right' }}>{r.cratesCollected ?? Math.floor((r.totalEggs || 0) / 30)}</td>
+                      <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{r.looseEggs ?? ((r.totalEggs || 0) % 30)}</td>
+                      <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmt(r.totalEggs)}</td>
+                      <td style={{ textAlign: 'right', color: GRADE_COLORS.gradeA, fontWeight: 600 }}>
+                        {r.gradeACount != null ? fmt(r.gradeACount) : <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Pending</span>}
+                      </td>
+                      <td style={{ textAlign: 'right', color: GRADE_COLORS.gradeB, fontWeight: 600 }}>
+                        {r.gradeBCount != null ? fmt(r.gradeBCount) : <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>—</span>}
+                      </td>
+                      <td style={{ textAlign: 'right', color: GRADE_COLORS.cracked, fontWeight: 600 }}>{fmt(r.crackedCount)}</td>
+                      <td style={{ textAlign: 'right' }}>
+                        <span style={{ fontWeight: 700, color: Number(r.layingRatePct) >= 80 ? 'var(--green)' : 'var(--amber)' }}>{Number(r.layingRatePct || 0).toFixed(1)}%</span>
+                      </td>
+                      <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                        {r.rejectionReason ? (
+                          <button onClick={() => setEditRecord(r)} style={{ fontSize: 11, padding: '4px 10px', borderRadius: 6, border: '1px solid #fecaca', background: '#fff5f5', color: '#dc2626', fontWeight: 700, cursor: 'pointer' }}>✏️ Fix & Resubmit</button>
+                        ) : (
+                          <>{r.recordedBy?.firstName} {r.recordedBy?.lastName?.[0]}.</>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             )}
-          </>
+          </div>
         )}
       </div>
 
-      {showModal&&<LogEggModal flocks={flocks} apiFetch={apiFetch} onClose={()=>setShowModal(false)} onSave={()=>{setShowModal(false);load();}}/>}
+      {showModal  && <LogEggModal  flocks={flocks} apiFetch={apiFetch} onClose={() => setShowModal(false)}  onSave={() => { setShowModal(false);  load(); }} />}
+      {editRecord && <EditEggModal record={editRecord} flocks={flocks} apiFetch={apiFetch} onClose={() => setEditRecord(null)} onSave={() => { setEditRecord(null); load(); }} />}
     </AppShell>
   );
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-function gradeAPct2(s) { return s.totalEggs>0?((s.totalGradeA/s.totalEggs)*100).toFixed(1):0; }
-function gradePct(val,total) { return total>0?((val/total)*100).toFixed(1):0; }
+function EmptyState({ msg = 'No data for this period' }) {
+  return <div style={{ height: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 12 }}>{msg}</div>;
+}
+function gradeAPct2(s) { return s.totalEggs > 0 ? ((s.totalGradeA / s.totalEggs) * 100).toFixed(1) : 0; }
+function gradePct(val, total) { return total > 0 ? ((val / total) * 100).toFixed(1) : 0; }
 function buildChartData(records) {
-  const map={};
-  records.forEach(r=>{ const d=new Date(r.collectionDate).toISOString().split('T')[0]; if(!map[d])map[d]={date:d,totalEggs:0,layingRate:0,count:0}; map[d].totalEggs+=r.totalEggs; map[d].layingRate+=Number(r.layingRatePct||0); map[d].count++; });
-  return Object.values(map).map(d=>({...d,layingRate:d.count>0?parseFloat((d.layingRate/d.count).toFixed(1)):0})).sort((a,b)=>a.date.localeCompare(b.date));
+  const map = {};
+  records.forEach(r => {
+    const d = new Date(r.collectionDate).toISOString().split('T')[0];
+    if (!map[d]) map[d] = { date: d, totalEggs: 0, layingRate: 0, count: 0 };
+    map[d].totalEggs  += r.totalEggs;
+    map[d].layingRate += Number(r.layingRatePct || 0);
+    map[d].count++;
+  });
+  return Object.values(map).map(d => ({ ...d, layingRate: d.count > 0 ? parseFloat((d.layingRate / d.count).toFixed(1)) : 0 })).sort((a, b) => a.date.localeCompare(b.date));
 }
 function buildFlockSummary(records) {
-  const map={};
-  records.forEach(r=>{ const k=r.flock?.batchCode; if(!k)return; if(!map[k])map[k]={batchCode:k,pen:r.penSection?.pen?.name,total:0,rateSum:0,count:0}; map[k].total+=r.totalEggs; map[k].rateSum+=Number(r.layingRatePct||0); map[k].count++; });
-  return Object.values(map).map(f=>({...f,avgRate:f.count>0?(f.rateSum/f.count).toFixed(1):0}));
+  const map = {};
+  records.forEach(r => {
+    const k = r.flock?.batchCode;
+    if (!k) return;
+    if (!map[k]) map[k] = { batchCode: k, pen: r.penSection?.pen?.name, total: 0, rateSum: 0, count: 0 };
+    map[k].total   += r.totalEggs;
+    map[k].rateSum += Number(r.layingRatePct || 0);
+    map[k].count++;
+  });
+  return Object.values(map).map(f => ({ ...f, avgRate: f.count > 0 ? (f.rateSum / f.count).toFixed(1) : 0 }));
 }
