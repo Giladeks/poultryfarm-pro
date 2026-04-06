@@ -88,7 +88,7 @@ export async function GET(request) {
           ? prisma.eggProduction.aggregate({
               where: { flockId: flock.id, collectionDate: { gte: sevenDaysAgo } },
               _sum:  { totalEggs: true },
-              _avg:  { layingRatePct: true },
+              _sum:  { totalEggs: true },  // rate computed from totalEggs/currentCount
             })
           : null,
       ]);
@@ -103,7 +103,9 @@ export async function GET(request) {
         ageInDays,
         latestWeightG:   latestWeight?.avgWeightG || null,
         weeklyMortality: recentMortality._sum.count || 0,
-        avgLayingRate:   recentEggs?._avg?.layingRatePct || null,
+        avgLayingRate:   (recentEggs?._sum?.totalEggs && flock.currentCount)
+          ? parseFloat(((recentEggs._sum.totalEggs / 7 / flock.currentCount) * 100).toFixed(1))
+          : null,  // daily avg rate = 7d total eggs / 7 days / bird count
         weeklyEggs:      recentEggs?._sum?.totalEggs || null,
       };
     }));

@@ -17,6 +17,7 @@ const DEFAULT_SETTINGS = {
   operationMode:        'LAYER_ONLY', // LAYER_ONLY | BROILER_ONLY | BOTH
   hasFeedMillModule:    false,
   hasProcessingModule:  false,
+  feedBagWeightKg:      25,  // kg per bag — configurable per farm, used on feed KPI cards
 
   sms: {
     enabled:        false,

@@ -146,15 +146,15 @@ export async function GET(request) {
         prisma.vaccination.count({ where: { flockId: flock.id, status: 'COMPLETED' } }),
       ]);
 
-      // Transfer history (did this flock move pens?)
-      const transfers = await prisma.flock_transfers.findMany({
-        where:   { flockId: flock.id, tenantId: user.tenantId },
-        orderBy: { transferDate: 'desc' },
-        select: {
-          id: true, transferDate: true, fromPenSectionId: true, toPenSectionId: true,
-          survivingCount: true, avgWeightAtTransferG: true,
-        },
-      });
+      // Transfer history — must use $queryRawUnsafe for snake_case table
+      const transfers = await prisma.$queryRawUnsafe(
+        `SELECT id, status, "transferDate", "fromPenSectionId", "toPenSectionId",
+                "survivingCount", "avgWeightAtTransferG"::float as "avgWeightAtTransferG"
+         FROM flock_transfers
+         WHERE "flockId" = $1 AND "tenantId" = $2
+         ORDER BY "transferDate" DESC`,
+        flock.id, user.tenantId
+      );
 
       return {
         ...flock,
@@ -176,7 +176,11 @@ export async function GET(request) {
           ? +((vaccinationsAdministered / vaccinationsScheduled) * 100).toFixed(1)
           : null,
         transfers,
-        hasBeenTransferred: transfers.length > 0,
+        // Only COMPLETED transfers count as "transferred" — cancelled/withdrawn/disputed
+        // transfers should allow the PM to re-initiate
+        hasBeenTransferred: transfers.some(t =>
+          t.status === 'COMPLETED' || t.status === 'DISCREPANCY_REVIEW'
+        ),
       };
     }));
 

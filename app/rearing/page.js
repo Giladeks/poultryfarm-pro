@@ -101,20 +101,22 @@ function LogWeightModal({ flock, apiFetch, onClose, onSave }) {
       return setError('Sample count must be at least 1');
     setSaving(true); setError('');
     try {
-      const res = await apiFetch('/api/weight-samples', {
-        method: 'POST',
-        body: JSON.stringify({
-          flockId:       flock.id,
-          penSectionId:  flock.penSectionId,
-          sampleDate:    form.sampleDate,
-          sampleCount:   parseInt(form.sampleCount, 10),
-          meanWeightG:   parseFloat(form.meanWeightG),
-          minWeightG:    form.minWeightG   ? parseFloat(form.minWeightG)    : null,
-          maxWeightG:    form.maxWeightG   ? parseFloat(form.maxWeightG)    : null,
-          uniformityPct: form.uniformityPct ? parseFloat(form.uniformityPct) : null,
-          notes:         form.notes || null,
-        }),
-      });
+      const payload = {
+        flockId:       flock.id,
+        penSectionId:  flock.penSectionId,
+        sampleDate:    form.sampleDate,
+        sampleCount:   parseInt(form.sampleCount, 10),
+        meanWeightG:   parseFloat(form.meanWeightG),
+        minWeightG:    form.minWeightG    ? parseFloat(form.minWeightG)    : null,
+        maxWeightG:    form.maxWeightG    ? parseFloat(form.maxWeightG)    : null,
+        uniformityPct: form.uniformityPct ? parseFloat(form.uniformityPct) : null,
+        notes:         form.notes || null,
+      };
+      // Write to both tables — weight_records (dashboard/charts) and weight_samples (rearing page)
+      const [res] = await Promise.all([
+        apiFetch('/api/weight-records', { method: 'POST', body: JSON.stringify(payload) }),
+        apiFetch('/api/weight-samples', { method: 'POST', body: JSON.stringify(payload) }).catch(() => null),
+      ]);
       const d = await res.json();
       if (!res.ok) return setError(d.error || 'Failed to save weight record');
       onSave();
@@ -316,8 +318,8 @@ function TransferBanner({ transfers, canAct, onConfirm, onDispute, onReview, isF
 
       {/* Disputed */}
       {disputed.map(t => {
-        const isFM       = ['FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN'].includes(user?.role);
-        const isSendingPM = t.direction === 'OUTGOING' && user?.role === 'PEN_MANAGER';
+        const isFM       = isFarmManager;
+        const isSendingPM = t.direction === 'OUTGOING' && !isFarmManager;
         return (
           <div key={t.id} style={{ background:'#fef2f2',border:'1.5px solid #fecaca',
             borderRadius:12,padding:'14px 18px' }}>
@@ -342,7 +344,7 @@ function TransferBanner({ transfers, canAct, onConfirm, onDispute, onReview, isF
               </div>
               <div style={{ display:'flex',gap:8,flexShrink:0,flexWrap:'wrap' }}>
                 {isSendingPM && (
-                  <button onClick={() => setResolveDispute({ transfer:t, defaultAction:'WITHDRAW' })}
+                  <button onClick={() => onDispute({ transfer:t, defaultAction:'WITHDRAW' })}
                     style={{ padding:'7px 14px',borderRadius:8,border:'1.5px solid #fecaca',
                       background:'#fef2f2',color:'#991b1b',fontWeight:700,fontSize:12,cursor:'pointer' }}>
                     Withdraw Transfer
@@ -350,12 +352,12 @@ function TransferBanner({ transfers, canAct, onConfirm, onDispute, onReview, isF
                 )}
                 {isFM && (
                   <>
-                    <button onClick={() => setResolveDispute({ transfer:t, defaultAction:'CANCEL' })}
+                    <button onClick={() => onDispute({ transfer:t, defaultAction:'CANCEL' })}
                       style={{ padding:'7px 14px',borderRadius:8,border:'1.5px solid #fecaca',
                         background:'#fef2f2',color:'#991b1b',fontWeight:700,fontSize:12,cursor:'pointer' }}>
                       Cancel Transfer
                     </button>
-                    <button onClick={() => setResolveDispute({ transfer:t, defaultAction:'FORCE_COMPLETE' })}
+                    <button onClick={() => onDispute({ transfer:t, defaultAction:'FORCE_COMPLETE' })}
                       style={{ padding:'7px 14px',borderRadius:8,border:'none',
                         background:'#dc2626',color:'#fff',fontWeight:700,fontSize:12,cursor:'pointer' }}>
                       Force Complete
@@ -521,6 +523,219 @@ function FlockCard({ flock, canAct, onTransfer, onAdvance, onLogWeight }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// ── Dispute Resolve Modal Component ──────────────────────────────────────────
+function DisputeResolveModal({ resolveDispute, apiFetch, user, onClose, onSave }) {
+  const t       = resolveDispute.transfer;
+  const isFM    = ['FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN'].includes(user?.role);
+  const birdsSent = t.birds_sent || t.survivingCount;
+
+  const [resolveForm, setResolveForm] = useState({
+    action:        resolveDispute.defaultAction || 'CANCEL',
+    overrideCount: String(birdsSent||''),
+    resolveNotes:  '',
+  });
+  const [submitting, setSubmitting] = useState(false);
+  const [err, setErr]               = useState('');
+
+  const actionLabels = {
+    CANCEL:         { label:'Cancel Transfer' },
+    FORCE_COMPLETE: { label:'Force Complete' },
+    WITHDRAW:       { label:'Withdraw Transfer' },
+  };
+
+  async function submitResolve() {
+    setSubmitting(true); setErr('');
+    try {
+      const res = await apiFetch(
+        `/api/rearing/transfers/${t.id}/dispute`,
+        { method:'POST', body: JSON.stringify({
+          action:        resolveForm.action,
+          resolveNotes:  resolveForm.resolveNotes || null,
+          overrideCount: resolveForm.action==='FORCE_COMPLETE'
+            ? parseInt(resolveForm.overrideCount,10) : undefined,
+        }) }
+      );
+      const d = await res.json();
+      if (!res.ok) { setErr(d.error||'Failed'); setSubmitting(false); return; }
+      onSave(d.message || 'Dispute resolved.');
+    } catch { setErr('Network error'); }
+    setSubmitting(false);
+  }
+
+  const cfg = actionLabels[resolveForm.action] || actionLabels.CANCEL;
+
+  return (
+    <Modal title={`🚫 Resolve Dispute — ${t.flocks?.batchCode}`} onClose={onClose}>
+      <div style={{display:'flex',flexDirection:'column',gap:14}}>
+        <div style={{background:'#fef2f2',border:'1px solid #fecaca',borderRadius:8,padding:'12px 14px',fontSize:13}}>
+          <div style={{fontWeight:700,color:'#991b1b',marginBottom:6}}>Dispute Summary</div>
+          <div style={{fontSize:12,color:'#991b1b',marginBottom:4}}>
+            <strong>{fmt(birdsSent)}</strong> birds · {t.fromPenSection?.pen?.name} → {t.toPenSection?.pen?.name}
+          </div>
+          <div style={{background:'#fee2e2',borderRadius:6,padding:'6px 10px',fontSize:12,color:'#b91c1c'}}>
+            Reason: {t.dispute_reason || t.disputeReason}
+          </div>
+        </div>
+        {err && <div className="alert alert-red">⚠ {err}</div>}
+        <div>
+          <label className="label">Resolution Action *</label>
+          <div style={{display:'flex',flexDirection:'column',gap:8}}>
+            {isFM && (<>
+              <label style={{display:'flex',alignItems:'flex-start',gap:10,padding:'10px 12px',borderRadius:8,cursor:'pointer',
+                border:`1.5px solid ${resolveForm.action==='CANCEL'?'#fecaca':'var(--border)'}`,
+                background:resolveForm.action==='CANCEL'?'#fef2f2':'var(--bg-elevated)'}}>
+                <input type="radio" name="dr-action" value="CANCEL" checked={resolveForm.action==='CANCEL'}
+                  onChange={()=>setResolveForm(f=>({...f,action:'CANCEL'}))} style={{marginTop:2}}/>
+                <div>
+                  <div style={{fontWeight:700,fontSize:13,color:'#991b1b'}}>Cancel Transfer</div>
+                  <div style={{fontSize:11,color:'var(--text-muted)'}}>Transfer is voided. Flock stays at source. Can be re-initiated later.</div>
+                </div>
+              </label>
+              <label style={{display:'flex',alignItems:'flex-start',gap:10,padding:'10px 12px',borderRadius:8,cursor:'pointer',
+                border:`1.5px solid ${resolveForm.action==='FORCE_COMPLETE'?'#fecaca':'var(--border)'}`,
+                background:resolveForm.action==='FORCE_COMPLETE'?'#fff1f2':'var(--bg-elevated)'}}>
+                <input type="radio" name="dr-action" value="FORCE_COMPLETE" checked={resolveForm.action==='FORCE_COMPLETE'}
+                  onChange={()=>setResolveForm(f=>({...f,action:'FORCE_COMPLETE'}))} style={{marginTop:2}}/>
+                <div style={{flex:1}}>
+                  <div style={{fontWeight:700,fontSize:13,color:'#dc2626'}}>Force Complete</div>
+                  <div style={{fontSize:11,color:'var(--text-muted)'}}>Override the dispute and move the flock to destination.</div>
+                  {resolveForm.action==='FORCE_COMPLETE' && (
+                    <div style={{marginTop:8}}>
+                      <label className="label">Official Bird Count</label>
+                      <input type="number" className="input" min="0" value={resolveForm.overrideCount}
+                        onChange={e=>setResolveForm(f=>({...f,overrideCount:e.target.value}))}/>
+                    </div>
+                  )}
+                </div>
+              </label>
+            </>)}
+            <label style={{display:'flex',alignItems:'flex-start',gap:10,padding:'10px 12px',borderRadius:8,cursor:'pointer',
+              border:`1.5px solid ${resolveForm.action==='WITHDRAW'?'#fde68a':'var(--border)'}`,
+              background:resolveForm.action==='WITHDRAW'?'#fffbeb':'var(--bg-elevated)'}}>
+              <input type="radio" name="dr-action" value="WITHDRAW" checked={resolveForm.action==='WITHDRAW'}
+                onChange={()=>setResolveForm(f=>({...f,action:'WITHDRAW'}))} style={{marginTop:2}}/>
+              <div>
+                <div style={{fontWeight:700,fontSize:13,color:'#92400e'}}>
+                  {isFM ? 'Withdraw (on behalf of sending PM)' : 'Withdraw Transfer'}
+                </div>
+                <div style={{fontSize:11,color:'var(--text-muted)'}}>Pull back the transfer. Flock stays at source. You can re-initiate after resolving.</div>
+              </div>
+            </label>
+          </div>
+        </div>
+        <div>
+          <label className="label">Notes {resolveForm.action==='FORCE_COMPLETE'?'(required — document reason)':''}</label>
+          <textarea className="input" rows={3} value={resolveForm.resolveNotes}
+            placeholder={resolveForm.action==='CANCEL' ? 'Reason for cancellation…'
+              : resolveForm.action==='FORCE_COMPLETE' ? 'Why are you overriding the dispute? Document your investigation…'
+              : 'Why are you withdrawing? What needs to be resolved before re-initiating?'}
+            onChange={e=>setResolveForm(f=>({...f,resolveNotes:e.target.value}))}/>
+        </div>
+        <div style={{display:'flex',gap:10}}>
+          <button onClick={onClose}
+            style={{flex:1,padding:'9px',borderRadius:8,border:'1.5px solid var(--border)',background:'#fff',fontWeight:600,fontSize:13,cursor:'pointer'}}>
+            Back
+          </button>
+          <button onClick={submitResolve} disabled={submitting}
+            style={{flex:2,padding:'9px',borderRadius:8,border:'none',
+              background:submitting?'#e2e8f0':resolveForm.action==='FORCE_COMPLETE'?'#dc2626':resolveForm.action==='CANCEL'?'#dc2626':'#d97706',
+              color:submitting?'#94a3b8':'#fff',fontWeight:700,fontSize:13,cursor:submitting?'default':'pointer'}}>
+            {submitting ? 'Processing…' : cfg.label}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ── FM Discrepancy Review Modal Component ─────────────────────────────────────
+function ReviewDiscrepancyModal({ transfer, apiFetch, onClose, onSave }) {
+  const [reviewForm, setReviewForm] = useState({ action:'APPROVE', overrideCount:'', reviewNotes:'' });
+  const [submitting, setSubmitting] = useState(false);
+  const [err, setErr]               = useState('');
+
+  const birdsSent     = transfer.birds_sent || transfer.survivingCount;
+  const birdsReceived = transfer.birds_received;
+  const discPct       = transfer.discrepancy_pct;
+
+  async function submitReview() {
+    if (reviewForm.action==='OVERRIDE' && !reviewForm.overrideCount)
+      return setErr('Enter the override count');
+    setSubmitting(true); setErr('');
+    try {
+      const res = await apiFetch(
+        `/api/rearing/transfers/${transfer.id}/review`,
+        { method:'POST', body: JSON.stringify({
+          action:        reviewForm.action,
+          reviewNotes:   reviewForm.reviewNotes || null,
+          overrideCount: reviewForm.action==='OVERRIDE' ? parseInt(reviewForm.overrideCount,10) : undefined,
+        }) }
+      );
+      const d = await res.json();
+      if (!res.ok) { setErr(d.error||'Failed'); setSubmitting(false); return; }
+      onSave(d.message || 'Discrepancy reviewed. Transfer completed.');
+    } catch { setErr('Network error'); }
+    setSubmitting(false);
+  }
+
+  return (
+    <Modal title={`🔍 Review Discrepancy — ${transfer.flocks?.batchCode}`} onClose={onClose}>
+      <div style={{display:'flex',flexDirection:'column',gap:14}}>
+        <div style={{background:'#fff7ed',border:'1px solid #fed7aa',borderRadius:8,padding:'12px 14px',fontSize:13}}>
+          <div style={{fontWeight:700,color:'#9a3412',marginBottom:4}}>Discrepancy Summary</div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8,fontSize:12}}>
+            <div><div style={{color:'#9a3412',fontWeight:600}}>Birds Sent</div>
+              <div style={{fontSize:16,fontWeight:800}}>{fmt(birdsSent)}</div></div>
+            <div><div style={{color:'#9a3412',fontWeight:600}}>Birds Received</div>
+              <div style={{fontSize:16,fontWeight:800,color:'#dc2626'}}>{fmt(birdsReceived)}</div></div>
+            <div><div style={{color:'#9a3412',fontWeight:600}}>Discrepancy</div>
+              <div style={{fontSize:16,fontWeight:800,color:'#dc2626'}}>{discPct}%</div></div>
+          </div>
+          {transfer.receiving_notes && (
+            <div style={{marginTop:8,fontSize:11,color:'#78350f'}}>Receiving notes: {transfer.receiving_notes}</div>
+          )}
+        </div>
+        {err && <div className="alert alert-red">⚠ {err}</div>}
+        <div>
+          <label className="label">Action *</label>
+          <select className="input" value={reviewForm.action}
+            onChange={e=>setReviewForm(f=>({...f,action:e.target.value}))}>
+            <option value="APPROVE">Approve — Accept {fmt(birdsReceived)} birds as official count</option>
+            <option value="OVERRIDE">Override — Set a different official count</option>
+          </select>
+        </div>
+        {reviewForm.action==='OVERRIDE' && (
+          <div>
+            <label className="label">Official Bird Count *</label>
+            <input type="number" className="input" min="0" max={birdsSent}
+              value={reviewForm.overrideCount}
+              placeholder={`Between ${fmt(birdsReceived)} and ${fmt(birdsSent)}`}
+              onChange={e=>setReviewForm(f=>({...f,overrideCount:e.target.value}))}/>
+          </div>
+        )}
+        <div>
+          <label className="label">Review Notes</label>
+          <textarea className="input" rows={3} value={reviewForm.reviewNotes}
+            placeholder="Document your findings, investigation outcome, or reason for override…"
+            onChange={e=>setReviewForm(f=>({...f,reviewNotes:e.target.value}))}/>
+        </div>
+        <div style={{display:'flex',gap:10}}>
+          <button onClick={onClose}
+            style={{flex:1,padding:'9px',borderRadius:8,border:'1.5px solid var(--border)',background:'#fff',fontWeight:600,fontSize:13,cursor:'pointer'}}>
+            Cancel
+          </button>
+          <button onClick={submitReview} disabled={submitting}
+            style={{flex:2,padding:'9px',borderRadius:8,border:'none',
+              background:submitting?'#e2e8f0':'#ea580c',color:'#fff',fontWeight:700,fontSize:13,cursor:submitting?'default':'pointer'}}>
+            {submitting?'Submitting…':reviewForm.action==='APPROVE'?'Approve & Complete Transfer':'Override & Complete Transfer'}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+
 export default function RearingPage() {
   const router             = useRouter();
   const { user, apiFetch } = useAuth();
@@ -586,7 +801,17 @@ export default function RearingPage() {
 
   // Advance to production modal
   const [advanceFlock,   setAdvanceFlock]   = useState(null);
-  const [advanceForm,    setAdvanceForm]    = useState({ pointOfLayDate:'', initialLayingRate:'', notes:'' });
+  const [advanceForm,    setAdvanceForm]    = useState({
+    pointOfLayDate: '',
+    notes: '',
+    // First egg collection (required)
+    cratesCollected: '',
+    looseEggs: '0',
+    crackedCount: '0',
+    gradeBCrates: '0',
+    gradeBLoose: '0',
+    collectionSession: '1', // 1=Morning, 2=Afternoon
+  });
   const [advSubmitting,  setAdvSubmitting]  = useState(false);
 
   const load = useCallback(async () => {
@@ -610,7 +835,14 @@ export default function RearingPage() {
           .map(t => t.flockId)
       );
       const enrichedFlocks = (flockData.flocks||[]).map(f => ({
-        ...f, hasPendingTransfer: pendingFlockIds.has(f.id),
+        ...f,
+        hasPendingTransfer: pendingFlockIds.has(f.id),
+        // Override hasBeenTransferred: only block re-transfer if there's an active pending transfer
+        // Once server patch is applied, this will also check t.status === 'COMPLETED'
+        // For now: if flock has transfers but none are pending → allow re-initiation
+        hasBeenTransferred: pendingFlockIds.has(f.id)
+          ? true  // pending transfer exists — block
+          : (f.transfers||[]).some(t => t.status === 'COMPLETED'),  // only completed blocks permanently
       }));
 
       setFlocks(enrichedFlocks);
@@ -734,22 +966,58 @@ export default function RearingPage() {
     e.preventDefault();
     if (!advanceForm.pointOfLayDate) return showToast('Enter Point-of-Lay date','error');
 
+    // Validate egg collection fields
+    const cratesCollected = parseInt(advanceForm.cratesCollected||'0', 10);
+    const looseEggs       = parseInt(advanceForm.looseEggs||'0', 10);
+    const totalEggs       = cratesCollected * 30 + looseEggs;
+    const gradeBCrates    = parseInt(advanceForm.gradeBCrates||'0', 10);
+    const gradeBLoose     = parseInt(advanceForm.gradeBLoose||'0', 10);
+    const gradeBCount     = gradeBCrates * 30 + gradeBLoose;
+    const crackedCount    = parseInt(advanceForm.crackedCount||'0', 10);
+    const gradeACount     = Math.max(0, totalEggs - gradeBCount - crackedCount); // auto-calc
+
+    if (totalEggs <= 0)
+      return showToast('Enter at least 1 crate or loose eggs collected', 'error');
+    if (gradeBCount + crackedCount > totalEggs)
+      return showToast('Grade B + Cracked counts exceed total eggs', 'error');
+
+    const birdCount  = advanceFlock.currentCount || 0;
+    const layingRate = birdCount > 0 ? parseFloat(((totalEggs / birdCount) * 100).toFixed(2)) : 0;
+    const gradeAPct  = totalEggs > 0 ? parseFloat(((gradeACount / totalEggs) * 100).toFixed(2)) : 0;
+
     setAdvSubmitting(true);
     try {
       const res = await apiFetch(`/api/rearing/${advanceFlock.id}/advance`, {
         method:'POST',
         body: JSON.stringify({
-          pointOfLayDate:    advanceForm.pointOfLayDate,
-          initialLayingRate: advanceForm.initialLayingRate ? parseFloat(advanceForm.initialLayingRate) : null,
-          notes:             advanceForm.notes||null,
+          pointOfLayDate: advanceForm.pointOfLayDate,
+          notes:          advanceForm.notes || null,
+          // First egg collection — required
+          firstEggCollection: {
+            flockId:           advanceFlock.id,
+            penSectionId:      advanceFlock.penSectionId,
+            collectionDate:    advanceForm.pointOfLayDate,
+            collectionSession: parseInt(advanceForm.collectionSession, 10),
+            cratesCollected,
+            looseEggs,
+            totalEggs,
+            layingRatePct:     layingRate,
+            gradeACount:       gradeACount,          // auto-calculated
+            gradeBCrates:      gradeBCrates || null,
+            gradeBLoose:       gradeBLoose  || null,
+            gradeBCount:       gradeBCount  || null,
+            crackedCount:      crackedCount || null,
+            gradeAPct:         gradeAPct    || null,
+            // submissionStatus set to APPROVED by server (PM-logged record)
+          },
         }),
       });
       const d = await res.json();
-      if (!res.ok) return showToast(d.error||'Failed','error');
-      showToast(`Flock advanced to Production. ${d.notified} worker(s) notified.`);
+      if (!res.ok) return showToast(d.error || 'Failed', 'error');
+      showToast(`Flock advanced to Production. First collection logged. ${d.notified} worker(s) notified.`);
       setAdvanceFlock(null);
       load();
-    } catch { showToast('Network error','error'); }
+    } catch { showToast('Network error', 'error'); }
     setAdvSubmitting(false);
   }
 
@@ -796,7 +1064,15 @@ export default function RearingPage() {
               transitMortality:'0', receivingNotes:'',
             });
           }}
-          onDispute={t => { setDisputeTransfer(t); setDisputeReason(''); }}
+          onDispute={payload => {
+            // payload is either a transfer object (from Dispute button)
+            // or { transfer, defaultAction } (from disputed section action buttons)
+            if (payload?.transfer) {
+              setResolveDispute(payload); // open DisputeResolveModal with defaultAction
+            } else {
+              setDisputeTransfer(payload); setDisputeReason(''); // open dispute reason modal
+            }
+          }}
           onReview={t => setReviewTransfer(t)}
         />
 
@@ -832,7 +1108,16 @@ export default function RearingPage() {
                 }}
                 onAdvance={f => {
                   setAdvanceFlock(f);
-                  setAdvanceForm({ pointOfLayDate: new Date().toISOString().slice(0,10), initialLayingRate:'', notes:'' });
+                  setAdvanceForm({
+                    pointOfLayDate: new Date().toISOString().slice(0,10),
+                    notes: '',
+                    cratesCollected: '',
+                    looseEggs: '0',
+                    crackedCount: '0',
+                    gradeBCrates: '0',
+    gradeBLoose: '0',
+                    collectionSession: '1',
+                  });
                 }}
               />
             ))}
@@ -1035,280 +1320,28 @@ export default function RearingPage() {
       )}
 
       {/* ══ Dispute Resolve Modal ══════════════════════════════════════════ */}
-      {resolveDispute && (() => {
-        const t = resolveDispute.transfer;
-        const isFM = ['FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN'].includes(user?.role);
-        const birdsSent = t.birds_sent || t.survivingCount;
-        const [resolveForm, setResolveForm] = React.useState({
-          action:       resolveDispute.defaultAction || 'CANCEL',
-          overrideCount: String(birdsSent||''),
-          resolveNotes: '',
-        });
-        const [submitting, setSubmitting] = React.useState(false);
-        const [err, setErr]               = React.useState('');
-
-        const actionLabels = {
-          CANCEL:         { label:'Cancel Transfer', color:'#dc2626', bg:'#fef2f2',
-                            desc:'Transfer is voided. Flock stays at source permanently.' },
-          FORCE_COMPLETE: { label:'Force Complete', color:'#fff', bg:'#dc2626',
-                            desc:'Override the dispute and complete the transfer at the specified count.' },
-          WITHDRAW:       { label:'Withdraw Transfer', color:'#dc2626', bg:'#fef2f2',
-                            desc:'Sending PM pulls back their transfer. Can re-initiate after resolving the issue.' },
-        };
-
-        async function submitResolve() {
-          setSubmitting(true); setErr('');
-          try {
-            const res = await apiFetch(
-              `/api/rearing/transfers/${t.id}/dispute`,
-              { method:'POST', body: JSON.stringify({
-                action:        resolveForm.action,
-                resolveNotes:  resolveForm.resolveNotes || null,
-                overrideCount: resolveForm.action==='FORCE_COMPLETE'
-                  ? parseInt(resolveForm.overrideCount,10) : undefined,
-              }) }
-            );
-            const d = await res.json();
-            if (!res.ok) return setErr(d.error||'Failed');
-            setResolveDispute(null);
-            load();
-            showToast(d.message || 'Dispute resolved.');
-          } catch { setErr('Network error'); }
-          setSubmitting(false);
-        }
-
-        const cfg = actionLabels[resolveForm.action] || actionLabels.CANCEL;
-
-        return (
-          <Modal title={`🚫 Resolve Dispute — ${t.flocks?.batchCode}`}
-            onClose={() => setResolveDispute(null)}>
-            <div style={{display:'flex',flexDirection:'column',gap:14}}>
-              {/* Dispute summary */}
-              <div style={{background:'#fef2f2',border:'1px solid #fecaca',borderRadius:8,
-                padding:'12px 14px',fontSize:13}}>
-                <div style={{fontWeight:700,color:'#991b1b',marginBottom:6}}>Dispute Summary</div>
-                <div style={{fontSize:12,color:'#991b1b',marginBottom:4}}>
-                  <strong>{fmt(birdsSent)}</strong> birds · {t.fromPenSection?.pen?.name} → {t.toPenSection?.pen?.name}
-                </div>
-                <div style={{background:'#fee2e2',borderRadius:6,padding:'6px 10px',
-                  fontSize:12,color:'#b91c1c'}}>
-                  Reason: {t.dispute_reason || t.disputeReason}
-                </div>
-              </div>
-
-              {err && <div className="alert alert-red">⚠ {err}</div>}
-
-              {/* Action selector — FM sees all 3, sending PM only sees WITHDRAW */}
-              <div>
-                <label className="label">Resolution Action *</label>
-                <div style={{display:'flex',flexDirection:'column',gap:8}}>
-                  {isFM && (
-                    <>
-                      <label style={{display:'flex',alignItems:'flex-start',gap:10,
-                        padding:'10px 12px',borderRadius:8,cursor:'pointer',
-                        border:`1.5px solid ${resolveForm.action==='CANCEL'?'#fecaca':'var(--border)'}`,
-                        background:resolveForm.action==='CANCEL'?'#fef2f2':'var(--bg-elevated)'}}>
-                        <input type="radio" name="action" value="CANCEL"
-                          checked={resolveForm.action==='CANCEL'}
-                          onChange={()=>setResolveForm(f=>({...f,action:'CANCEL'}))}
-                          style={{marginTop:2}}/>
-                        <div>
-                          <div style={{fontWeight:700,fontSize:13,color:'#991b1b'}}>Cancel Transfer</div>
-                          <div style={{fontSize:11,color:'var(--text-muted)'}}>
-                            Transfer is voided. Flock stays at source. Can be re-initiated later.
-                          </div>
-                        </div>
-                      </label>
-                      <label style={{display:'flex',alignItems:'flex-start',gap:10,
-                        padding:'10px 12px',borderRadius:8,cursor:'pointer',
-                        border:`1.5px solid ${resolveForm.action==='FORCE_COMPLETE'?'#fecaca':'var(--border)'}`,
-                        background:resolveForm.action==='FORCE_COMPLETE'?'#fff1f2':'var(--bg-elevated)'}}>
-                        <input type="radio" name="action" value="FORCE_COMPLETE"
-                          checked={resolveForm.action==='FORCE_COMPLETE'}
-                          onChange={()=>setResolveForm(f=>({...f,action:'FORCE_COMPLETE'}))}
-                          style={{marginTop:2}}/>
-                        <div style={{flex:1}}>
-                          <div style={{fontWeight:700,fontSize:13,color:'#dc2626'}}>Force Complete</div>
-                          <div style={{fontSize:11,color:'var(--text-muted)'}}>
-                            Override the dispute and move the flock to destination.
-                          </div>
-                          {resolveForm.action==='FORCE_COMPLETE' && (
-                            <div style={{marginTop:8}}>
-                              <label className="label">Official Bird Count</label>
-                              <input type="number" className="input" min="0"
-                                value={resolveForm.overrideCount}
-                                onChange={e=>setResolveForm(f=>({...f,overrideCount:e.target.value}))}/>
-                            </div>
-                          )}
-                        </div>
-                      </label>
-                    </>
-                  )}
-                  <label style={{display:'flex',alignItems:'flex-start',gap:10,
-                    padding:'10px 12px',borderRadius:8,cursor:'pointer',
-                    border:`1.5px solid ${resolveForm.action==='WITHDRAW'?'#fde68a':'var(--border)'}`,
-                    background:resolveForm.action==='WITHDRAW'?'#fffbeb':'var(--bg-elevated)'}}>
-                    <input type="radio" name="action" value="WITHDRAW"
-                      checked={resolveForm.action==='WITHDRAW'}
-                      onChange={()=>setResolveForm(f=>({...f,action:'WITHDRAW'}))}
-                      style={{marginTop:2}}/>
-                    <div>
-                      <div style={{fontWeight:700,fontSize:13,color:'#92400e'}}>
-                        {isFM ? 'Withdraw (on behalf of sending PM)' : 'Withdraw Transfer'}
-                      </div>
-                      <div style={{fontSize:11,color:'var(--text-muted)'}}>
-                        Pull back the transfer. Flock stays at source. You can re-initiate after resolving.
-                      </div>
-                    </div>
-                  </label>
-                </div>
-              </div>
-
-              <div>
-                <label className="label">Notes {resolveForm.action==='FORCE_COMPLETE'?'(required — document reason)':''}</label>
-                <textarea className="input" rows={3} value={resolveForm.resolveNotes}
-                  placeholder={
-                    resolveForm.action==='CANCEL'       ? 'Reason for cancellation…' :
-                    resolveForm.action==='FORCE_COMPLETE'? 'Why are you overriding the dispute? Document your investigation…' :
-                    'Why are you withdrawing? What needs to be resolved before re-initiating?'
-                  }
-                  onChange={e=>setResolveForm(f=>({...f,resolveNotes:e.target.value}))}/>
-              </div>
-
-              <div style={{display:'flex',gap:10}}>
-                <button onClick={()=>setResolveDispute(null)}
-                  style={{flex:1,padding:'9px',borderRadius:8,border:'1.5px solid var(--border)',
-                    background:'#fff',fontWeight:600,fontSize:13,cursor:'pointer'}}>
-                  Back
-                </button>
-                <button onClick={submitResolve} disabled={submitting}
-                  style={{flex:2,padding:'9px',borderRadius:8,border:'none',
-                    background: submitting ? '#e2e8f0'
-                      : resolveForm.action==='FORCE_COMPLETE' ? '#dc2626'
-                      : resolveForm.action==='CANCEL' ? '#dc2626' : '#d97706',
-                    color: submitting ? '#94a3b8' : '#fff',
-                    fontWeight:700,fontSize:13,cursor:submitting?'default':'pointer'}}>
-                  {submitting ? 'Processing…' : cfg.label}
-                </button>
-              </div>
-            </div>
-          </Modal>
-        );
-      })()}
-
-      {/* ══ FM Discrepancy Review Modal ════════════════════════════════════ */}
-      {reviewTransfer && (
-        <Modal title={`🔍 Review Discrepancy — ${reviewTransfer.flocks?.batchCode}`}
-          onClose={() => setReviewTransfer(null)}>
-          {(() => {
-            const [reviewForm, setReviewForm] = React.useState({
-              action:'APPROVE', overrideCount:'', reviewNotes:'' });
-            const [submitting, setSubmitting] = React.useState(false);
-            const [err, setErr] = React.useState('');
-            const birdsSent     = reviewTransfer.birds_sent || reviewTransfer.survivingCount;
-            const birdsReceived = reviewTransfer.birds_received;
-            const discPct       = reviewTransfer.discrepancy_pct;
-
-            async function submitReview() {
-              if (reviewForm.action==='OVERRIDE' && !reviewForm.overrideCount)
-                return setErr('Enter the override count');
-              setSubmitting(true); setErr('');
-              try {
-                const res = await apiFetch(
-                  `/api/rearing/transfers/${reviewTransfer.id}/review`,
-                  { method:'POST', body: JSON.stringify({
-                    action:        reviewForm.action,
-                    reviewNotes:   reviewForm.reviewNotes || null,
-                    overrideCount: reviewForm.action==='OVERRIDE'
-                      ? parseInt(reviewForm.overrideCount,10) : undefined,
-                  }) }
-                );
-                const d = await res.json();
-                if (!res.ok) return setErr(d.error||'Failed');
-                setReviewTransfer(null);
-                load();
-                showToast(d.message || 'Discrepancy reviewed. Transfer completed.');
-              } catch { setErr('Network error'); }
-              setSubmitting(false);
-            }
-
-            return (
-              <div style={{display:'flex',flexDirection:'column',gap:14}}>
-                <div style={{background:'#fff7ed',border:'1px solid #fed7aa',borderRadius:8,
-                  padding:'12px 14px',fontSize:13}}>
-                  <div style={{fontWeight:700,color:'#9a3412',marginBottom:4}}>
-                    Discrepancy Summary
-                  </div>
-                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8,fontSize:12}}>
-                    <div><div style={{color:'#9a3412',fontWeight:600}}>Birds Sent</div>
-                      <div style={{fontSize:16,fontWeight:800}}>{fmt(birdsSent)}</div></div>
-                    <div><div style={{color:'#9a3412',fontWeight:600}}>Birds Received</div>
-                      <div style={{fontSize:16,fontWeight:800,color:'#dc2626'}}>{fmt(birdsReceived)}</div></div>
-                    <div><div style={{color:'#9a3412',fontWeight:600}}>Discrepancy</div>
-                      <div style={{fontSize:16,fontWeight:800,color:'#dc2626'}}>{discPct}%</div></div>
-                  </div>
-                  {reviewTransfer.receiving_notes && (
-                    <div style={{marginTop:8,fontSize:11,color:'#78350f'}}>
-                      Receiving notes: {reviewTransfer.receiving_notes}
-                    </div>
-                  )}
-                </div>
-
-                {err && <div className="alert alert-red">⚠ {err}</div>}
-
-                <div>
-                  <label className="label">Action *</label>
-                  <select className="input" value={reviewForm.action}
-                    onChange={e=>setReviewForm(f=>({...f,action:e.target.value}))}>
-                    <option value="APPROVE">
-                      Approve — Accept {fmt(birdsReceived)} birds as official count
-                    </option>
-                    <option value="OVERRIDE">
-                      Override — Set a different official count
-                    </option>
-                  </select>
-                </div>
-
-                {reviewForm.action==='OVERRIDE' && (
-                  <div>
-                    <label className="label">Official Bird Count *</label>
-                    <input type="number" className="input" min="0"
-                      max={birdsSent}
-                      value={reviewForm.overrideCount}
-                      placeholder={`Between ${fmt(birdsReceived)} and ${fmt(birdsSent)}`}
-                      onChange={e=>setReviewForm(f=>({...f,overrideCount:e.target.value}))}/>
-                  </div>
-                )}
-
-                <div>
-                  <label className="label">Review Notes</label>
-                  <textarea className="input" rows={3} value={reviewForm.reviewNotes}
-                    placeholder="Document your findings, investigation outcome, or reason for override…"
-                    onChange={e=>setReviewForm(f=>({...f,reviewNotes:e.target.value}))}/>
-                </div>
-
-                <div style={{display:'flex',gap:10}}>
-                  <button onClick={()=>setReviewTransfer(null)}
-                    style={{flex:1,padding:'9px',borderRadius:8,border:'1.5px solid var(--border)',
-                      background:'#fff',fontWeight:600,fontSize:13,cursor:'pointer'}}>
-                    Cancel
-                  </button>
-                  <button onClick={submitReview} disabled={submitting}
-                    style={{flex:2,padding:'9px',borderRadius:8,border:'none',
-                      background:submitting?'#e2e8f0':'#ea580c',color:'#fff',
-                      fontWeight:700,fontSize:13,cursor:submitting?'default':'pointer'}}>
-                    {submitting ? 'Submitting…'
-                      : reviewForm.action==='APPROVE' ? 'Approve & Complete Transfer'
-                      : 'Override & Complete Transfer'}
-                  </button>
-                </div>
-              </div>
-            );
-          })()}
-        </Modal>
+      {resolveDispute && (
+        <DisputeResolveModal
+          resolveDispute={resolveDispute}
+          apiFetch={apiFetch}
+          user={user}
+          onClose={() => setResolveDispute(null)}
+          onSave={(msg) => { setResolveDispute(null); load(); showToast(msg); }}
+        />
       )}
 
-      {/* ══ Log Weight Modal ═══════════════════════════════════════════════ */}
+            {/* ══ FM Discrepancy Review Modal ════════════════════════════════════ */}
+      {reviewTransfer && (
+        <ReviewDiscrepancyModal
+          transfer={reviewTransfer}
+          apiFetch={apiFetch}
+          onClose={() => setReviewTransfer(null)}
+          onSave={(msg) => { setReviewTransfer(null); load(); showToast(msg); }}
+        />
+      )}
+
+
+      {/* ══ Log Weight Modal      {/* ══ Log Weight Modal ═══════════════════════════════════════════════ */}
       {weightFlock && (
         <LogWeightModal
           flock={weightFlock}
@@ -1319,51 +1352,133 @@ export default function RearingPage() {
       )}
 
       {/* ══ Advance to Production Modal ══════════════════════════════════════ */}
-      {advanceFlock && (
-        <Modal title={`Advance to Production — ${advanceFlock.batchCode}`}
-          onClose={()=>setAdvanceFlock(null)}>
-          <div style={{ background:'#f0fdf4',border:'1px solid #bbf7d0',borderRadius:8,
-            padding:'10px 14px',marginBottom:16,fontSize:13 }}>
-            Confirming first consistent egg production. Stage changes from Rearing to Production.
-            Egg collection tasks will be generated from tomorrow.
-          </div>
-          <form onSubmit={handleAdvanceSubmit}>
-            <Field label="Point-of-Lay Date (first consistent laying)" required>
-              <input type="date" value={advanceForm.pointOfLayDate} required style={inputSt}
-                onChange={e=>setAdvanceForm(f=>({...f,pointOfLayDate:e.target.value}))}/>
-            </Field>
-            <Field label="Initial Laying Rate (%)">
-              <input type="number" min="0" max="100" step="0.1"
-                value={advanceForm.initialLayingRate} style={inputSt}
-                placeholder="e.g. 5 (early laying — increases over weeks)"
-                onChange={e=>setAdvanceForm(f=>({...f,initialLayingRate:e.target.value}))}/>
-            </Field>
-            <Field label="Notes">
-              <textarea value={advanceForm.notes} rows={2}
-                style={{...inputSt,resize:'vertical'}}
-                placeholder="Observations on flock condition at point of lay…"
-                onChange={e=>setAdvanceForm(f=>({...f,notes:e.target.value}))}/>
-            </Field>
-            <div style={{ background:'#fef9c3',border:'1px solid #fde68a',borderRadius:8,
-              padding:'10px 14px',marginBottom:14,fontSize:12,color:'#713f12' }}>
-              This action is permanent. All workers on this section will be notified.
+      {advanceFlock && (() => {
+        const birdCount   = advanceFlock.currentCount || 0;
+        const totalEggs   = (parseInt(advanceForm.cratesCollected||0,10)*30)
+                          + parseInt(advanceForm.looseEggs||0,10);
+        const layingRate  = birdCount > 0 ? parseFloat(((totalEggs/birdCount)*100).toFixed(1)) : 0;
+        const gradeBCount = (parseInt(advanceForm.gradeBCrates||0,10)*30)
+                          + parseInt(advanceForm.gradeBLoose||0,10);
+        const cracked     = parseInt(advanceForm.crackedCount||0,10);
+        const gradeACount = Math.max(0, totalEggs - gradeBCount - cracked); // auto-calculated
+        const gradeAPct   = totalEggs > 0 ? parseFloat(((gradeACount/totalEggs)*100).toFixed(1)) : 0;
+        return (
+          <Modal title={`🥚 Advance to Production — ${advanceFlock.batchCode}`}
+            onClose={()=>setAdvanceFlock(null)}>
+            {/* Context banner */}
+            <div style={{ background:'#f0fdf4',border:'1px solid #bbf7d0',borderRadius:8,
+              padding:'10px 14px',marginBottom:16,fontSize:13,color:'#166534' }}>
+              Stage changes from <strong>Rearing → Production</strong>. The egg collection you log here
+              becomes the first official record for this flock. Laying rate is auto-calculated.
             </div>
-            <div style={{ display:'flex',gap:10 }}>
-              <button type="button" onClick={()=>setAdvanceFlock(null)}
-                style={{ flex:1,padding:'9px',borderRadius:8,border:'1.5px solid #e2e8f0',
-                  background:'#fff',fontWeight:600,fontSize:13,cursor:'pointer',color:'#475569' }}>
-                Cancel
-              </button>
-              <button type="submit" disabled={advSubmitting}
-                style={{ flex:2,padding:'9px',borderRadius:8,border:'none',
-                  background:advSubmitting?'#e2e8f0':'#22c55e',color:'#fff',
-                  fontWeight:700,fontSize:13,cursor:advSubmitting?'default':'pointer' }}>
-                {advSubmitting?'Advancing…':'Confirm Point-of-Lay'}
-              </button>
-            </div>
-          </form>
-        </Modal>
-      )}
+            <form onSubmit={handleAdvanceSubmit}>
+              {/* Point of Lay date */}
+              <Field label="Point-of-Lay Date" required>
+                <input type="date" value={advanceForm.pointOfLayDate} required style={inputSt}
+                  onChange={e=>setAdvanceForm(f=>({...f,pointOfLayDate:e.target.value}))}/>
+              </Field>
+
+              {/* Divider */}
+              <div style={{ borderTop:'1px solid var(--border)',margin:'14px 0 14px',paddingTop:14 }}>
+                <div style={{ fontSize:11,fontWeight:700,color:'var(--text-muted)',
+                  textTransform:'uppercase',letterSpacing:'.06em',marginBottom:12 }}>
+                  First Egg Collection · {fmt(birdCount)} birds
+                </div>
+              </div>
+
+              {/* Collection session */}
+              <Field label="Collection Session" required>
+                <select value={advanceForm.collectionSession} style={inputSt}
+                  onChange={e=>setAdvanceForm(f=>({...f,collectionSession:e.target.value}))}>
+                  <option value="1">Morning (Session 1)</option>
+                  <option value="2">Afternoon (Session 2)</option>
+                </select>
+              </Field>
+
+              {/* Crates + loose */}
+              <div style={{ display:'grid',gridTemplateColumns:'1fr 1fr',gap:12 }}>
+                <Field label="Crates Collected (30 eggs/crate)" required>
+                  <input type="number" min="0" value={advanceForm.cratesCollected} required style={inputSt}
+                    placeholder="0"
+                    onChange={e=>setAdvanceForm(f=>({...f,cratesCollected:e.target.value}))}/>
+                </Field>
+                <Field label="Loose Eggs">
+                  <input type="number" min="0" max="29" value={advanceForm.looseEggs} style={inputSt}
+                    placeholder="0"
+                    onChange={e=>setAdvanceForm(f=>({...f,looseEggs:e.target.value}))}/>
+                </Field>
+              </div>
+
+              {/* Live totals */}
+              {totalEggs > 0 && (
+                <div style={{ background:'#f8fafc',borderRadius:8,padding:'10px 14px',
+                  marginBottom:12,display:'flex',gap:20,fontSize:13 }}>
+                  <div><span style={{ color:'var(--text-muted)' }}>Total Eggs: </span>
+                    <strong>{fmt(totalEggs)}</strong></div>
+                  <div><span style={{ color:'var(--text-muted)' }}>Laying Rate: </span>
+                    <strong style={{ color:layingRate>=5?'#16a34a':'#d97706' }}>{layingRate}%</strong></div>
+                </div>
+              )}
+
+              {/* Grading — Grade A is auto-calculated */}
+              <div style={{ display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12 }}>
+                <Field label="Grade B Crates">
+                  <input type="number" min="0" value={advanceForm.gradeBCrates} style={inputSt}
+                    placeholder="0"
+                    onChange={e=>setAdvanceForm(f=>({...f,gradeBCrates:e.target.value}))}/>
+                </Field>
+                <Field label="Grade B Loose">
+                  <input type="number" min="0" max="29" value={advanceForm.gradeBLoose} style={inputSt}
+                    placeholder="0"
+                    onChange={e=>setAdvanceForm(f=>({...f,gradeBLoose:e.target.value}))}/>
+                </Field>
+                <Field label="Cracked">
+                  <input type="number" min="0" value={advanceForm.crackedCount} style={inputSt}
+                    placeholder="0"
+                    onChange={e=>setAdvanceForm(f=>({...f,crackedCount:e.target.value}))}/>
+                </Field>
+              </div>
+              {/* Auto-calculated Grade A */}
+              {totalEggs > 0 && (
+                <div style={{ background:'#f0fdf4',border:'1px solid #bbf7d0',borderRadius:8,
+                  padding:'10px 14px',marginBottom:12,fontSize:12,color:'#166534' }}>
+                  <strong>Grade A (auto): {fmt(gradeACount)}</strong> eggs
+                  {gradeACount > 0 && ` — ${gradeAPct}% of total`}
+                  <span style={{ color:'#6b7280',marginLeft:8 }}>
+                    = Total ({fmt(totalEggs)}) − Grade B ({fmt(gradeBCount)}) − Cracked ({fmt(cracked)})
+                  </span>
+                </div>
+              )}
+
+              <Field label="Notes">
+                <textarea value={advanceForm.notes} rows={2}
+                  style={{...inputSt,resize:'vertical'}}
+                  placeholder="Observations on flock condition at point of lay…"
+                  onChange={e=>setAdvanceForm(f=>({...f,notes:e.target.value}))}/>
+              </Field>
+
+              <div style={{ background:'#fef9c3',border:'1px solid #fde68a',borderRadius:8,
+                padding:'10px 14px',marginBottom:14,fontSize:12,color:'#713f12' }}>
+                This action is permanent. All workers on this section will be notified.
+              </div>
+
+              <div style={{ display:'flex',gap:10 }}>
+                <button type="button" onClick={()=>setAdvanceFlock(null)}
+                  style={{ flex:1,padding:'9px',borderRadius:8,border:'1.5px solid #e2e8f0',
+                    background:'#fff',fontWeight:600,fontSize:13,cursor:'pointer',color:'#475569' }}>
+                  Cancel
+                </button>
+                <button type="submit" disabled={advSubmitting}
+                  style={{ flex:2,padding:'9px',borderRadius:8,border:'none',
+                    background:advSubmitting?'#e2e8f0':'#22c55e',color:'#fff',
+                    fontWeight:700,fontSize:13,cursor:advSubmitting?'default':'pointer' }}>
+                  {advSubmitting?'Advancing…':'Confirm Point-of-Lay & Log First Collection'}
+                </button>
+              </div>
+            </form>
+          </Modal>
+        );
+      })()}
 
       <Toast msg={toast.msg} type={toast.type} />
     </AppShell>

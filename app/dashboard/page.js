@@ -122,7 +122,7 @@ function ChartModal({ sectionId, sectionName, penName, opType, stage = 'PRODUCTI
   useEffect(() => {
     if (!sectionId) return;
     setLoading(true);
-    fetch(`/api/dashboard/charts?sectionId=${sectionId}&days=${days}`, { credentials: 'include' })
+    fetch(`/api/dashboard/charts?sectionId=${sectionId}&days=${days}&stage=${stage}`, { credentials: 'include' })
       .then(r => r.ok ? r.json() : null)
       .then(d => { setData(d); setLoading(false); })
       .catch(() => setLoading(false));
@@ -135,7 +135,8 @@ function ChartModal({ sectionId, sectionName, penName, opType, stage = 'PRODUCTI
     return () => window.removeEventListener('keydown', fn);
   }, [onClose]);
 
-  const chart = data?.chart || [];
+  const chart     = data?.chart || [];
+  const isRearing = data?.isRearing || (stage === 'REARING');
 
   const Tile = ({ title, children }) => (
     <div style={{ background: '#fff', borderRadius: 12, padding: '14px 16px', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column' }}>
@@ -213,7 +214,7 @@ function ChartModal({ sectionId, sectionName, penName, opType, stage = 'PRODUCTI
                 dot={isBrooding
                   ? (props) => {
                       const { cx, cy, value } = props;
-                      if (value == null || cx == null) return <g key="empty"/>;
+                      if (value == null || cx == null) return <g key={`empty-${index ?? cx ?? Math.random()}`}/>;
                       return <circle key={`t-${cx}-${cy}`} cx={cx} cy={cy} r={5} fill="#ef4444" stroke="#fff" strokeWidth={1.5}/>;
                     }
                   : { r: 2 }
@@ -233,7 +234,7 @@ function ChartModal({ sectionId, sectionName, penName, opType, stage = 'PRODUCTI
 
   const broilerCharts = (
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gridTemplateRows: '1fr 1fr', gap: 14, flex: 1, minHeight: 0 }}>
-      <Tile title="⚖ Live Weight vs Ross 308 Target">
+      <Tile title={isRearing ? "⚖ Pullet Weight vs ISA Brown Target" : "⚖ Live Weight vs Ross 308 Target"}>
         {loading ? <Spinner /> : (
           <ResponsiveContainer width="100%" height={220}>
             <ComposedChart data={chart} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
@@ -264,19 +265,6 @@ function ChartModal({ sectionId, sectionName, penName, opType, stage = 'PRODUCTI
           </ResponsiveContainer>
         )}
       </Tile>
-      <Tile title="💀 Daily Mortality">
-        {loading ? <Spinner /> : (
-          <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={chart} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-              <XAxis dataKey="label" tick={{ fontSize: 10 }} />
-              <YAxis tick={{ fontSize: 10 }} width={35} allowDecimals={false} />
-              <Tooltip content={<ChartTip />} />
-              <Bar dataKey="mortality" name="Deaths" fill="#ef4444" opacity={0.8} radius={[3, 3, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        )}
-      </Tile>
       <Tile title={isBrooding ? "🌾 Feed Intake & Brooder Temperature" : "🌾 Daily Feed Intake"}>
         {loading ? <Spinner /> : (
           <ResponsiveContainer width="100%" height={220}>
@@ -299,7 +287,7 @@ function ChartModal({ sectionId, sectionName, penName, opType, stage = 'PRODUCTI
                 dot={isBrooding
                   ? (props) => {
                       const { cx, cy, value } = props;
-                      if (value == null || cx == null) return <g key="empty"/>;
+                      if (value == null || cx == null) return <g key={`empty-${index ?? cx ?? Math.random()}`}/>;
                       return <circle key={`t-${cx}-${cy}`} cx={cx} cy={cy} r={5} fill="#ef4444" stroke="#fff" strokeWidth={1.5}/>;
                     }
                   : { r: 2 }
@@ -311,6 +299,19 @@ function ChartModal({ sectionId, sectionName, penName, opType, stage = 'PRODUCTI
               {isBrooding && <ReferenceLine yAxisId="right" y={26} stroke="#3b82f6" strokeDasharray="3 3"
                 label={{ value: 'Min 26°C', fontSize: 9, fill: '#3b82f6' }} />}
             </ComposedChart>
+          </ResponsiveContainer>
+        )}
+      </Tile>
+      <Tile title="💀 Daily Mortality">
+        {loading ? <Spinner /> : (
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={chart} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+              <XAxis dataKey="label" tick={{ fontSize: 10 }} />
+              <YAxis tick={{ fontSize: 10 }} width={35} allowDecimals={false} />
+              <Tooltip content={<ChartTip />} />
+              <Bar dataKey="mortality" name="Deaths" fill="#ef4444" opacity={0.8} radius={[3, 3, 0, 0]} />
+            </BarChart>
           </ResponsiveContainer>
         )}
       </Tile>
@@ -347,7 +348,7 @@ function ChartModal({ sectionId, sectionName, penName, opType, stage = 'PRODUCTI
         {/* Charts 2×2 grid */}
         <div style={{ flex: 1, padding: '16px 20px 20px', overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
           {!data && !loading && <div style={{ textAlign: 'center', padding: 60, color: 'var(--text-muted)' }}>No data available</div>}
-          {isL ? layerCharts : broilerCharts}
+          {isL && !isRearing && !isBrooding ? layerCharts : broilerCharts}
         </div>
 
       </div>
@@ -379,6 +380,9 @@ function WorkerSectionGridCard({ sec, highlighted = false }) {
     cardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }, [highlighted]);
 
+  const secStage   = sec.flock?.stage || sec.metrics?.stage || 'PRODUCTION';
+  const isRearing  = isL && secStage === 'REARING';
+  const isBrooding = secStage === 'BROODING';
   const layRate    = mx.todayLayingRate > 0 ? mx.todayLayingRate : null;
   const rateColor  = layRate == null ? 'var(--text-muted)'
     : layRate < 70 ? '#ef4444' : layRate < 80 ? '#d97706' : '#16a34a';
@@ -438,15 +442,29 @@ function WorkerSectionGridCard({ sec, highlighted = false }) {
           </div>
         )}
 
-        {/* ── Metric grid ── */}
+        {/* ── Metric grid — stage-aware ── */}
         {hasFlock ? (
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
-            {isL ? (<>
-              <MiniStat label="Eggs Today"  value={fmt(mx.todayEggs||0)} color="#f59e0b" />
-              <MiniStat label="Lay Rate"    value={layRate!=null?`${layRate}%`:'—'} color={rateColor} />
+            {isRearing ? (<>
+              {/* LAYER REARING — weight & feed, no eggs */}
+              <MiniStat label="Avg Weight"   value={mx.latestWeightG?`${(mx.latestWeightG/1000).toFixed(3)} kg`:'—'} color="#6c63ff" />
+              <MiniStat label="Feed/Day"     value={mx.avgDailyFeedKg!=null?`${mx.avgDailyFeedKg}kg`:'—'} color="#6c63ff" />
+              <MiniStat label="Deaths Today" value={fmt(mx.todayMortality||0)} color={mx.todayMortality>5?'#ef4444':'var(--text-secondary)'} />
+              <MiniStat label="7d Mortality" value={fmt(mx.weekMortality||0)} color="var(--text-secondary)" />
+            </>) : isBrooding ? (<>
+              {/* BROODING — live birds & temp */}
+              <MiniStat label="Live Chicks"  value={fmt(sec.currentBirds||0)} color="#6c63ff" />
+              <MiniStat label="Brooder Temp" value={mx.latestBrooderTemp!=null?`${Number(mx.latestBrooderTemp).toFixed(1)}°C`:'—'} color={mx.latestBrooderTemp>38||mx.latestBrooderTemp<26?'#ef4444':'#16a34a'} />
+              <MiniStat label="Deaths Today" value={fmt(mx.todayMortality||0)} color={mx.todayMortality>5?'#ef4444':'var(--text-secondary)'} />
+              <MiniStat label="7d Mortality" value={fmt(mx.weekMortality||0)} color="var(--text-secondary)" />
+            </>) : isL ? (<>
+              {/* LAYER PRODUCTION — eggs & lay rate */}
+              <MiniStat label="Eggs Today"   value={fmt(mx.todayEggs||0)} color="#f59e0b" />
+              <MiniStat label="Lay Rate"     value={layRate!=null?`${layRate}%`:'—'} color={rateColor} />
               <MiniStat label="Deaths Today" value={fmt(mx.todayMortality||0)} color={mx.todayMortality>5?'#ef4444':'var(--text-secondary)'} />
               <MiniStat label="7d Mortality" value={fmt(mx.weekMortality||0)} color="var(--text-secondary)" />
             </>) : (<>
+              {/* BROILER PRODUCTION — weight & FCR */}
               <MiniStat label="Avg Weight"  value={mx.latestWeightG?`${(mx.latestWeightG/1000).toFixed(2)} kg`:'—'} color="#3b82f6" />
               <MiniStat label="Est. FCR"    value={mx.estimatedFCR!=null?`${mx.estimatedFCR}`:'—'} color={fcrColor(mx.estimatedFCR||0)} />
               <MiniStat label="Deaths Today" value={fmt(mx.todayMortality||0)} color={mx.todayMortality>5?'#ef4444':'var(--text-secondary)'} />
@@ -528,12 +546,24 @@ function PenCard({ pen, autoOpen = false, highlightSection = null }) {
   const isCrit = pen.alertLevel === 'critical';
   const isWarn = pen.alertLevel === 'warn';
 
-  const avgRate      = (mx.avgLayingRate > 0) ? mx.avgLayingRate : null;
-  const primaryVal   = isL
-    ? (avgRate != null ? `${avgRate}%` : '—')
-    : (mx.avgWeightG != null ? `${(mx.avgWeightG/1000).toFixed(2)} kg` : '—');
-  const primaryLabel = isL ? 'lay rate' : 'avg weight';
-  const primaryCrit  = isL ? (avgRate != null && avgRate < 70) : false;
+  // Dominant stage across this pen's sections
+  const penStage     = (() => {
+    const secs = pen.sections || [];
+    if (secs.some(s => (s.metrics?.stage || s.flock?.stage) === 'BROODING')) return 'BROODING';
+    if (secs.some(s => (s.metrics?.stage || s.flock?.stage) === 'REARING'))  return 'REARING';
+    return 'PRODUCTION';
+  })();
+  const penIsRearing  = isL && penStage === 'REARING';
+  const penIsBrooding = isL && penStage === 'BROODING';
+  // todayLayingRate is per-section correct (totalEggs/currBirds); avgLayingRate is 7d inflated
+  const avgRate      = (mx.todayLayingRate > 0) ? mx.todayLayingRate : null;
+  const primaryVal   = penIsBrooding || penIsRearing
+    ? (mx.latestWeightG ? `${(Number(mx.latestWeightG)/1000).toFixed(3)} kg` : '—')
+    : isL
+      ? (avgRate != null ? `${avgRate}%` : '—')
+      : (mx.avgWeightG != null ? `${(mx.avgWeightG/1000).toFixed(2)} kg` : '—');
+  const primaryLabel = penIsBrooding ? 'avg weight' : penIsRearing ? 'avg weight' : isL ? 'lay rate' : 'avg weight';
+  const primaryCrit  = isL && !penIsBrooding && !penIsRearing ? (avgRate != null && avgRate < 70) : false;
   const deaths7d     = mx.weekMortality ?? 0;
   const firstFlag    = (pen.sections||[]).flatMap(s=>s.flags||[]).find(f=>f.type==='critical')
                     || (pen.sections||[]).flatMap(s=>s.flags||[]).find(f=>f.type==='warn')
@@ -610,6 +640,21 @@ function TaskList({ tasks }) {
           {t.penSection && <div style={{fontSize:11,color:'var(--text-muted)',marginTop:3}}>📍 {t.penSection.pen.name} — {t.penSection.name}</div>}
         </div>
       ))}
+    </div>
+  );
+}
+
+// ── Yesterday banner ─────────────────────────────────────────────────────────
+function YesterdayBanner({ show }) {
+  if (!show) return null;
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  const label = yesterday.toLocaleDateString('en-NG', { weekday:'long', day:'numeric', month:'long', year:'numeric' });
+  return (
+    <div style={{ background:'#eeecff', border:'1px solid #c7d2fe', borderRadius:10,
+      padding:'8px 16px', marginBottom:16, display:'flex', alignItems:'center', gap:8,
+      fontSize:13, color:'#4338ca', fontWeight:600 }}>
+      📅 Showing data for <strong style={{marginLeft:4}}>{label}</strong>
     </div>
   );
 }
@@ -800,13 +845,17 @@ function EditRecordModal({ item, apiFetch, onClose, onSave }) {
   );
 }
 
-function WorkerDashboard({ sections, tasks, user, apiFetch }) {
+function WorkerDashboard({ sections, tasks, user, apiFetch, showYesterday }) {
   const isL      = sections.some(s=>s.penOperationType==='LAYER');
   const totDead  = sections.reduce((s,sec)=>s+sec.metrics.todayMortality,0);
   const totBirds = sections.reduce((s,sec)=>s+sec.currentBirds,0);
   const todayEggs= sections.filter(s=>s.metrics.type==='LAYER').reduce((s,sec)=>s+(sec.metrics.todayEggs||0),0);
+  // avgRate = total today eggs / total birds (not avg of section rates)
+  const prodSecsTot = sections.filter(s=>s.metrics.type==='LAYER');
+  const totEggsToday = prodSecsTot.reduce((s,sec)=>s+(sec.metrics.todayEggs||0),0);
+  const totBirdsToday= prodSecsTot.reduce((s,sec)=>s+(sec.currentBirds||0),0);
+  const avgRate  = totBirdsToday > 0 ? parseFloat((totEggsToday/totBirdsToday*100).toFixed(1)) : 0;
   const rates    = sections.filter(s=>s.metrics.type==='LAYER'&&(s.metrics.todayLayingRate||0)>0);
-  const avgRate  = rates.length ? parseFloat((rates.reduce((s,sec)=>s+(sec.metrics.todayLayingRate||0),0)/rates.length).toFixed(1)) : 0;
   const weights  = sections.filter(s=>s.metrics.type==='BROILER'&&s.metrics.latestWeightG);
   const avgWt    = weights.length ? parseFloat((weights.reduce((s,sec)=>s+sec.metrics.latestWeightG,0)/weights.length).toFixed(0)) : null;
   const fcrs     = sections.filter(s=>s.metrics.type==='BROILER'&&s.metrics.estimatedFCR);
@@ -1096,7 +1145,7 @@ function WorkerDashboard({ sections, tasks, user, apiFetch }) {
 }
 
 // ── Pen Manager dashboard ─────────────────────────────────────────────────────
-function PenManagerDashboard({ pens, tasks, user, apiFetch }) {
+function PenManagerDashboard({ pens, tasks, user, apiFetch, showYesterday }) {
   const router = useRouter();
   const [navTarget, setNavTarget] = useState(null); // { penId, sectionName }
 
@@ -1249,26 +1298,69 @@ function PenManagerDashboard({ pens, tasks, user, apiFetch }) {
   const layerPens  = pens.filter(p=>p.operationType==='LAYER');
   const hasLayer   = layerPens.length > 0;
 
-  // Aggregate lay rate across layer pens
-  const layRates   = layerPens.filter(p=>(p.metrics.avgLayingRate||0)>0);
-  const avgLayRate = layRates.length ? parseFloat((layRates.reduce((s,p)=>s+(p.metrics.avgLayingRate||0),0)/layRates.length).toFixed(1)) : 0;
+  // Determine dominant stage per layer pen
+  // Classify at SECTION level — a single pen can have mixed-stage sections
+  const allLayerSections = layerPens.flatMap(p => (p.sections || []).map(s => ({
+    ...s, penOperationType: p.operationType, penName: p.name,
+  })));
+  const getSectionStage = (s) => s.metrics?.stage || s.flock?.stage || 'PRODUCTION';
+  const broodingLayerSecs    = allLayerSections.filter(s => getSectionStage(s) === 'BROODING');
+  const rearingLayerSecs     = allLayerSections.filter(s => getSectionStage(s) === 'REARING');
+  const productionLayerSecs  = allLayerSections.filter(s => getSectionStage(s) === 'PRODUCTION');
+
+  // Keep pen-level arrays for backward compat (pen cards etc.) but base KPI split on sections
+  const getPenStage = (pen) => {
+    const secs = pen.sections || [];
+    if (secs.some(s => getSectionStage(s) === 'BROODING')) return 'BROODING';
+    if (secs.some(s => getSectionStage(s) === 'REARING'))  return 'REARING';
+    return 'PRODUCTION';
+  };
+  const broodingLayerPens   = layerPens.filter(p => getPenStage(p) === 'BROODING');
+  const rearingLayerPens    = layerPens.filter(p => getPenStage(p) === 'REARING');
+  const productionLayerPens = layerPens.filter(p => getPenStage(p) === 'PRODUCTION');
+  // Mixed: use section-level counts (works even when all sections are in the same pen)
+  const hasMixedLayerStages = (broodingLayerSecs.length > 0 || rearingLayerSecs.length > 0)
+                            && productionLayerSecs.length > 0;
+
+  // Aggregate lay rate across production layer sections only
+  // avgLayRate = today's total eggs / total birds — matches the "today" context on the KPI card
+  // Using today not 7-day avg keeps this consistent with the performance page LAY RATE TODAY
+  const prodTotalTodayEggs = productionLayerSecs.reduce((s,sec)=>s+(sec.metrics?.todayEggs||0),0);
+  const prodTotalBirds     = productionLayerSecs.reduce((s,sec)=>s+(sec.currentBirds||0),0);
+  const avgLayRate = prodTotalBirds > 0
+    ? parseFloat((prodTotalTodayEggs / prodTotalBirds * 100).toFixed(1))
+    : 0;
+  const layRateSecs = productionLayerSecs.filter(s=>(s.metrics?.todayEggs||0)>0);
 
   // ── Per-pen aggregates scoped to this manager's pens ────────────────────────
   const broilerPens   = pens.filter(p=>p.operationType==='BROILER');
   const hasBroiler    = broilerPens.length > 0;
 
-  // Layer aggregates
+  // Layer aggregates — split by stage at SECTION level
   const lBirds        = layerPens.reduce((s,p)=>s+p.totalBirds,0);
-  const lEggs         = layerPens.reduce((s,p)=>s+(p.metrics.todayEggs||0),0);
-  const lWeekEggs     = layerPens.reduce((s,p)=>s+(p.metrics.weekEggs||0),0);
-  const lDead7        = layerPens.reduce((s,p)=>s+(p.metrics.weekMortality||0),0);
+  const lEggs         = productionLayerSecs.reduce((s,sec)=>s+(sec.metrics?.todayEggs||0),0);
+  const lWeekEggs     = productionLayerSecs.reduce((s,sec)=>s+(sec.metrics?.weekEggs||0),0);
+  const lDead7        = allLayerSections.reduce((s,sec)=>s+(sec.metrics?.weekMortality||0),0);
   const lMortR        = lBirds>0 ? parseFloat(((lDead7/lBirds)*100).toFixed(2)) : 0;
-  const lGAPens       = layerPens.filter(p=>(p.metrics.todayGradeAPct||0)>0);
-  const lGradeA       = lGAPens.length ? parseFloat((lGAPens.reduce((s,p)=>s+(p.metrics.todayGradeAPct||0),0)/lGAPens.length).toFixed(1)) : null;
-  const lWaterPens    = layerPens.filter(p=>p.metrics.avgWaterLPB!=null);
-  const lAvgWater     = lWaterPens.length ? parseFloat((lWaterPens.reduce((s,p)=>s+(p.metrics.avgWaterLPB||0),0)/lWaterPens.length).toFixed(2)) : null;
-  const lAvgAge       = layerPens.length ? Math.round(layerPens.reduce((s,p)=>s+(p.sections&&p.sections[0]?p.sections[0].ageInDays||180:180),0)/layerPens.length) : 180;
+  const lGASecs       = productionLayerSecs.filter(s=>(s.metrics?.todayGradeAPct||0)>0);
+  const lGradeA       = lGASecs.length ? parseFloat((lGASecs.reduce((s,sec)=>s+(sec.metrics?.todayGradeAPct||0),0)/lGASecs.length).toFixed(1)) : null;
+  const lWaterSecs    = allLayerSections.filter(s=>s.metrics?.avgWaterLPB!=null);
+  const lAvgWater     = lWaterSecs.length ? parseFloat((lWaterSecs.reduce((s,sec)=>s+(sec.metrics?.avgWaterLPB||0),0)/lWaterSecs.length).toFixed(2)) : null;
+  const lAvgAge       = allLayerSections.length ? Math.round(allLayerSections.reduce((s,sec)=>s+(sec.ageInDays||180),0)/allLayerSections.length) : 180;
   const lWaterBench   = layerWaterBenchmark(lAvgAge);
+  // Brooding/rearing aggregates — section level
+  const nonProdLayerSecs = [...broodingLayerSecs, ...rearingLayerSecs];
+  const lBroodBirds   = nonProdLayerSecs.reduce((s,sec)=>s+(sec.currentBirds||0),0);
+  const lBroodTemp    = nonProdLayerSecs.map(s=>s.metrics?.latestBrooderTemp).find(t=>t!=null) ?? null;
+  const lBroodWtSecs  = nonProdLayerSecs.filter(s=>s.metrics?.latestWeightG);
+  const lBroodAvgWt   = lBroodWtSecs.length ? parseFloat((lBroodWtSecs.reduce((s,sec)=>s+(sec.metrics?.latestWeightG||0),0)/lBroodWtSecs.length).toFixed(0)) : null;
+  const lBroodDead7   = nonProdLayerSecs.reduce((s,sec)=>s+(sec.metrics?.weekMortality||0),0);
+  const lBroodBirdsAll= nonProdLayerSecs.reduce((s,sec)=>s+(sec.currentBirds||0),0);
+  const lBroodMortR   = lBroodBirdsAll>0 ? parseFloat(((lBroodDead7/lBroodBirdsAll)*100).toFixed(2)) : 0;
+  const lBroodAvgAge  = nonProdLayerSecs.length ? Math.round(nonProdLayerSecs.reduce((s,sec)=>s+(sec.ageInDays||30),0)/nonProdLayerSecs.length) : 30;
+  const isaTargetPM   = (d) => { const w=Math.floor((d||0)/7); return [40,60,100,150,210,280,360,450,550,660,770,880,990,1100,1200,1290,1370,1440][Math.min(w,17)]||1440; };
+  const lBroodIsaStd  = isaTargetPM(lBroodAvgAge);
+  const tempStatusPM  = lBroodTemp==null?'neutral':lBroodTemp<26||lBroodTemp>38?'critical':lBroodTemp<28||lBroodTemp>35?'warn':'good';
 
   // Broiler aggregates
   const bBirds        = broilerPens.reduce((s,p)=>s+p.totalBirds,0);
@@ -1285,14 +1377,35 @@ function PenManagerDashboard({ pens, tasks, user, apiFetch }) {
   const bNearHarvest  = broilerPens.filter(p=>p.metrics.nearestHarvest!=null&&p.metrics.nearestHarvest<=7).length;
 
   // Layer KPI story: Total Birds → Lay Rate → Eggs Today → Grade A → Water → Mortality
-  const layerKpis = hasLayer ? [
-    { label:'Total Birds',    value: fmt(lBirds),                           sub: layerPens.length+' pen'+(layerPens.length!==1?'s':''),      delta:'', trend:'stable', status:'neutral', icon:'🐦', context:'Your layer pen' },
-    { label:'Lay Rate',       value: avgLayRate>0 ? avgLayRate+'%' : '—',   sub: 'Target 82%',                                               delta:avgLayRate>0?(avgLayRate>=82?'+'+((avgLayRate-82).toFixed(1))+'% above target':((avgLayRate-82).toFixed(1))+'% below target'):'No data yet', trend:avgLayRate>=82?'up':avgLayRate>0?'down':'stable', status:layRates.length?layRateStatus(avgLayRate):'neutral', icon:'📊', context:'Performance' },
-    { label:'Eggs Today',     value: fmt(lEggs),                            sub: '7d total '+fmt(lWeekEggs),                                 delta:lEggs>0?fmt(lEggs)+' collected today':'None recorded yet', trend:'stable', status:lEggs>0?'good':'neutral', icon:'🥚', context:'Output' },
-    { label:'Grade A Rate',   value: lGradeA ? lGradeA+'%' : '—',          sub: 'Target ≥85%',                                         delta:lGradeA?(lGradeA>=85?'+'+((lGradeA-85).toFixed(1))+'% above target':((lGradeA-85).toFixed(1))+'% below target'):'No data yet', trend:lGradeA>=85?'up':'down', status:gradeAStatus(lGradeA), icon:'⭐', context:'Quality' },
-    { label:'Water Intake',   value: lAvgWater ? lAvgWater+' L/bird' : '—', sub: 'Benchmark '+lWaterBench+' L/bird · age '+lAvgAge+'d', delta:waterDelta(lAvgWater,lWaterBench), trend:lAvgWater?(lAvgWater>=lWaterBench*0.85?'up':'down'):'stable', status:lAvgWater?waterStatus(lAvgWater,lWaterBench):'neutral', icon:'💧', context:'Health signal' },
-    { label:'Mortality (7d)', value: fmt(lDead7),                           sub: lMortR+'% of flock',                                        delta:lMortR<=0.05?'Within normal range':lMortR<=0.15?'Slightly elevated':'Elevated — investigate', trend:lMortR<=0.05?'up':'down', status:mortalityStatus(lMortR), icon:'📉', context:'Health losses' },
+  // Layer KPIs — stage-aware
+  const broodingLayerKpis = (broodingLayerSecs.length > 0 || rearingLayerSecs.length > 0) ? [
+    { label: rearingLayerSecs.length > 0 && broodingLayerSecs.length === 0 ? 'Live Pullets' : 'Live Chicks/Pullets',
+      value:fmt(lBroodBirds), sub:nonProdLayerSecs.length+' section'+(nonProdLayerSecs.length!==1?'s':''),
+      delta:'', trend:'stable', status:'neutral', icon:broodingLayerPens.length>0?'🐣':'🌱', context:'Brooding/Rearing' },
+    // Only show Brooder Temp when pens are actively in BROODING stage
+    ...(broodingLayerSecs.length > 0 ? [
+      { label:'Brooder Temp', value:lBroodTemp!=null?`${Number(lBroodTemp).toFixed(1)}°C`:'—', sub:'Latest reading · Safe range 26–38°C', delta:lBroodTemp!=null?(lBroodTemp<26||lBroodTemp>38?'⚠ Out of range':'✓ In range'):'No reading yet', trend:tempStatusPM==='critical'?'down':'stable', status:tempStatusPM, icon:'🌡️', context:'Brooding' },
+    ] : []),
+    { label:'Avg Body Weight',    value:lBroodAvgWt?`${(lBroodAvgWt/1000).toFixed(3)} kg`:'—', sub:`ISA Brown target wk${Math.floor(lBroodAvgAge/7)}: ${(lBroodIsaStd/1000).toFixed(3)} kg`, delta:lBroodAvgWt?(lBroodAvgWt>=lBroodIsaStd*0.95?'On target':lBroodAvgWt>=lBroodIsaStd*0.85?'Slightly below':'Below target'):'No weigh-in yet', trend:'stable', status:lBroodAvgWt?(lBroodAvgWt>=lBroodIsaStd*0.95?'good':lBroodAvgWt>=lBroodIsaStd*0.85?'warn':'critical'):'neutral', icon:'⚖️', context:'Growth' },
+    { label:'Water Intake',       value:lAvgWater?lAvgWater+' L/bird':'—', sub:'Benchmark '+lWaterBench+' L/bird', delta:waterDelta(lAvgWater,lWaterBench), trend:lAvgWater?(lAvgWater>=lWaterBench*0.85?'up':'down'):'stable', status:lAvgWater?waterStatus(lAvgWater,lWaterBench):'neutral', icon:'💧', context:'Health' },
+    { label:'Mortality (7d)',     value:fmt(lBroodDead7), sub:lBroodMortR+'% of flock', delta:lBroodMortR<=0.05?'Within normal range':lBroodMortR<=0.15?'Slightly elevated':'Elevated — investigate', trend:lBroodMortR<=0.05?'up':'down', status:mortalityStatus(lBroodMortR), icon:'📉', context:'Health losses' },
   ] : [];
+
+  const productionLayerKpis = productionLayerSecs.length > 0 ? [
+    { label:'Total Birds',    value: fmt(productionLayerSecs.reduce((s,sec)=>s+(sec.currentBirds||0),0)), sub: productionLayerSecs.length+' section'+(productionLayerSecs.length!==1?'s':''), delta:'', trend:'stable', status:'neutral', icon:'🐦', context:'Layer production' },
+    { label:'Lay Rate (Today)', value: avgLayRate>0 ? avgLayRate+'%' : '—', sub: 'Target 82%', delta:avgLayRate>0?(avgLayRate>=82?'+'+((avgLayRate-82).toFixed(1))+'% above target':((avgLayRate-82).toFixed(1))+'% below target'):'No data yet', trend:avgLayRate>=82?'up':avgLayRate>0?'down':'stable', status:layRateSecs.length?layRateStatus(avgLayRate):'neutral', icon:'📊', context:'Performance' },
+    { label:'Eggs Today',     value: fmt(lEggs),  sub: '7d total '+fmt(lWeekEggs), delta:lEggs>0?fmt(lEggs)+' collected today':'None recorded yet', trend:'stable', status:lEggs>0?'good':'neutral', icon:'🥚', context:'Output' },
+    { label:'Grade A Rate',   value: lGradeA ? lGradeA+'%' : '—', sub: 'Target ≥85%', delta:lGradeA?(lGradeA>=85?'+'+((lGradeA-85).toFixed(1))+'% above target':((lGradeA-85).toFixed(1))+'% below target'):'No data yet', trend:lGradeA>=85?'up':'down', status:gradeAStatus(lGradeA), icon:'⭐', context:'Quality' },
+    { label:'Water Intake',   value: lAvgWater ? lAvgWater+' L/bird' : '—', sub: 'Benchmark '+lWaterBench+' L/bird · age '+lAvgAge+'d', delta:waterDelta(lAvgWater,lWaterBench), trend:lAvgWater?(lAvgWater>=lWaterBench*0.85?'up':'down'):'stable', status:lAvgWater?waterStatus(lAvgWater,lWaterBench):'neutral', icon:'💧', context:'Health signal' },
+    { label:'Mortality (7d)', value: fmt(lDead7), sub: lMortR+'% of flock', delta:lMortR<=0.05?'Within normal range':lMortR<=0.15?'Slightly elevated':'Elevated — investigate', trend:lMortR<=0.05?'up':'down', status:mortalityStatus(lMortR), icon:'📉', context:'Health losses' },
+  ] : [];
+
+  // Combined: if mixed show both sets; if pure brooding/rearing show brooding set; else production
+  const layerKpis = hasLayer
+    ? (productionLayerPens.length === 0 ? broodingLayerKpis
+       : broodingLayerKpis.length === 0 ? productionLayerKpis
+       : [...broodingLayerKpis, ...productionLayerKpis])
+    : [];
 
   // Broiler KPI story: Total Birds → Avg Weight → Harvest → FCR → Water → Mortality
   const broilerKpis = hasBroiler ? [
@@ -1323,7 +1436,9 @@ function PenManagerDashboard({ pens, tasks, user, apiFetch }) {
 
   // Wire harvest countdown onClick
   return (
-    <div>
+    <>
+      <YesterdayBanner show={showYesterday} />
+      <div>
       <div style={{marginBottom:16}}>
         <h1 style={{fontFamily:"'Poppins',sans-serif",fontSize:22,fontWeight:700,margin:0}}>Good {greet}, {user.firstName} 👋</h1>
         <p style={{fontSize:12,color:'var(--text-muted)',marginTop:4}}>
@@ -1334,8 +1449,23 @@ function PenManagerDashboard({ pens, tasks, user, apiFetch }) {
       <div style={{marginBottom:16}}>
         <AttentionPill pens={pens} mode='sections' onNavigate={(penId, sectionName) => setNavTarget({ penId, sectionName })} />
       </div>
-      {/* ── KPI cards ── */}
-      {layerKpis.length > 0 && <OpKpiBlock title="Layer Production" opIcon="🥚" isLayer={true} cards={layerKpis} />}
+      {/* ── KPI cards — split by stage when mixed ── */}
+      {broodingLayerKpis.length > 0 && (broodingLayerSecs.length > 0 || rearingLayerSecs.length > 0) && (
+        <OpKpiBlock
+          title={broodingLayerSecs.length > 0 && rearingLayerSecs.length > 0
+            ? 'Brooding & Rearing'
+            : broodingLayerSecs.length > 0 ? 'Layer Brooding' : 'Layer Rearing'}
+          opIcon={broodingLayerSecs.length > 0 ? '🐣' : '🌱'}
+          isLayer={true}
+          cards={broodingLayerKpis} />
+      )}
+      {productionLayerKpis.length > 0 && (
+        <OpKpiBlock
+          title="Layer Production"
+          opIcon="🥚"
+          isLayer={true}
+          cards={productionLayerKpis} />
+      )}
       <div>
         {broilerKpis.length > 0 && <OpKpiBlock title="Broiler Production" opIcon="🍗" isLayer={false} cards={broilerKpis} />}
       </div>
@@ -1539,6 +1669,7 @@ function PenManagerDashboard({ pens, tasks, user, apiFetch }) {
       <div style={{fontSize:11,fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:12,marginTop:8}}>My Pens</div>
       {pens.map(pen=><PenCard key={pen.id} pen={pen} autoOpen={navTarget?.penId===pen.id} highlightSection={navTarget?.penId===pen.id?navTarget.sectionName:null}/>)}
     </div>
+    </>
   );
 }
 
@@ -1810,7 +1941,7 @@ function AttentionPill({ pens, onNavigate, mode = 'pens' }) {
 }
 
 // ── Farm Manager+ dashboard ───────────────────────────────────────────────────
-function ManagerDashboard({ pens, orgTotals, user, apiFetch }) {
+function ManagerDashboard({ pens, orgTotals, user, apiFetch , showYesterday }) {
   const router       = useRouter();
   const [navTarget, setNavTarget]       = useState(null); // { penId, sectionName, opType }
 
@@ -1844,8 +1975,9 @@ function ManagerDashboard({ pens, orgTotals, user, apiFetch }) {
   const lWeekEggs = lPens.reduce((s,p)=>s+(p.metrics.weekEggs||0),0);
   const lDead7    = lPens.reduce((s,p)=>s+(p.metrics.weekMortality||0),0);
   const lMortR    = lBirds>0 ? parseFloat(((lDead7/lBirds)*100).toFixed(2)) : 0;
-  const lRates    = lPens.filter(p=>(p.metrics.avgLayingRate||0)>0);
-  const lAvgRate  = lRates.length ? parseFloat((lRates.reduce((s,p)=>s+(p.metrics.avgLayingRate||0),0)/lRates.length).toFixed(1)) : 0;
+  // lAvgRate = today's total eggs / total birds across all layer pens
+  const lAvgRate  = lBirds > 0 ? parseFloat((lEggs / lBirds * 100).toFixed(1)) : 0;
+  const lRates    = lPens.filter(p=>(p.metrics.todayEggs||0)>0);
   const lGAPens   = lPens.filter(p=>(p.metrics.todayGradeAPct||0)>0);
   const lGradeA   = lGAPens.length ? parseFloat((lGAPens.reduce((s,p)=>s+(p.metrics.todayGradeAPct||0),0)/lGAPens.length).toFixed(1)) : null;
   const lWaterPens  = lPens.filter(p => p.metrics.avgWaterLPB != null);
@@ -1908,7 +2040,9 @@ function ManagerDashboard({ pens, orgTotals, user, apiFetch }) {
   ] : [];
 
   return (
-    <div>
+    <>
+      <YesterdayBanner show={showYesterday} />
+      <div>
       {/* ── Page header with attention pill ── */}
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:16}}>
         <div>
@@ -1963,6 +2097,7 @@ function ManagerDashboard({ pens, orgTotals, user, apiFetch }) {
         {visiblePens.map(pen => <PenCard key={pen.id} pen={pen} autoOpen={navTarget?.penId===pen.id} highlightSection={navTarget?.penId===pen.id?navTarget.sectionName:null}/>)}
       </div>
     </div>
+    </>
   );
 }
 // ── Main ──────────────────────────────────────────────────────────────────────
@@ -3280,9 +3415,10 @@ function AccountantDashboard({ user, apiFetch }) {
 export default function DashboardPage() {
   const { user, apiFetch } = useAuth();
   const router = useRouter();
-  const [data,    setData]    = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error,   setError]   = useState(null);
+  const [data,          setData]          = useState(null);
+  const [loading,       setLoading]       = useState(true);
+  const [error,         setError]         = useState(null);
+  const [showYesterday, setShowYesterday] = useState(false);
 
   const STORE_ROLES = ['STORE_MANAGER', 'STORE_CLERK'];
   const MILL_ROLES  = ['FEED_MILL_MANAGER'];
@@ -3294,12 +3430,15 @@ export default function DashboardPage() {
   const load = useCallback(async () => {
     try {
       const endpoint = useStoreDashboard ? '/api/dashboard/store' : '/api/dashboard';
-      const res = await apiFetch(endpoint);
+      const url = showYesterday
+        ? endpoint + '?date=yesterday'
+        : endpoint;
+      const res = await apiFetch(url);
       if (res.ok) { setData(await res.json()); setError(null); }
       else setError('Could not load dashboard data');
     } catch { setError('Network error'); }
     finally { setLoading(false); }
-  }, [apiFetch, useStoreDashboard]);
+  }, [apiFetch, useStoreDashboard, showYesterday]);
 
   useEffect(() => { load(); const t=setInterval(load,60000); return ()=>clearInterval(t); }, [load]);
 
@@ -3371,9 +3510,38 @@ export default function DashboardPage() {
             <div style={{color:'var(--text-muted)',fontSize:13}}>Contact your pen manager to get assigned to a section.</div>
           </div>
         )}
-        {isPenWorker && sections.length>0 && <WorkerDashboard sections={sections} tasks={tasks} user={user} apiFetch={apiFetch}/>}
-        {isPenMgr    && <PenManagerDashboard pens={pens} tasks={tasks} user={user} apiFetch={apiFetch}/>}
-        {isManager   && <ManagerDashboard pens={pens} orgTotals={orgTotals} user={user} apiFetch={apiFetch}/>}
+        {/* Yesterday toggle — visible for all farm operation roles */}
+        {(isPenWorker || isPenMgr || isManager) && (
+          <div style={{ display:'flex', justifyContent:'flex-end', marginBottom:8 }}>
+            <button
+              onClick={() => setShowYesterday(v => !v)}
+              style={{
+                padding:'5px 14px', borderRadius:20, border:'1.5px solid',
+                borderColor: showYesterday ? '#6c63ff' : '#e2e8f0',
+                background:  showYesterday ? '#eeecff' : '#fff',
+                color:       showYesterday ? '#6c63ff' : '#64748b',
+                fontWeight: 700, fontSize: 12, cursor: 'pointer',
+                display: 'flex', alignItems: 'center', gap: 6,
+              }}>
+              {showYesterday ? '📅 Yesterday' : '📅 Yesterday'}
+              <span style={{
+                width: 28, height: 16, borderRadius: 99,
+                background: showYesterday ? '#6c63ff' : '#cbd5e1',
+                position: 'relative', display: 'inline-flex',
+                alignItems: 'center', transition: 'background .2s',
+              }}>
+                <span style={{
+                  width: 12, height: 12, borderRadius: '50%', background: '#fff',
+                  position: 'absolute', left: showYesterday ? 14 : 2,
+                  transition: 'left .2s',
+                }}/>
+              </span>
+            </button>
+          </div>
+        )}
+        {isPenWorker && sections.length>0 && <WorkerDashboard sections={sections} tasks={tasks} user={user} apiFetch={apiFetch} showYesterday={showYesterday}/>}
+        {isPenMgr    && <PenManagerDashboard pens={pens} tasks={tasks} user={user} apiFetch={apiFetch} showYesterday={showYesterday}/>}
+        {isManager   && <ManagerDashboard pens={pens} orgTotals={orgTotals} user={user} apiFetch={apiFetch} showYesterday={showYesterday}/>}
       </div>
     </AppShell>
   );

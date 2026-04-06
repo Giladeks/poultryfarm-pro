@@ -134,7 +134,7 @@ async function handleConfirm(transferId, body, user) {
           notifBody.push({
             tenantId:    user.tenantId,
             recipientId: pmId,
-            type:        'TRANSFER_DISCREPANCY',
+            type:        'ALERT',
             title:       `⚠ Minor discrepancy on ${flock.batchCode} transfer`,
             message:     `Transfer confirmed with a ${discrepancyPct}% discrepancy. ` +
                          `Sent: ${birdsSent}, Received: ${birdsReceived}, ` +
@@ -149,6 +149,7 @@ async function handleConfirm(transferId, body, user) {
           await prisma.task.create({
             data: {
               tenantId:     user.tenantId,
+              penSectionId: transfer.toPenSectionId,  // destination section
               assignedToId: mgr.id,
               createdById:  user.sub,
               taskType:     'INSPECTION',
@@ -162,7 +163,7 @@ async function handleConfirm(transferId, body, user) {
               priority:     'HIGH',
               status:       'PENDING',
             },
-          });
+          }).catch(e => console.error('[Transfer] task create error:', e?.message));
         }
       }
 
@@ -170,7 +171,7 @@ async function handleConfirm(transferId, body, user) {
       notifBody.push({
         tenantId:    user.tenantId,
         recipientId: user.sub,
-        type:        'TRANSFER_COMPLETED',
+        type:        'ALERT',
         title:       `✅ Transfer confirmed — ${flock.batchCode}`,
         message:     `${birdsReceived.toLocaleString()} birds received at ${destName}.` +
                      (discrepancyPct > 0 ? ` Minor discrepancy of ${discrepancyPct}% noted.` : ''),
@@ -218,7 +219,7 @@ async function handleConfirm(transferId, body, user) {
     const urgentNotifs = farmMgrIds.map(mgId => ({
       tenantId:    user.tenantId,
       recipientId: mgId,
-      type:        'DISCREPANCY_REVIEW_REQUIRED',
+      type:        'ALERT',
       title:       `🚨 Transfer discrepancy requires your review — ${flock.batchCode}`,
       message:     `${discrepancyPct}% discrepancy detected on transfer from ${srcName} to ${destName}. ` +
                    `Sent: ${birdsSent} | Received: ${birdsReceived} | ` +
@@ -232,7 +233,7 @@ async function handleConfirm(transferId, body, user) {
     const sendingNotifs = sendingPMs.map(pmId => ({
       tenantId:    user.tenantId,
       recipientId: pmId,
-      type:        'TRANSFER_DISCREPANCY',
+      type:        'ALERT',
       title:       `⚠ Transfer on hold — discrepancy detected (${flock.batchCode})`,
       message:     `${discrepancyPct}% discrepancy detected. ` +
                    `Sent: ${birdsSent} | Received: ${birdsReceived} | ` +
@@ -245,7 +246,7 @@ async function handleConfirm(transferId, body, user) {
     const receivingNotif = {
       tenantId:    user.tenantId,
       recipientId: user.sub,
-      type:        'TRANSFER_DISCREPANCY',
+      type:        'ALERT',
       title:       `⚠ Transfer on hold — awaiting FM review (${flock.batchCode})`,
       message:     `Your count (${birdsReceived}) differs from dispatch (${birdsSent}) by ${discrepancyPct}%. ` +
                    `Transfer is on hold. Farm Manager has been notified.`,
@@ -337,7 +338,7 @@ async function handleDispute(transferId, body, user) {
     const fmNotifs = farmMgrIds.map(id => ({
       tenantId:    user.tenantId,
       recipientId: id,
-      type:        'TRANSFER_DISPUTED',
+      type:        'ALERT',
       title:       `🚫 Transfer disputed — ${batchCode} (action required)`,
       message:     `Receiving PM disputed transfer of ${birdsSent?.toLocaleString()} birds ` +
                    `from ${srcName} to ${dstName}. ` +
@@ -352,7 +353,7 @@ async function handleDispute(transferId, body, user) {
     const pmNotifs = sendingPMs.map(id => ({
       tenantId:    user.tenantId,
       recipientId: id,
-      type:        'TRANSFER_DISPUTED',
+      type:        'ALERT',
       title:       `🚫 Your transfer was disputed — ${batchCode}`,
       message:     `The receiving PM at ${dstName} has disputed your transfer. ` +
                    `Reason: "${disputeReason}". ` +
@@ -364,7 +365,7 @@ async function handleDispute(transferId, body, user) {
     const receivingNotif = {
       tenantId:    user.tenantId,
       recipientId: user.sub,
-      type:        'TRANSFER_DISPUTED',
+      type:        'ALERT',
       title:       `✓ Dispute submitted — ${batchCode}`,
       message:     `Your dispute has been logged. Farm Manager has been notified and must ` +
                    `act within 24 hours. Birds remain at source (${srcName}).`,

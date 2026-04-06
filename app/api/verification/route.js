@@ -390,9 +390,13 @@ export async function GET(request) {
         const [ownEggs, ownMort, ownFeed] = await Promise.all([
           prisma.eggProduction.findMany({
             where: {
-              recordedById: user.sub,
+              recordedById:   user.sub,
               collectionDate: { gte: sevenDaysAgo },
               ...(allowedSectionIds && { penSectionId: { in: allowedSectionIds } }),
+              // Exclude PM self-approved records (first egg collection via Advance to Production).
+              // Only records where recordedById === approvedById qualify — all other
+              // COI checks remain fully intact for worker-submitted records.
+              NOT: { AND: [{ submissionStatus: 'APPROVED' }, { approvedById: user.sub }] },
             },
             select: { penSectionId: true, collectionDate: true },
           }),

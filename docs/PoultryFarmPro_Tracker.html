@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>PoultryFarm Pro · Implementation Tracker Rev 1.2</title>
+<title>PoultryFarm Pro · Implementation Tracker Rev 1.3</title>
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
   body{background:#f0f4f8;font-family:'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:#0f172a;padding:0}
@@ -135,7 +135,8 @@
         <li>Phase 8A <span class="tag tag-done">DONE</span> — Operation mode selector</li>
         <li>Phase 8B <span class="tag tag-done">DONE</span> — All dashboards, worker page, daily summaries, task generation, spot-checks, feed requisition workflow, IC override, statistical alerts</li>
         <li>Phase 8G <span class="tag tag-active">PARTIAL</span> — Code-based templates done; task_templates DB model + admin UI pending</li>
-        <li>Phase 8C <span class="tag tag-next">NEXT</span> — Brooding Module</li>
+        <li>Phase 8C <span class="tag tag-done">DONE</span> — Brooding / Rearing / Production lifecycle</li>
+        <li>Phase 8D <span class="tag tag-next">NEXT</span> — Layer Production Module Refactor</li>
       </ul>
     </div>
     <div class="ctx-block">
@@ -381,46 +382,58 @@ const phases = [
     ]}
   ]},
 
-  // ── Phase 8C — correctly marked next, all tasks planned ──
-  { id:"p8c", name:"Phase 8C · Brooding Module", phaseStatus:"next", groups:[
-    { name:"DB Migration (SQL-first)", tasks:[
-      { t:"SQL: create chick_arrivals table — id, tenantId, flockId, arrivalDate, chicksReceived, supplier, batchCode, status (ACTIVE|TRANSFERRED|CLOSED), transferDate, transferWeight, chickCost, notes, createdAt, updatedAt", s:"planned"},
-      { t:"SQL: create temperature_logs table — id, tenantId, chickArrivalId, penSectionId, loggedAt, zone, tempCelsius, humidity, taskId (optional), loggedById, createdAt", s:"planned"},
-      { t:"npx prisma db pull → npx prisma generate (never edit schema.prisma directly)", s:"planned"}
+  // ── Phase 8C — COMPLETED ──
+  { id:"p8c", name:"Phase 8C · Brooding / Rearing / Production Lifecycle", phaseStatus:"done", groups:[
+    { name:"DB & Schema", tasks:[
+      { t:"chick_arrivals table — SQL-first, prisma db pull, full CRUD via /api/brooding/arrivals", s:"done"},
+      { t:"temperature_logs table — zone readings, auto-alert <26°C or >38°C", s:"done"},
+      { t:"flock_transfers table — survivingCount, fromStage, toStage, status (PENDING/COMPLETED/DISPUTED/CANCELLED/DISCREPANCY_REVIEW)", s:"done"},
+      { t:"flock.stage field — BROODING | REARING | PRODUCTION with stageUpdatedAt, rearingStartDate, pointOfLayDate", s:"done"}
     ]},
-    { name:"API Routes (app/api/brooding/)", tasks:[
-      { t:"POST /api/brooding/arrivals — validate with Zod, create ChickArrival, auto-generate 8 daily Task records, return arrival + task count", s:"planned"},
-      { t:"GET /api/brooding/arrivals — list active batches for tenant, include section + flock + last temp reading", s:"planned"},
-      { t:"PATCH /api/brooding/arrivals/[id] — update status, record transfer (transferDate, transferWeight, survivingCount)", s:"planned"},
-      { t:"POST /api/brooding/temperature — log temp reading linked to chickArrivalId; if tempCelsius <26 or >38 auto-create Notification for PEN_MANAGER", s:"planned"},
-      { t:"GET /api/brooding/[id]/summary — full period: arrival info, daily temp chart data, early mortality rate (week 1 & 2), feed consumed, survival rate, cost per surviving chick", s:"planned"}
+    { name:"Brooding Module (app/brooding/page.js)", tasks:[
+      { t:"Active Batches tab — card grid with live chick count, days in brooder, survival rate, latest temp, status pill", s:"done"},
+      { t:"Arrivals tab — log new chick arrival (chicksReceived, supplier, batchCode, chickCost, date, section selector)", s:"done"},
+      { t:"Temperature tab — Recharts LineChart avg temp/day with zone range bands", s:"done"},
+      { t:"Transfer tab — initiate brooding→rearing transfer with weight + surviving count", s:"done"},
+      { t:"End Brooding — advances flock stage BROODING→REARING, closes chick_arrival records", s:"done"},
+      { t:"Nav item 🐣 Brooding — gated on flockStages.includes('BROODING')", s:"done"}
     ]},
-    { name:"Task Auto-Generation on Arrival", tasks:[
-      { t:"06:00 — FEEDING: Morning feed & water check", s:"planned"},
-      { t:"07:00 — MORTALITY_CHECK: Morning mortality check", s:"planned"},
-      { t:"08:00 — INSPECTION: Brooder temperature & humidity check", s:"planned"},
-      { t:"12:00 — FEEDING: Midday feed & water top-up", s:"planned"},
-      { t:"16:00 — FEEDING: Afternoon feed & water check", s:"planned"},
-      { t:"17:00 — MORTALITY_CHECK: Evening mortality count", s:"planned"},
-      { t:"17:30 — INSPECTION: Evening brooder temperature check", s:"planned"},
-      { t:"Task mapping uses existing Task model TaskType enum (nearest valid values)", s:"planned"}
+    { name:"Rearing Module (app/rearing/page.js)", tasks:[
+      { t:"Rearing flock cards — age in weeks, weight vs ISA Brown standard, FCR, mortality since rearing", s:"done"},
+      { t:"Log weekly weigh-in — dual-write to weight_records AND weight_samples", s:"done"},
+      { t:"Initiate Transfer modal — source/dest section picker, birds sent, avg weight", s:"done"},
+      { t:"Transfer Discrepancy Path 1 (≤1%) — auto-complete with FM review task (penSectionId fix applied)", s:"done"},
+      { t:"Transfer Discrepancy Path 2 (>1%) — DISCREPANCY_REVIEW status, FM sign-off within 24hr", s:"done"},
+      { t:"Dispute flow — DISPUTED status, CANCEL/FORCE_COMPLETE (FM) and WITHDRAW (sending PM) actions", s:"done"},
+      { t:"hasBeenTransferred — only COMPLETED/DISCREPANCY_REVIEW block re-initiation; CANCELLED/WITHDRAWN allow new transfer", s:"done"},
+      { t:"Advance to Production modal — required first egg collection, auto-approved, IC/FM notified", s:"done"}
     ]},
-    { name:"Page & UI (app/brooding/page.js)", tasks:[
-      { t:"Roles: PEN_MANAGER, FARM_MANAGER, FARM_ADMIN, CHAIRPERSON (read + action); PEN_WORKER (read only)", s:"planned"},
-      { t:"Tab: Active Batches — card grid per batch (code, chicks in, days in brooder, survival rate, latest temp, status pill)", s:"planned"},
-      { t:"Tab: Arrivals — form (chicksReceived, supplier, batchCode, chickCost, date, pen section selector)", s:"planned"},
-      { t:"Tab: Temperature — Recharts LineChart avg temp/day per zone; range bands (28–35°C wk1, 26–32°C wk2, 24–30°C wk3+)", s:"planned"},
-      { t:"Tab: Transfer — ACTIVE batches with Transfer button → modal (transferDate, transferWeight, survivingCount) → PATCH /arrivals/[id]", s:"planned"}
+    { name:"Dashboard Stage-Aware UI", tasks:[
+      { t:"Worker dashboard — dominantStage (BROODING/REARING/PRODUCTION) drives KPI set; brooder temp gated on flock.stage=BROODING", s:"done"},
+      { t:"PM dashboard — section-level stage split: Layer Rearing + Layer Production KPI blocks when mixed", s:"done"},
+      { t:"FM/Admin dashboard — pen avgLayingRate from totalEggs/totalBirds (not avg of section rates)", s:"done"},
+      { t:"Yesterday toggle — pill switch fetches /api/dashboard?date=yesterday, banner shown for all roles", s:"done"},
+      { t:"Date boundaries use Date.UTC throughout to avoid WAT/UTC shift bugs", s:"done"}
     ]},
-    { name:"KPIs & Navigation", tasks:[
-      { t:"Early mortality % — week 1 only, week 2 only, total brooding period", s:"planned"},
-      { t:"Chick-to-transfer survival rate", s:"planned"},
-      { t:"Cost per surviving chick (chickCost ÷ survivingCount)", s:"planned"},
-      { t:"Nav item 🐣 Brooding — visible when operationMode is LAYER_ONLY, BROILER_ONLY, or BOTH; positioned after Dashboard, before Performance", s:"planned"}
+    { name:"Performance Page Fixes", tasks:[
+      { t:"Stage toggle — 🥚 Production | 🌱 Rearing | 🐣 Brooding buttons (only existing stages shown)", s:"done"},
+      { t:"Laying rate computed as totalEggs/totalBirds (not avg of per-record layingRatePct) across all surfaces", s:"done"},
+      { t:"Feed Used Today KPI — 2nd card position, shows kg + bags (e.g. 3 bags & 24.3 kg) + g/bird", s:"done"},
+      { t:"Daily Feed Avg replaces Daily Average in Production Records summary", s:"done"},
+      { t:"Yesterday filter added to date picker (Yesterday | 7d | 14d | 30d | 90d)", s:"done"},
+      { t:"Feed aggregated per day across multiple distributions (not last-record-wins)", s:"done"},
+      { t:"Mortality aggregated per day across multiple records per day", s:"done"},
+      { t:"chartData feed fetched from ALL production sections in parallel and summed", s:"done"}
+    ]},
+    { name:"Data Integrity Fixes", tasks:[
+      { t:"Egg multi-session laying rate — totalEggs/currentBirds replaces avg of per-record rates everywhere", s:"done"},
+      { t:"COI guard — excludes PM self-approved records (Advance to Production) from same-day block in both conflictOfInterest.js and verification/route.js", s:"done"},
+      { t:"feedBagWeightKg added to tenant settings (default 25kg), used for bags display across performance page", s:"done"},
+      { t:"settings route default includes feedBagWeightKg — configurable per farm", s:"done"}
     ]}
   ]},
 
-  { id:"p8d", name:"Phase 8D · Layer Production Module Refactor", phaseStatus:"planned", groups:[
+  { id:"p8d", name:"Phase 8D · Layer Production Module Refactor", phaseStatus:"next", groups:[
     { name:"Features", tasks:[
       { t:"Dedicated /production/layers replacing current performance page", s:"planned"},
       { t:"Hen-housed production rate % (not just laying rate)", s:"planned"},

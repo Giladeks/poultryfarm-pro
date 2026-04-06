@@ -15,21 +15,18 @@ export async function GET(request) {
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const isManager = MANAGER_ROLES.includes(user.role);
-  const { searchParams } = new URL(request.url);
-  const allSections = searchParams.get('allSections') === 'true';
 
   try {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const _t = new Date();
+    const today = new Date(Date.UTC(_t.getFullYear(), _t.getMonth(), _t.getDate()));
     const sevenDaysAgo = new Date(today);
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
     // ── Determine which sections this user can see ──────────────────────────
-    // allSections=true bypasses role scope — used by transfer destination picker
     let allowedSectionIds = null;
     let allowedOpTypes    = null;
 
-    if (!isManager && !allSections) {
+    if (!isManager) {
       const assignments = await prisma.penWorkerAssignment.findMany({
         where: { userId: user.sub },
         include: {
@@ -49,13 +46,11 @@ export async function GET(request) {
       include: {
         pens: {
           where: {
-            isActive: true,
             ...(allowedOpTypes && { operationType: { in: allowedOpTypes } }),
           },
           include: {
             sections: {
               where: {
-                isActive: true,
                 ...(allowedSectionIds && { id: { in: allowedSectionIds } }),
               },
               include: {
@@ -115,7 +110,7 @@ export async function GET(request) {
           by: ['penSectionId'],
           where: { ...sectionFilter, recordedDate: { gte: sevenDaysAgo } },
           _sum: { quantityKg: true },
-          _avg: { gramsPerBird: true },
+          // gramsPerBird computed from totalKg/currentBirds in enrichment
         }),
         prisma.eggProduction.groupBy({
           by: ['penSectionId'],
@@ -126,7 +121,7 @@ export async function GET(request) {
             collectionDate: { gte: today },
           },
           _sum: { totalEggs: true, gradeACount: true, crackedCount: true },
-          _avg: { layingRatePct: true },
+          
         }),
         prisma.eggProduction.groupBy({
           by: ['penSectionId'],
@@ -137,7 +132,7 @@ export async function GET(request) {
             collectionDate: { gte: sevenDaysAgo },
           },
           _sum: { totalEggs: true, gradeACount: true },
-          _avg: { layingRatePct: true },
+          
         }),
         prisma.weightRecord.findMany({
           where: {
@@ -160,19 +155,19 @@ export async function GET(request) {
       weekDead:   Object.fromEntries(weekMortality.map(r  => [r.penSectionId, r._sum.count || 0])),
       weekFeed:   Object.fromEntries(weekFeed.map(r => [r.penSectionId, {
         kg:  parseFloat((r._sum.quantityKg || 0).toFixed(1)),
-        gpb: parseFloat((r._avg.gramsPerBird || 0).toFixed(0)),
+        gpb: null, // computed per-section from totalKg/currentBirds in enrichment
       }])),
       todayEggs:  Object.fromEntries(todayEggs.map(r => [r.penSectionId, {
         total:        r._sum.totalEggs   || 0,
         gradeA:       r._sum.gradeACount || 0,
         cracked:      r._sum.crackedCount || 0,
-        rate:         parseFloat((r._avg.layingRatePct || 0).toFixed(1)),
+        rate:         null, // computed per-section using totalEggs/currentBirds below
         gradePending: (r._sum.totalEggs || 0) > 0 && !r._sum.gradeACount,
       }])),
       weekEggs:   Object.fromEntries(weekEggs.map(r => [r.penSectionId, {
         total:  r._sum.totalEggs   || 0,
         gradeA: r._sum.gradeACount || 0,
-        rate:   parseFloat((r._avg.layingRatePct || 0).toFixed(1)),
+        rate:   null, // computed per-section using totalEggs/currentBirds below
       }])),
       latestWeight: weekWeights.reduce((acc, w) => {
         if (!acc[w.penSectionId]) acc[w.penSectionId] = w;
@@ -228,15 +223,21 @@ export async function GET(request) {
             mortalityRate,
             avgDailyFeedKg,
             weekFeedKg:       idx.weekFeed[sec.id]?.kg  || 0,
-            gramsPerBird:     idx.weekFeed[sec.id]?.gpb || 0,
+            gramsPerBird: currentBirds > 0 && (idx.weekFeed[sec.id]?.kg || 0) > 0
+              ? parseFloat(((idx.weekFeed[sec.id].kg * 1000) / 7 / currentBirds).toFixed(1))
+              : 0,
             todayEggs:        isLayer ? (idx.todayEggs[sec.id]?.total    || 0) : null,
-            todayLayingRate:  isLayer ? (idx.todayEggs[sec.id]?.rate     || 0) : null,
+            todayLayingRate:  isLayer && currentBirds > 0
+              ? parseFloat(((idx.todayEggs[sec.id]?.total || 0) / currentBirds * 100).toFixed(1))
+              : 0,
             todayGradeAPct:   isLayer ? (idx.todayEggs[sec.id]?.gradeA && idx.todayEggs[sec.id]?.total
               ? parseFloat(((idx.todayEggs[sec.id].gradeA / idx.todayEggs[sec.id].total)*100).toFixed(1))
               : null) : null,
             gradePending:     isLayer ? (idx.todayEggs[sec.id]?.gradePending || false) : null,
             weekEggs:         isLayer ? (idx.weekEggs[sec.id]?.total || 0) : null,
-            weekLayRate:      isLayer ? (idx.weekEggs[sec.id]?.rate  || 0) : null,
+            weekLayRate:      isLayer && currentBirds > 0
+              ? parseFloat(((idx.weekEggs[sec.id]?.total || 0) / 7 / currentBirds * 100).toFixed(1))
+              : 0,
             latestWeightG:    isBroiler ? (idx.latestWeight[sec.id]?.avgWeightG
               ? parseFloat(Number(idx.latestWeight[sec.id].avgWeightG).toFixed(0)) : null) : null,
             uniformityPct:    isBroiler ? (idx.latestWeight[sec.id]?.uniformityPct
@@ -276,7 +277,9 @@ export async function GET(request) {
             weekMortality:  sections.reduce((s, sec) => s + (sec.metrics?.weekMortality  || 0), 0),
             weekFeedKg:     parseFloat(sections.reduce((s, sec) => s + (sec.metrics?.weekFeedKg || 0), 0).toFixed(1)),
             todayEggs:      isLayer   ? sections.reduce((s, sec) => s + (sec.metrics?.todayEggs || 0), 0) : null,
-            avgLayingRate:  isLayer   ? parseFloat((sections.reduce((s, sec) => s + (sec.metrics?.todayLayingRate || 0), 0) / (sections.length || 1)).toFixed(1)) : null,
+            avgLayingRate:  isLayer && penTotalBirds > 0
+              ? parseFloat((sections.reduce((s, sec) => s + (sec.metrics?.todayEggs || 0), 0) / penTotalBirds * 100).toFixed(1))
+              : null,
             latestWeightG:  isBroiler ? (sections.map(s => s.metrics?.latestWeightG).find(Boolean) || null) : null,
           },
         };
@@ -492,125 +495,5 @@ export async function PATCH(request) {
   } catch (error) {
     console.error('Farm structure PATCH error:', error);
     return NextResponse.json({ error: 'Failed to update', detail: error?.message }, { status: 500 });
-  }
-}
-
-// DELETE /api/farm-structure?type=pen&id=...&action=archive   → soft deactivate (Farm Admin+)
-// DELETE /api/farm-structure?type=pen&id=...&action=delete    → hard delete (SUPER_ADMIN only, zero-history pens)
-
-const ARCHIVE_ROLES = ['FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
-const DELETE_ROLES  = ['SUPER_ADMIN'];
-
-export async function DELETE(request) {
-  const user = await verifyToken(request);
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
-  const { searchParams } = new URL(request.url);
-  const type   = searchParams.get('type');
-  const id     = searchParams.get('id');
-  const action = searchParams.get('action') || 'archive'; // 'archive' | 'delete'
-
-  if (type !== 'pen')
-    return NextResponse.json({ error: 'Only pen deletion is supported via this endpoint' }, { status: 400 });
-  if (!id)
-    return NextResponse.json({ error: 'Pen id is required' }, { status: 400 });
-
-  // Role gate
-  if (action === 'delete' && !DELETE_ROLES.includes(user.role))
-    return NextResponse.json({ error: 'Only Super Admins can permanently delete pens' }, { status: 403 });
-  if (action === 'archive' && !ARCHIVE_ROLES.includes(user.role))
-    return NextResponse.json({ error: 'Only Farm Admins and above can archive pens' }, { status: 403 });
-
-  try {
-    // Verify pen belongs to this tenant
-    const pen = await prisma.pen.findFirst({
-      where: { id, farm: { tenantId: user.tenantId } },
-      include: {
-        sections: {
-          include: {
-            flocks:  { where: { status: 'ACTIVE' }, select: { id: true, batchCode: true } },
-            _count:  { select: { flocks: true } },
-          },
-        },
-      },
-    });
-
-    if (!pen)
-      return NextResponse.json({ error: 'Pen not found' }, { status: 404 });
-
-    // ── Safety checks ─────────────────────────────────────────────────────────
-
-    // Block if any section has an active flock — birds must be cleared first
-    const activeFlocks = pen.sections.flatMap(s => s.flocks);
-    if (activeFlocks.length > 0) {
-      return NextResponse.json({
-        error:        'Cannot archive or delete a pen with active flocks.',
-        detail:       `Remove or transfer these flocks first: ${activeFlocks.map(f => f.batchCode).join(', ')}`,
-        activeFlocks: activeFlocks.map(f => f.batchCode),
-      }, { status: 409 });
-    }
-
-    // ── ARCHIVE (soft delete) ─────────────────────────────────────────────────
-    if (action === 'archive') {
-      // Deactivate pen + all its sections
-      await prisma.$transaction([
-        prisma.penSection.updateMany({
-          where: { penId: id },
-          data:  { isActive: false },
-        }),
-        prisma.pen.update({
-          where: { id },
-          data:  { isActive: false },
-        }),
-      ]);
-
-      return NextResponse.json({
-        success: true,
-        action:  'archived',
-        message: `${pen.name} has been archived and will no longer appear in Farm Structure. All historical data is preserved.`,
-      });
-    }
-
-    // ── HARD DELETE (SUPER_ADMIN, zero-history pens only) ─────────────────────
-    if (action === 'delete') {
-      // Check whether any section ever had a flock (not just active ones)
-      const totalFlockHistory = pen.sections.reduce((s, sec) => s + sec._count.flocks, 0);
-
-      if (totalFlockHistory > 0) {
-        return NextResponse.json({
-          error:  'Cannot permanently delete a pen that has flock history.',
-          detail: `This pen has ${totalFlockHistory} historical flock record(s). Use Archive instead to hide it while preserving data.`,
-        }, { status: 409 });
-      }
-
-      // Safe to hard delete — no flock history at all
-      // Prisma cascade handles: sections → workerAssignments, tasks
-      await prisma.$transaction([
-        // Remove worker assignments on all sections
-        prisma.penWorkerAssignment.deleteMany({
-          where: { penSection: { penId: id } },
-        }),
-        // Remove sections
-        prisma.penSection.deleteMany({
-          where: { penId: id },
-        }),
-        // Remove pen
-        prisma.pen.delete({
-          where: { id },
-        }),
-      ]);
-
-      return NextResponse.json({
-        success: true,
-        action:  'deleted',
-        message: `${pen.name} and all its sections have been permanently deleted.`,
-      });
-    }
-
-    return NextResponse.json({ error: 'Invalid action. Use archive or delete.' }, { status: 400 });
-
-  } catch (err) {
-    console.error('DELETE /api/farm-structure error:', err);
-    return NextResponse.json({ error: 'Operation failed', detail: err?.message }, { status: 500 });
   }
 }

@@ -81,7 +81,13 @@ export async function GET(request) {
         lastLoginAt: true, createdAt: true,
         farm: { select: { id: true, name: true } },
         penAssignments: {
-          where: { isActive: true },
+          where: {
+            isActive: true,
+            penSection: {
+              isActive: true,
+              pen: { isActive: true },
+            },
+          },
           select: {
             id: true,
             penSection: {
@@ -120,7 +126,10 @@ export async function GET(request) {
         select: { id: true, name: true },
       }),
       prisma.penSection.findMany({
-        where:   { pen: { farm: { tenantId: user.tenantId } }, isActive: true },
+        where: {
+          isActive: true,
+          pen: { isActive: true, farm: { tenantId: user.tenantId } },
+        },
         select: {
           id: true, name: true,
           pen: { select: { id: true, name: true, operationType: true } },

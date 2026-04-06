@@ -98,7 +98,7 @@ export async function POST(request, { params: rawParams }) {
       data: [...notifIds].map(id => ({
         tenantId:    user.tenantId,
         recipientId: id,
-        type:        'TRANSFER_COMPLETED',
+        type:        'ALERT',
         title:       `✅ Discrepancy ${actionLabel} — ${flock.batchCode} transfer complete`,
         message:     `Farm Manager has ${actionLabel} the discrepancy review. ` +
                      `${countMessage} Flock has moved to ${destName}.` +

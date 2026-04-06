@@ -123,7 +123,7 @@ export async function POST(request, { params: rawParams }) {
         data: allNotify.map(id => ({
           tenantId:    user.tenantId,
           recipientId: id,
-          type:        'TRANSFER_CANCELLED',
+          type:        'ALERT',
           title:       `❌ Transfer ${action === 'WITHDRAW' ? 'withdrawn' : 'cancelled'} — ${flock.batchCode}`,
           message:     action === 'WITHDRAW'
             ? `The sending PM has withdrawn the transfer of ${birdsSent?.toLocaleString()} birds. ` +
@@ -180,7 +180,7 @@ export async function POST(request, { params: rawParams }) {
         data: allNotify.map(id => ({
           tenantId:    user.tenantId,
           recipientId: id,
-          type:        'TRANSFER_COMPLETED',
+          type:        'ALERT',
           title:       `✅ Disputed transfer force-completed — ${flock.batchCode}`,
           message:     `Farm Manager has overridden the dispute and completed the transfer. ` +
                        `${finalCount.toLocaleString()} birds officially moved to ${dstName}.` +

@@ -133,20 +133,45 @@ export async function POST(request) {
       ? Math.floor((new Date(sampleDate) - new Date(flock.dateOfPlacement)) / 86_400_000)
       : null;
 
-    const sample = await prisma.weight_samples.create({
-      data: {
-        tenantId:      user.tenantId,
-        flockId,
-        penSectionId:  penSectionId || null,
-        sampleDate:    new Date(sampleDate),
-        sampleCount,
-        meanWeightG,
-        minWeightG:    minWeightG    || null,
-        maxWeightG:    maxWeightG    || null,
-        uniformityPct: uniformityPct || null,
-        recordedById:  user.sub,
-      },
-    });
+    // Write to weight_samples (primary — used by rearing/broiler performance pages)
+    // AND weight_records (used by dashboard, charts API, performance page metrics)
+    const [sample] = await Promise.all([
+      prisma.weight_samples.create({
+        data: {
+          tenantId:      user.tenantId,
+          flockId,
+          penSectionId:  penSectionId || null,
+          sampleDate:    new Date(sampleDate),
+          sampleCount,
+          meanWeightG,
+          minWeightG:    minWeightG    || null,
+          maxWeightG:    maxWeightG    || null,
+          uniformityPct: uniformityPct || null,
+          recordedById:  user.sub,
+        },
+      }),
+      // Mirror to weight_records so dashboard/charts pick it up immediately
+      penSectionId ? prisma.weightRecord.create({
+        data: {
+          flockId,
+          penSectionId,
+          recordDate:    new Date(sampleDate),
+          ageInDays:     ageInDays || 0,
+          sampleSize:    sampleCount,
+          avgWeightG:    meanWeightG,
+          minWeightG:    minWeightG    || null,
+          maxWeightG:    maxWeightG    || null,
+          uniformityPct: uniformityPct || null,
+          recordedById:  user.sub,
+        },
+      }).catch(e => {
+        // Ignore duplicate key errors — weight_records has no unique constraint
+        // but log other errors
+        if (!e?.message?.includes('Unique constraint')) {
+          console.error('[weight-samples] mirror to weight_records failed:', e?.message);
+        }
+      }) : Promise.resolve(),
+    ]);
 
     return NextResponse.json({ sample }, { status: 201 });
 

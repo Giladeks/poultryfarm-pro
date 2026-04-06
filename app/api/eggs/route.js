@@ -27,11 +27,15 @@ export async function GET(request) {
   const { searchParams } = new URL(request.url);
   const flockId      = searchParams.get('flockId');
   const days         = parseInt(searchParams.get('days') || '30');
+  const endDate      = searchParams.get('endDate'); // 'yesterday' for yesterday-only view
   const rejectedOnly = searchParams.get('rejected') === 'true';
   const pendingOnly  = searchParams.get('pending') === 'true';
-  const since = new Date();
-  since.setDate(since.getDate() - days);
-  since.setHours(0, 0, 0, 0);
+  const _s   = new Date();
+  const _off = endDate === 'yesterday' ? 1 : 0;
+  const since  = new Date(Date.UTC(_s.getFullYear(), _s.getMonth(), _s.getDate() - days - _off + 1));
+  const before = endDate === 'yesterday'
+    ? new Date(Date.UTC(_s.getFullYear(), _s.getMonth(), _s.getDate()))
+    : null;
 
   // Workers only see their own sections
   let allowedSectionIds = null;
@@ -56,14 +60,14 @@ export async function GET(request) {
     const records = await prisma.eggProduction.findMany({
       where: {
         penSection: { pen: { farm: { tenantId: user.tenantId } } },
-        collectionDate: { gte: since },
+        collectionDate: { gte: since, ...(before ? { lt: before } : {}) },
         ...(flockId           && { flockId }),
         ...(allowedSectionIds && { penSectionId: { in: allowedSectionIds } }),
         ...(rejectedOnly      && { rejectionReason: { not: null } }),
         ...(pendingOnly       && { gradeACount: null, submissionStatus: 'PENDING' }),
       },
       include: {
-        flock:      { select: { batchCode: true, breed: true, operationType: true } },
+        flock:      { select: { batchCode: true, breed: true, operationType: true, currentCount: true } },
         penSection: { include: { pen: { select: { name: true } } } },
         recordedBy: { select: { firstName: true, lastName: true } },
         approvedBy: { select: { firstName: true, lastName: true } },
@@ -72,8 +76,29 @@ export async function GET(request) {
     });
 
     const totalEggs = records.reduce((s, r) => s + (r.totalEggs || 0), 0);
-    const avgLayingRate = records.length > 0
-      ? parseFloat((records.reduce((s, r) => s + Number(r.layingRatePct || 0), 0) / records.length).toFixed(2))
+    // Compute avgLayingRate from totalEggs / daysWithData / totalBirds
+    // Denominator = ALL active PRODUCTION flocks in scope (not just those with egg records)
+    // This correctly dilutes the rate when sections haven't logged — making low rates
+    // a visible signal for the PM to investigate missing collections
+    const uniqueDays = new Set(
+      records.map(r => new Date(r.collectionDate).toISOString().split('T')[0])
+    ).size || 1;
+
+    // Fetch all active PRODUCTION layer flocks in the same sections scope
+    const productionFlocks = await prisma.flock.findMany({
+      where: {
+        tenantId:      user.tenantId,
+        status:        'ACTIVE',
+        stage:         'PRODUCTION',
+        operationType: 'LAYER',
+        ...(allowedSectionIds ? { penSectionId: { in: allowedSectionIds } } : {}),
+        ...(flockId ? { id: flockId } : {}),
+      },
+      select: { currentCount: true },
+    });
+    const totalBirds = productionFlocks.reduce((s, f) => s + (f.currentCount || 0), 0);
+    const avgLayingRate = totalBirds > 0
+      ? parseFloat(((totalEggs / uniqueDays / totalBirds) * 100).toFixed(2))
       : 0;
 
     const approvedRecords = records.filter(r => r.gradeACount !== null);

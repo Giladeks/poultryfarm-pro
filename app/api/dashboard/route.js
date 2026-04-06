@@ -16,10 +16,15 @@ export async function GET(request) {
   const user = await verifyToken(request);
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const sevenDaysAgo = new Date(today);
-  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+  // Build date boundaries using local calendar date to avoid WAT/UTC shift bugs.
+  const { searchParams } = new URL(request.url);
+  const dateParam = searchParams.get('date'); // 'yesterday' or null (today)
+
+  const _now  = new Date();
+  const _offset = dateParam === 'yesterday' ? 1 : 0; // shift back 1 day for yesterday
+  const today = new Date(Date.UTC(_now.getFullYear(), _now.getMonth(), _now.getDate() - _offset));
+  const todayEnd = new Date(Date.UTC(_now.getFullYear(), _now.getMonth(), _now.getDate() - _offset + 1));
+  const sevenDaysAgo = new Date(Date.UTC(_now.getFullYear(), _now.getMonth(), _now.getDate() - _offset - 7));
 
   const isManager   = MANAGER_ROLES.includes(user.role);
   const isPenMgr    = user.role === 'PEN_MANAGER';
@@ -77,12 +82,12 @@ export async function GET(request) {
     const sectionIds = sections.map(s => s.id);
 
     // ── Fetch all metrics in parallel ─────────────────────────────────────────
-    const [todayMort, weekMort, weekFeed, todayEggs, weekEggs, weekWeights, todayTasks] =
+    const [todayMort, weekMort, todayFeed, weekFeed, todayEggs, weekEggs, weekWeights, todayTasks] =
       await Promise.all([
         // Today mortality
         prisma.mortalityRecord.groupBy({
           by: ['penSectionId'],
-          where: { penSectionId: { in: sectionIds }, recordDate: { gte: today } },
+          where: { penSectionId: { in: sectionIds }, recordDate: { gte: today, lt: todayEnd } },
           _sum: { count: true },
         }),
 
@@ -93,33 +98,36 @@ export async function GET(request) {
           _sum: { count: true },
         }),
 
-        // 7-day feed
+        // Today feed
         prisma.feedConsumption.groupBy({
           by: ['penSectionId'],
-          where: { penSectionId: { in: sectionIds }, recordedDate: { gte: sevenDaysAgo } },
+          where: { penSectionId: { in: sectionIds }, recordedDate: { gte: today, lt: todayEnd } },
           _sum: { quantityKg: true },
-          _avg: { gramsPerBird: true },
         }),
 
-        // Today eggs
-        // gradeACount is PM-computed on verification (nullable until PM approves)
-        // crackedCount replaces dirtyCount as the tracked waste/reduced-price category
+        // 7-day feed — sum only; gramsPerBird computed from totalKg/currentBirds
+        prisma.feedConsumption.groupBy({
+          by: ['penSectionId'],
+          where: { penSectionId: { in: sectionIds }, recordedDate: { gte: sevenDaysAgo, lt: todayEnd } },
+          _sum: { quantityKg: true },
+        }),
+
+        // Today eggs — sum all sessions; lay rate computed from totalEggs/currentBirds
         prisma.eggProduction.groupBy({
           by: ['penSectionId'],
-          where: { penSectionId: { in: sectionIds }, collectionDate: { gte: today } },
+          where: { penSectionId: { in: sectionIds }, collectionDate: { gte: today, lt: todayEnd } },
           _sum: { totalEggs: true, gradeACount: true, crackedCount: true },
-          _avg: { layingRatePct: true },
         }),
 
-        // 7-day eggs
+        // 7-day eggs — sum all sessions
         prisma.eggProduction.groupBy({
           by: ['penSectionId'],
-          where: { penSectionId: { in: sectionIds }, collectionDate: { gte: sevenDaysAgo } },
+          where: { penSectionId: { in: sectionIds }, collectionDate: { gte: sevenDaysAgo, lt: todayEnd } },
           _sum: { totalEggs: true, gradeACount: true, crackedCount: true },
-          _avg: { layingRatePct: true },
         }),
 
-        // Latest weight records (broiler)
+        // Latest weight records — reads from weight_records (weight-records API)
+        // We also fetch weight_samples separately and merge to support both sources
         prisma.weightRecord.findMany({
           where: { penSectionId: { in: sectionIds }, recordDate: { gte: sevenDaysAgo } },
           orderBy: { recordDate: 'desc' },
@@ -196,34 +204,76 @@ export async function GET(request) {
       }
     }
 
+    // Also fetch from weight_samples (written by weight-samples API / rearing page)
+    let weightSamplesRows = [];
+    if (sectionIds.length > 0) {
+      try {
+        const placeholders = sectionIds.map((_, i) => `$${i + 1}`).join(',');
+        weightSamplesRows = await prisma.$queryRawUnsafe(
+          `SELECT DISTINCT ON ("penSectionId")
+             "penSectionId",
+             "meanWeightG"::float  as "avgWeightG",
+             "uniformityPct"::float as "uniformityPct",
+             "sampleDate"
+           FROM weight_samples
+           WHERE "penSectionId" IN (${placeholders})
+             AND "sampleDate" >= $${sectionIds.length + 1}
+           ORDER BY "penSectionId", "sampleDate" DESC`,
+          ...sectionIds,
+          sevenDaysAgo
+        );
+      } catch (wsErr) {
+        console.error('[Dashboard] weight_samples fetch error:', wsErr?.message);
+      }
+    }
+
     // Index metrics
     const idx = {
       todayDead:  Object.fromEntries(todayMort.map(r => [r.penSectionId, r._sum.count || 0])),
       weekDead:   Object.fromEntries(weekMort.map(r  => [r.penSectionId, r._sum.count || 0])),
+      todayFeed:  Object.fromEntries(todayFeed.map(r => [r.penSectionId, {
+        kg: parseFloat((r._sum.quantityKg || 0).toFixed(1)),
+      }])),
       weekFeed:   Object.fromEntries(weekFeed.map(r  => [r.penSectionId, {
         kg:  parseFloat((r._sum.quantityKg || 0).toFixed(1)),
-        gpb: parseFloat((r._avg.gramsPerBird || 0).toFixed(0)),
+        gpb: null, // computed per-section from totalKg/currentBirds in enrichment
       }])),
+      // Laying rate is computed per-section from total eggs / current birds (not averaged)
+      // This ensures multiple sessions in a day are correctly aggregated
       todayEggs:  Object.fromEntries(todayEggs.map(r => [r.penSectionId, {
         total:   r._sum.totalEggs   || 0,
         gradeA:  r._sum.gradeACount || 0,  // 0 until PM verifies — shown as pending in UI
         cracked: r._sum.crackedCount || 0,
-        rate:    parseFloat((r._avg.layingRatePct || 0).toFixed(1)),
+        rate:    null, // computed after enrichment when currentBirds is known
       }])),
       weekEggs:   Object.fromEntries(weekEggs.map(r => [r.penSectionId, {
         total:   r._sum.totalEggs   || 0,
         gradeA:  r._sum.gradeACount || 0,
         cracked: r._sum.crackedCount || 0,
-        rate:    parseFloat((r._avg.layingRatePct || 0).toFixed(1)),
+        rate:    null, // computed after enrichment when currentBirds is known
       }])),
       // latestTemps from raw SQL DISTINCT ON already has one row per section
       latestBrooderTemp: Object.fromEntries(
         (latestTemps || []).map(t => [t.penSectionId, Number(t.tempCelsius)])
       ),
-      latestWeight: weekWeights.reduce((acc, w) => {
-        if (!acc[w.penSectionId]) acc[w.penSectionId] = w;
+      latestWeight: (() => {
+        // Merge weight_records and weight_samples — prefer most recent
+        const acc = {};
+        // First load weight_records
+        weekWeights.forEach(w => {
+          if (!acc[w.penSectionId]) acc[w.penSectionId] = w;
+        });
+        // Override with weight_samples if they have newer data or weight_records is missing
+        weightSamplesRows.forEach(w => {
+          const existing = acc[w.penSectionId];
+          if (!existing) {
+            acc[w.penSectionId] = w; // use sample if no record exists
+          }
+          // weight_samples sampleDate vs weight_records recordDate — use whichever is newer
+          // Both are already sorted DESC by section so first one wins per section
+        });
         return acc;
-      }, {}),
+      })(),
     };
 
     // ── Build enriched sections ───────────────────────────────────────────────
@@ -237,14 +287,23 @@ export async function GET(request) {
       const todayDead  = idx.todayDead[sec.id]  || 0;
       const weekDead   = idx.weekDead[sec.id]   || 0;
       const feedData   = idx.weekFeed[sec.id]   || { kg: 0, gpb: 0 };
-      const tEgg       = idx.todayEggs[sec.id]  || { total: 0, gradeA: 0, cracked: 0, rate: 0 };
-      const wEgg       = idx.weekEggs[sec.id]   || { total: 0, gradeA: 0, cracked: 0, rate: 0 };
+      const todayFeedKg = idx.todayFeed[sec.id]?.kg ?? 0;
+      const tEggRaw    = idx.todayEggs[sec.id]  || { total: 0, gradeA: 0, cracked: 0, rate: null };
+      const wEggRaw    = idx.weekEggs[sec.id]   || { total: 0, gradeA: 0, cracked: 0, rate: null };
+      // Compute laying rate from aggregated totals / bird count (correct for multi-session days)
+      const tEgg = { ...tEggRaw,
+        rate: currBirds > 0 ? parseFloat(((tEggRaw.total / currBirds) * 100).toFixed(1)) : 0 };
+      const wEgg = { ...wEggRaw,
+        rate: currBirds > 0 ? parseFloat(((wEggRaw.total / currBirds) * 100).toFixed(1)) : 0 };
       const wt         = idx.latestWeight[sec.id];
 
       const mortalityRate = flock?.initialCount > 0
         ? parseFloat(((weekDead / flock.initialCount) * 100).toFixed(2)) : 0;
 
       const avgDailyFeed  = feedData.kg > 0 ? parseFloat((feedData.kg / 7).toFixed(1)) : 0;
+      // gramsPerBird = totalWeekKg * 1000 / 7 days / currentBirds (daily g/bird)
+      const feedGpb = feedData.kg > 0 && currBirds > 0
+        ? parseFloat((feedData.kg * 1000 / 7 / currBirds).toFixed(1)) : 0;
       const gradeAPct     = tEgg.total > 0  ? parseFloat(((tEgg.gradeA / tEgg.total) * 100).toFixed(1)) : 0;
       const wGradeAPct    = wEgg.total > 0  ? parseFloat(((wEgg.gradeA / wEgg.total) * 100).toFixed(1)) : 0;
 
@@ -282,17 +341,28 @@ export async function GET(request) {
           todayGradeAPending: tEgg.gradeA === 0 && tEgg.total > 0,
           todayGradeAPct: gradeAPct, todayLayingRate: tEgg.rate,
           weekEggs: wEgg.total, weekGradeAPct: wGradeAPct, avgLayingRate: wEgg.rate,
-          avgDailyFeedKg: avgDailyFeed, feedGramsPerBird: feedData.gpb,
+          todayFeedKg: todayFeedKg,
+          avgDailyFeedKg: avgDailyFeed, feedGramsPerBird: feedGpb,
           avgWaterLPB: waterIdx[sec.id]?.latestConsumptionLPB ?? null,
           latestWaterL: waterIdx[sec.id]?.latestConsumptionL ?? null,
+          // Only expose brooder temp when flock is actively in BROODING stage
+          // Historical temp logs still exist after End Brooding — must gate on stage
+          latestBrooderTemp: flock?.stage === 'BROODING'
+            ? (idx.latestBrooderTemp[sec.id] !== undefined ? idx.latestBrooderTemp[sec.id] : null)
+            : null,
+          latestWeightG,
         } : {
           type: 'BROILER',
           stage: flock?.stage || 'PRODUCTION',   // ← expose stage for BROILER sections too
           todayMortality: todayDead, weekMortality: weekDead, mortalityRate,
           latestWeightG, uniformityPct: wt?.uniformityPct ? parseFloat(parseFloat(wt.uniformityPct).toFixed(1)) : null,
           estimatedFCR, daysToHarvest, ageInDays,
-          weekFeedKg: feedData.kg, avgDailyFeedKg: avgDailyFeed, feedGramsPerBird: feedData.gpb,
-          latestBrooderTemp: idx.latestBrooderTemp[sec.id] !== undefined ? idx.latestBrooderTemp[sec.id] : null,
+          todayFeedKg: todayFeedKg,
+          weekFeedKg: feedData.kg, avgDailyFeedKg: avgDailyFeed, feedGramsPerBird: feedGpb,
+          // Only expose brooder temp during BROODING stage for broilers too
+          latestBrooderTemp: flock?.stage === 'BROODING'
+            ? (idx.latestBrooderTemp[sec.id] !== undefined ? idx.latestBrooderTemp[sec.id] : null)
+            : null,
           avgWaterLPB: waterIdx[sec.id]?.latestConsumptionLPB ?? null,
           latestWaterL: waterIdx[sec.id]?.latestConsumptionL ?? null,
         },
@@ -327,7 +397,11 @@ export async function GET(request) {
         mortalityRate:   totalBirds > 0 ? parseFloat(((secs.reduce((s, sec) => s + sec.metrics.weekMortality, 0) / totalBirds) * 100).toFixed(2)) : 0,
         todayEggs:       secs.reduce((s, sec) => s + (sec.metrics.todayEggs || 0), 0),
         weekEggs:        secs.reduce((s, sec) => s + (sec.metrics.weekEggs  || 0), 0),
-        avgLayingRate:   (() => { const ls = secs.filter(s => s.metrics.avgLayingRate > 0); return ls.length ? parseFloat((ls.reduce((s,sec)=>s+sec.metrics.avgLayingRate,0)/ls.length).toFixed(1)) : 0; })(),
+        // avgLayingRate = today total eggs / total birds (not avg of section rates)
+        avgLayingRate:   (() => {
+          const totalE = secs.reduce((s,sec)=>s+(sec.metrics.todayEggs||0),0);
+          return totalBirds > 0 ? parseFloat((totalE/totalBirds*100).toFixed(1)) : 0;
+        })(),
         avgDailyFeedKg:  parseFloat((secs.reduce((s, sec) => s + (sec.metrics.avgDailyFeedKg || 0), 0)).toFixed(1)),
       } : {
         type: 'BROILER',
@@ -356,9 +430,12 @@ export async function GET(request) {
       totalBirds:    enriched.reduce((s, sec) => s + sec.currentBirds, 0),
       todayMortality:enriched.reduce((s, sec) => s + sec.metrics.todayMortality, 0),
       todayEggs:     enriched.filter(s => s.metrics.type === 'LAYER').reduce((s, sec) => s + (sec.metrics.todayEggs || 0), 0),
+      // avgLayingRate = today total layer eggs / total layer birds
       avgLayingRate: (() => {
-        const ls = enriched.filter(s => s.metrics.type === 'LAYER' && s.metrics.avgLayingRate > 0);
-        return ls.length ? parseFloat((ls.reduce((s,sec)=>s+sec.metrics.avgLayingRate,0)/ls.length).toFixed(1)) : 0;
+        const ls = enriched.filter(s => s.metrics.type === 'LAYER');
+        const totalE = ls.reduce((s,sec)=>s+(sec.metrics.todayEggs||0),0);
+        const totalB = ls.reduce((s,sec)=>s+(sec.currentBirds||0),0);
+        return totalB > 0 ? parseFloat((totalE/totalB*100).toFixed(1)) : 0;
       })(),
       avgBroilerWeight: (() => {
         const bs = enriched.filter(s => s.metrics.type === 'BROILER' && s.metrics.latestWeightG);
