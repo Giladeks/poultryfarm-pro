@@ -36,7 +36,7 @@ export async function GET(request) {
   let allowedSectionIds = null;
   if (WORKER_ROLES.includes(user.role)) {
     const assignments = await prisma.penWorkerAssignment.findMany({
-      where: { userId: user.sub },
+      where: { userId: user.sub, isActive: true },
       select: { penSectionId: true },
     });
     allowedSectionIds = assignments.map(a => a.penSectionId);

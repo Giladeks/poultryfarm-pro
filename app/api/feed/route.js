@@ -73,21 +73,21 @@ export async function GET(request) {
       };
     });
 
-    const fcrData = await prisma.$queryRaw`
+    const fcrData = await prisma.$queryRawUnsafe(`
       SELECT
-        fc.flock_id,
-        f.batch_code,
-        SUM(fc.quantity_kg) as total_feed_kg,
-        COUNT(fc.id) as consumption_entries
+        fc."flockId",
+        f."batchCode",
+        SUM(fc."quantityKg") AS "totalFeedKg",
+        COUNT(fc.id)         AS "consumptionEntries"
       FROM feed_consumption fc
-      JOIN flocks f ON f.id = fc.flock_id
-      JOIN pen_sections ps ON ps.id = f.pen_section_id
-      JOIN pens p ON p.id = ps.pen_id
-      JOIN farms fm ON fm.id = p.farm_id
-      WHERE fm.tenant_id = ${user.tenantId}
-        AND fc.recorded_date >= ${since}
-      GROUP BY fc.flock_id, f.batch_code
-    `;
+      JOIN flocks       f  ON f.id  = fc."flockId"
+      JOIN pen_sections ps ON ps.id = f."penSectionId"
+      JOIN pens         p  ON p.id  = ps."penId"
+      JOIN farms        fm ON fm.id = p."farmId"
+      WHERE fm."tenantId" = $1
+        AND fc."recordedDate" >= $2
+      GROUP BY fc."flockId", f."batchCode"
+    `, user.tenantId, since);
 
     return NextResponse.json({
       inventory: enrichedInventory,

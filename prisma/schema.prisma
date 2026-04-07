@@ -121,6 +121,12 @@ model User {
   eggProductionRecords                                  EggProduction[]
   feedConsumptionApprovals                              FeedConsumption[]     @relation("FeedConsumptionApprovedBy")
   feedConsumptionRecords                                FeedConsumption[]
+  feedRequisitionsSubmitted                             FeedRequisition[]     @relation("FeedRequisitionSubmittedBy")
+  feedRequisitionsApproved                              FeedRequisition[]     @relation("FeedRequisitionApprovedBy")
+  feedRequisitionsRejected                              FeedRequisition[]     @relation("FeedRequisitionRejectedBy")
+  feedRequisitionsIssued                                FeedRequisition[]     @relation("FeedRequisitionIssuedBy")
+  feedRequisitionsAcknowledged                          FeedRequisition[]     @relation("FeedRequisitionAcknowledgedBy")
+  feedRequisitionsClosed                                FeedRequisition[]     @relation("FeedRequisitionClosedBy")
   feedMillBatches                                       FeedMillBatch[]
   flock_transfers_flock_transfers_received_by_idTousers flock_transfers[]     @relation("flock_transfers_received_by_idTousers")
   flock_transfers                                       flock_transfers[]
@@ -213,18 +219,21 @@ model Farm {
 }
 
 model Pen {
-  id            String           @id @default(uuid())
-  farmId        String
-  name          String
-  operationType PenOperationType
-  capacity      Int
-  location      String?
-  buildYear     Int?
-  isActive      Boolean          @default(true)
-  createdAt     DateTime         @default(now())
-  penPurpose    String           @default("PRODUCTION")
-  sections      PenSection[]
-  farm          Farm             @relation(fields: [farmId], references: [id])
+  id                    String                  @id @default(uuid())
+  farmId                String
+  name                  String
+  operationType         PenOperationType
+  capacity              Int
+  location              String?
+  buildYear             Int?
+  isActive              Boolean                 @default(true)
+  createdAt             DateTime                @default(now())
+  penPurpose            String                  @default("PRODUCTION")
+  egg_inventory_balance egg_inventory_balance[]
+  egg_store_receipts    egg_store_receipts[]
+  sections              PenSection[]
+  feedRequisitions      FeedRequisition[]
+  farm                  Farm                    @relation(fields: [farmId], references: [id])
 
   @@map("pens")
 }
@@ -240,6 +249,7 @@ model PenSection {
   dailyReports                                                   DailyReport[]
   dailySummaries                                                 DailySummary[]
   eggProduction                                                  EggProduction[]
+  egg_store_receipts                                             egg_store_receipts[]
   feedConsumption                                                FeedConsumption[]
   flock_transfers_flock_transfers_fromPenSectionIdTopen_sections flock_transfers[]     @relation("flock_transfers_fromPenSectionIdTopen_sections")
   flock_transfers_flock_transfers_toPenSectionIdTopen_sections   flock_transfers[]     @relation("flock_transfers_toPenSectionIdTopen_sections")
@@ -249,6 +259,7 @@ model PenSection {
   pen                                                            Pen                   @relation(fields: [penId], references: [id])
   workerAssignments                                              PenWorkerAssignment[]
   storeIssuances                                                 StoreIssuance[]
+  feedRequisitions                                               FeedRequisition[]
   tasks                                                          Task[]
   temperature_logs                                               temperature_logs[]
   waterMeterReadings                                             WaterMeterReading[]
@@ -302,47 +313,47 @@ model Flock {
   waterMeterReadings      WaterMeterReading[]
   weightRecords           WeightRecord[]
   weight_samples          weight_samples[]
-
-  @@unique([tenantId, batchCode])
+  feedRequisitions        FeedRequisition[]
   @@index([penSectionId, stage], map: "flocks_stage_penSectionId_idx")
   @@index([tenantId, stage], map: "flocks_stage_tenantId_idx")
   @@map("flocks")
 }
 
 model EggProduction {
-  id                  String           @id @default(uuid())
+  id                  String              @id @default(uuid())
   flockId             String
   penSectionId        String
-  collectionDate      DateTime         @db.Date
+  collectionDate      DateTime            @db.Date
   totalEggs           Int
-  gradeACount_old     Int              @default(0)
-  gradeBCount_old     Int              @default(0)
-  crackedCount        Int              @default(0)
-  dirtyCount          Int              @default(0)
-  layingRatePct       Decimal          @db.Decimal(5, 2)
+  gradeACount_old     Int                 @default(0)
+  gradeBCount_old     Int                 @default(0)
+  crackedCount        Int                 @default(0)
+  dirtyCount          Int                 @default(0)
+  layingRatePct       Decimal             @db.Decimal(5, 2)
   cratesCount         Int?
   recordedById        String
   approvedById        String?
   approvedAt          DateTime?
-  submissionStatus    SubmissionStatus @default(PENDING)
+  submissionStatus    SubmissionStatus    @default(PENDING)
   notes               String?
-  createdAt           DateTime         @default(now())
+  createdAt           DateTime            @default(now())
   rejectionReason     String?
-  collectionSession   Int              @default(1)
+  collectionSession   Int                 @default(1)
   cratesCollected     Int?
-  looseEggs           Int              @default(0)
+  looseEggs           Int                 @default(0)
   gradeBCrates        Int?
   gradeBLoose         Int?
   crackedConfirmed    Int?
   gradeBCount         Int?
   gradeACount         Int?
-  gradeAPct           Decimal?         @db.Decimal(5, 2)
+  gradeAPct           Decimal?            @db.Decimal(5, 2)
   cratesCollected_new Int?
-  updatedAt           DateTime         @default(now()) @updatedAt @db.Timestamptz(6)
-  approvedBy          User?            @relation("EggProductionApprovedBy", fields: [approvedById], references: [id], onUpdate: NoAction)
-  flock               Flock            @relation(fields: [flockId], references: [id])
-  penSection          PenSection       @relation(fields: [penSectionId], references: [id])
-  recordedBy          User             @relation(fields: [recordedById], references: [id])
+  updatedAt           DateTime            @default(now()) @updatedAt @db.Timestamptz(6)
+  approvedBy          User?               @relation("EggProductionApprovedBy", fields: [approvedById], references: [id], onUpdate: NoAction)
+  flock               Flock               @relation(fields: [flockId], references: [id])
+  penSection          PenSection          @relation(fields: [penSectionId], references: [id])
+  recordedBy          User                @relation(fields: [recordedById], references: [id])
+  egg_store_receipts  egg_store_receipts?
 
   @@map("egg_production")
 }
@@ -500,6 +511,7 @@ model FeedInventory {
   supplier       Supplier?         @relation(fields: [supplierId], references: [id])
   issuances      StoreIssuance[]   @relation("FeedIssuances")
   storeReceipts  StoreReceipt[]    @relation("FeedReceipts")
+  feedRequisitions FeedRequisition[]
 
   @@map("feed_inventory")
 }
@@ -579,7 +591,19 @@ model FeedRequisition {
   updatedAt              DateTime              @default(now()) @updatedAt @db.Timestamptz(6)
   penId                  String?
   sectionBreakdown       Json?
-
+  
+  pen                    Pen?                  @relation(fields: [penId], references: [id])
+  penSection             PenSection?           @relation(fields: [penSectionId], references: [id])
+  flock                  Flock                 @relation(fields: [flockId], references: [id])
+  feedInventory          FeedInventory         @relation(fields: [feedInventoryId], references: [id])
+  store                  Store?                @relation(fields: [storeId], references: [id])
+  submittedBy            User?                 @relation("FeedRequisitionSubmittedBy",  fields: [submittedById],  references: [id])
+  approvedBy             User?                 @relation("FeedRequisitionApprovedBy",   fields: [approvedById],   references: [id])
+  rejectedBy             User?                 @relation("FeedRequisitionRejectedBy",   fields: [rejectedById],   references: [id])
+  issuedBy               User?                 @relation("FeedRequisitionIssuedBy",     fields: [issuedById],     references: [id])
+  acknowledgedBy         User?                 @relation("FeedRequisitionAcknowledgedBy", fields: [acknowledgedById], references: [id])
+  closedBy               User?                 @relation("FeedRequisitionClosedBy",     fields: [closedById],     references: [id])
+  
   @@unique([penId, feedInventoryId, feedForDate], map: "feed_requisitions_pen_inventory_date_unique")
   @@unique([tenantId, requisitionNumber], map: "feed_requisitions_tenant_number_unique")
   @@index([feedInventoryId], map: "feed_requisitions_feed_inventory_idx")
@@ -706,6 +730,7 @@ model Store {
   receipts      StoreReceipt[]
   farm          Farm            @relation(fields: [farmId], references: [id])
   verifications Verification[]
+  feedRequisitions FeedRequisition[]
 
   @@map("stores")
 }
@@ -1815,6 +1840,85 @@ model flock_transfers {
   @@index([flockId])
   @@index([tenantId])
   @@index([transferDate(sort: Desc)])
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model egg_inventory_balance {
+  id                String   @id @default(dbgenerated("(gen_random_uuid())::text"))
+  tenantId          String
+  penId             String
+  balanceDate       DateTime @db.Date
+  openingGradeA     Int      @default(0)
+  openingGradeB     Int      @default(0)
+  openingCracked    Int      @default(0)
+  receiptsGradeA    Int      @default(0)
+  receiptsGradeB    Int      @default(0)
+  receiptsCracked   Int      @default(0)
+  salesGradeA       Int      @default(0)
+  salesGradeB       Int      @default(0)
+  salesCracked      Int      @default(0)
+  adjustmentGradeA  Int      @default(0)
+  adjustmentGradeB  Int      @default(0)
+  adjustmentCracked Int      @default(0)
+  adjustmentNotes   String?
+  closingGradeA     Int      @default(0)
+  closingGradeB     Int      @default(0)
+  closingCracked    Int      @default(0)
+  closingTotalEggs  Int?     @default(dbgenerated("((\"closingGradeA\" + \"closingGradeB\") + \"closingCracked\")"))
+  receiptsTotalEggs Int?     @default(dbgenerated("((\"receiptsGradeA\" + \"receiptsGradeB\") + \"receiptsCracked\")"))
+  lastUpdatedById   String?
+  createdAt         DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime @default(now()) @db.Timestamptz(6)
+  pens              Pen      @relation(fields: [penId], references: [id], onUpdate: NoAction, map: "fk_egg_inventory_balance_pen")
+
+  @@unique([tenantId, penId, balanceDate])
+  @@index([penId, balanceDate(sort: Desc)], map: "idx_egg_inventory_balance_pen_date")
+  @@index([tenantId, balanceDate(sort: Desc)], map: "idx_egg_inventory_balance_tenant_date")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model egg_store_receipts {
+  id                 String        @id @default(dbgenerated("(gen_random_uuid())::text"))
+  tenantId           String
+  eggProductionId    String        @unique
+  penSectionId       String
+  penId              String
+  collectionDate     DateTime      @db.Date
+  collectionSession  Int
+  flockId            String
+  batchCode          String
+  gradedGradeACrates Int           @default(0)
+  gradedGradeALoose  Int           @default(0)
+  gradedGradeACount  Int           @default(0)
+  gradedGradeBCrates Int           @default(0)
+  gradedGradeBLoose  Int           @default(0)
+  gradedGradeBCount  Int           @default(0)
+  gradedCrackedCount Int           @default(0)
+  gradedTotalEggs    Int
+  deliveredById      String?
+  acknowledgedById   String?
+  acknowledgedAt     DateTime?     @db.Timestamptz(6)
+  status             String        @default("PENDING")
+  disputeNotes       String?
+  disputedById       String?
+  disputedAt         DateTime?     @db.Timestamptz(6)
+  resolvedById       String?
+  resolvedAt         DateTime?     @db.Timestamptz(6)
+  resolutionAction   String?
+  resolutionNotes    String?
+  inventoryUpdated   Boolean       @default(false)
+  inventoryUpdatedAt DateTime?     @db.Timestamptz(6)
+  createdAt          DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt          DateTime      @default(now()) @db.Timestamptz(6)
+  egg_production     EggProduction @relation(fields: [eggProductionId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_egg_store_receipts_egg_production")
+  pens               Pen           @relation(fields: [penId], references: [id], onUpdate: NoAction, map: "fk_egg_store_receipts_pen")
+  pen_sections       PenSection    @relation(fields: [penSectionId], references: [id], onUpdate: NoAction, map: "fk_egg_store_receipts_pen_section")
+
+  @@index([penId, collectionDate, collectionSession], map: "idx_egg_store_receipts_pen_date_session")
+  @@index([penSectionId, collectionDate(sort: Desc)], map: "idx_egg_store_receipts_section_date")
+  @@index([tenantId, status], map: "idx_egg_store_receipts_tenant_status")
 }
 
 enum TenantStatus {

@@ -106,10 +106,13 @@ export async function GET(request) {
 
     // ── QC tests ──────────────────────────────────────────────────────────────
     const qcPending = await prisma.qCTest.findMany({
-      where: { tenantId: user.tenantId, result: null },
+      where: {
+        feedMillBatch: { tenantId: user.tenantId },
+        passedSpec: false,
+      },
       select: {
         id: true, testType: true, createdAt: true,
-        feedMillBatch: { select: { batchCode: true, formulaName: true } },
+        feedMillBatch: { select: { batchCode: true } },
       },
       orderBy: { createdAt: 'asc' },
       take: 10,
@@ -117,9 +120,9 @@ export async function GET(request) {
 
     const qcRecent = await prisma.qCTest.findMany({
       where: {
-        tenantId: user.tenantId,
+        feedMillBatch: { tenantId: user.tenantId },
         createdAt: { gte: sevenAgo },
-        result: { not: null },
+        result: { not: '' },
       },
       select: {
         id: true, testType: true, result: true, createdAt: true,
@@ -133,11 +136,11 @@ export async function GET(request) {
     const millBatches = await prisma.feedMillBatch.findMany({
       where: {
         tenantId: user.tenantId,
-        status: { in: ['PLANNED', 'IN_PROGRESS', 'COMPLETED'] },
+        status: { in: ['PLANNED', 'IN_PRODUCTION', 'PRODUCED', 'QC_PASSED', 'QC_FAILED', 'RELEASED'] },
       },
       select: {
-        id: true, batchCode: true, formulaName: true,
-        plannedQtyKg: true, actualQtyKg: true,
+        id: true, batchCode: true,
+        targetQuantityKg: true, actualQuantityKg: true,
         status: true, productionDate: true,
         producedBy: { select: { firstName: true, lastName: true } },
       },
@@ -147,9 +150,10 @@ export async function GET(request) {
 
     const millStats = {
       planned:     millBatches.filter(b => b.status === 'PLANNED').length,
-      inProgress:  millBatches.filter(b => b.status === 'IN_PROGRESS').length,
+      inProgress:  millBatches.filter(b => b.status === 'IN_PRODUCTION').length,
       completed7d: millBatches.filter(b =>
-        b.status === 'COMPLETED' && new Date(b.productionDate) >= sevenAgo
+        ['PRODUCED', 'QC_PASSED', 'RELEASED'].includes(b.status) &&
+        new Date(b.productionDate) >= sevenAgo
       ).length,
     };
 

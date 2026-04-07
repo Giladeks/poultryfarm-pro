@@ -17,7 +17,9 @@ const DEFAULT_SETTINGS = {
   operationMode:        'LAYER_ONLY', // LAYER_ONLY | BROILER_ONLY | BOTH
   hasFeedMillModule:    false,
   hasProcessingModule:  false,
-  feedBagWeightKg:      25,  // kg per bag — configurable per farm, used on feed KPI cards
+  feedBagWeightKg:           25,  // kg per bag — configurable per farm, used for bags display
+  eggSalePriceGradeAPerCrate: 0,  // ₦ per crate (30 eggs) — Grade A sale price for Layer Analytics
+  eggSalePriceGradeBPerCrate: 0,  // ₦ per crate (30 eggs) — Grade B sale price (usually discounted)
 
   sms: {
     enabled:        false,

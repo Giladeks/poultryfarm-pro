@@ -178,6 +178,65 @@ export async function POST(request, { params: rawParams }) {
       }).catch(() => {});
     }
 
+    // Auto-create egg_store_receipt for the first egg collection so the
+    // Store Manager sees it in the Awaiting Receipt queue immediately.
+    // Non-fatal — advance already succeeded if this fails.
+    try {
+      const penIdRows = await prisma.$queryRawUnsafe(
+        `SELECT "penId" FROM pen_sections WHERE id = $1 LIMIT 1`,
+        flock.penSectionId
+      );
+      const penId = penIdRows[0]?.penId ?? null;
+
+      if (penId) {
+        const gradeACount  = firstEggCollection.gradeACount  ?? 0;
+        const gradeBCount  = firstEggCollection.gradeBCount  ?? 0;
+        const crackedCount = firstEggCollection.crackedCount ?? 0;
+        const gradeACrates = Math.floor(gradeACount / 30);
+        const gradeALoose  = gradeACount % 30;
+        const gradeBCrates = Math.floor(gradeBCount / 30);
+        const gradeBLoose  = gradeBCount % 30;
+        const totalEggs    = gradeACount + gradeBCount + crackedCount;
+
+        const workerAssignment = await prisma.penWorkerAssignment.findFirst({
+          where:   { penSectionId: flock.penSectionId, isActive: true },
+          select:  { userId: true },
+          orderBy: { assignedAt: 'desc' },
+        });
+
+        await prisma.$queryRawUnsafe(`
+          INSERT INTO egg_store_receipts (
+            "tenantId", "eggProductionId", "penSectionId", "penId",
+            "collectionDate", "collectionSession", "flockId", "batchCode",
+            "gradedGradeACrates", "gradedGradeALoose", "gradedGradeACount",
+            "gradedGradeBCrates", "gradedGradeBLoose", "gradedGradeBCount",
+            "gradedCrackedCount", "gradedTotalEggs",
+            "deliveredById", "status"
+          ) VALUES (
+            $1, $2, $3, $4, $5, $6, $7, $8,
+            $9, $10, $11, $12, $13, $14, $15, $16,
+            $17, 'PENDING'
+          )
+          ON CONFLICT ("eggProductionId") DO NOTHING
+        `,
+          user.tenantId,
+          eggRecord.id,
+          flock.penSectionId,
+          penId,
+          eggRecord.collectionDate,
+          eggRecord.collectionSession,
+          flock.id,
+          flock.batchCode,
+          gradeACrates, gradeALoose, gradeACount,
+          gradeBCrates, gradeBLoose, gradeBCount,
+          crackedCount, totalEggs,
+          workerAssignment?.userId || null,
+        );
+      }
+    } catch (receiptErr) {
+      console.error('[advance] autoCreateStoreReceipt failed:', receiptErr?.message);
+    }
+
     return NextResponse.json({
       flock:          updated,
       eggRecord:      eggRecord,

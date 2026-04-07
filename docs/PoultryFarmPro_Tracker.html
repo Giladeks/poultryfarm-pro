@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>PoultryFarm Pro · Implementation Tracker Rev 1.3</title>
+<title>PoultryFarm Pro · Implementation Tracker Rev 1.5</title>
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
   body{background:#f0f4f8;font-family:'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:#0f172a;padding:0}
@@ -113,7 +113,7 @@
 <div class="banner">
   <div class="banner-top">
     <div>
-      <h1>🐔 PoultryFarm Pro <span>Implementation Tracker · Workplan Rev 1.2 · March 2026</span></h1>
+      <h1>🐔 PoultryFarm Pro <span>Implementation Tracker · Workplan Rev 1.5 · April 2026</span></h1>
       <div class="banner-meta">Multi-tenant poultry ERP · Next.js 16 · Prisma 5.22 · PostgreSQL · JWT · Recharts</div>
     </div>
     <div class="overall-pill">
@@ -134,9 +134,11 @@
         <li>Phases 1–7 <span class="tag tag-done">DONE</span> — Full foundation, finance, billing, audit</li>
         <li>Phase 8A <span class="tag tag-done">DONE</span> — Operation mode selector</li>
         <li>Phase 8B <span class="tag tag-done">DONE</span> — All dashboards, worker page, daily summaries, task generation, spot-checks, feed requisition workflow, IC override, statistical alerts</li>
-        <li>Phase 8G <span class="tag tag-active">PARTIAL</span> — Code-based templates done; task_templates DB model + admin UI pending</li>
         <li>Phase 8C <span class="tag tag-done">DONE</span> — Brooding / Rearing / Production lifecycle</li>
-        <li>Phase 8D <span class="tag tag-next">NEXT</span> — Layer Production Module Refactor</li>
+        <li>Phase 8D <span class="tag tag-done">DONE</span> — Layer Production Module: /production/layers, HH rate, feed cost/crate, persistence curve, ISA Brown overlay, per-flock lines, peak week, cull trigger, mortality chart</li>
+        <li>Phase 8G <span class="tag tag-active">PARTIAL</span> — Code-based templates done; task_templates DB model + admin UI pending</li>
+        <li>Phase 10-NEW-A <span class="tag tag-active">ACTIVE</span> — Egg Store Receipt Acknowledgement: full dispute/recount/force-accept flow, egg_inventory_balance, /egg-store page deployed</li>
+        <li>Phase 8-Supplement <span class="tag tag-next">NEXT SPRINT</span> — Flock Depletion &amp; Culling (after 8D, before 8E)</li>
       </ul>
     </div>
     <div class="ctx-block">
@@ -189,13 +191,16 @@
 
 <script>
 // ─────────────────────────────────────────────────────────────────────────────
-// WORKPLAN DATA — Rev 1.2 (March 2026)
-// Rev 1.2 changes vs Rev 1.1:
-//   • Phase 8B — phaseStatus changed active→done (all items confirmed shipped per MEMORY.md)
-//   • Phase 8G — phaseStatus stays active; "Remaining" tasks clarified as correctly planned
-//   • Context box updated: Phase 8G now shown as PARTIAL (not DONE)
-//   • Critical constraints list expanded (tenantId scope, schema edit rule)
-//   • Tracker version bumped Rev 1.1 → 1.2
+// WORKPLAN DATA — Rev 1.5 (April 2026)
+// Rev 1.5 changes vs Rev 1.4:
+//   • Phase 8D — phaseStatus next→done (all tasks completed this session)
+//   • Phase 8D — ISA Brown curve overlay + per-flock lines added as done task
+//   • Phase 10-NEW — phaseStatus new→active; sub-group 10-NEW-A added with done tasks
+//   • Context box updated: 8D → DONE, 10-NEW-A → ACTIVE, 8-Supplement → NEXT
+//   • Storage key bumped v14→v15
+//   • Phase 8-Supplement repositioned: now scheduled AFTER 8D and BEFORE 8E
+//     Rationale: lifecycle-summary P&L requires 8D layer analytics to be meaningful;
+//     depletion/pen-clearance infrastructure must exist before 8E broiler harvest flow
 // status: "done" | "active" | "next" | "planned" | "new" | "future"
 // ─────────────────────────────────────────────────────────────────────────────
 const phases = [
@@ -324,7 +329,7 @@ const phases = [
     ]}
   ]},
 
-  // ── Rev 1.2 change: phaseStatus active→done (all items confirmed shipped in MEMORY.md) ──
+  // ── Rev 1.3 change: phaseStatus active→done (all items confirmed shipped in MEMORY.md) ──
   { id:"p8b", name:"Phase 8B · Production Dashboards & Worker Experience", phaseStatus:"done", groups:[
     { name:"Core Dashboards & Worker Page", tasks:[
       { t:"Main dashboard — all 11 roles fully implemented (app/dashboard/page.js)", s:"done"},
@@ -367,18 +372,6 @@ const phases = [
       { t:"Notifications page (app/notifications/page.js, app/api/notifications/route.js)", s:"done"},
       { t:"Profile / Avatar (app/profile/page.js, app/api/profile/)", s:"done"},
       { t:"Investigation workflow (app/api/investigations/)", s:"done"}
-    ]}
-  ]},
-
-  { id:"p8supp", name:"Phase 8-Supplement · Flock Lifecycle — Depletion & Culling", phaseStatus:"planned", groups:[
-    { name:"API Routes", tasks:[
-      { t:"POST /api/flocks/[id]/cull — partial cull, update currentCount", s:"planned"},
-      { t:"POST /api/flocks/[id]/deplete — full depletion (SOLD/CULLED/DIED), mark DEPLETED", s:"planned"},
-      { t:"GET /api/flocks/[id]/lifecycle-summary — final flock P&L", s:"planned"}
-    ]},
-    { name:"Workflow", tasks:[
-      { t:"Depletion summary report: chick cost, feed cost, medication cost, revenue", s:"planned"},
-      { t:"Pen clearance confirmation — section becomes VACANT, auto-triggers cleaning task", s:"planned"}
     ]}
   ]},
 
@@ -433,16 +426,32 @@ const phases = [
     ]}
   ]},
 
-  { id:"p8d", name:"Phase 8D · Layer Production Module Refactor", phaseStatus:"next", groups:[
+  { id:"p8d", name:"Phase 8D · Layer Production Module Refactor", phaseStatus:"done", groups:[
     { name:"Features", tasks:[
-      { t:"Dedicated /production/layers replacing current performance page", s:"planned"},
-      { t:"Hen-housed production rate % (not just laying rate)", s:"planned"},
-      { t:"Feed cost per dozen eggs KPI", s:"planned"},
-      { t:"Laying persistence curve vs flock age in weeks", s:"planned"},
-      { t:"Peak production week detection, post-peak decline rate", s:"planned"},
-      { t:"Cull recommendation trigger: feed cost/dozen > revenue/dozen for 2+ weeks", s:"planned"},
-      { t:"Morning (08:00) and afternoon (16:00) batch tracking as independent records", s:"planned"},
-      { t:"Cumulative mortality vs age chart", s:"planned"}
+      { t:"Dedicated /production/layers replacing current performance page", s:"done"},
+      { t:"Hen-housed production rate % (not just laying rate)", s:"done"},
+      { t:"Feed cost per dozen eggs KPI", s:"done"},
+      { t:"Laying persistence curve vs flock age in weeks", s:"done"},
+      { t:"Peak production week detection, post-peak decline rate", s:"done"},
+      { t:"Cull recommendation trigger: feed cost/dozen > revenue/dozen for 2+ weeks", s:"done"},
+      { t:"Morning (08:00) and afternoon (16:00) batch tracking as independent records", s:"done"},
+      { t:"Cumulative mortality vs age chart", s:"done"},
+      { t:"ISA Brown commercial laying rate standard overlay + per-flock curve lines on production chart", s:"done"},
+      { t:"Settings Farm Profile — Production & Pricing section (feedBagWeightKg, Grade A/B sale prices per crate)", s:"done"},
+      { t:"Layer Analytics page role-gated to Farm Admin and above (FM excluded — operational focus only)", s:"done"}
+    ]}
+  ]},
+
+  // ── 8-Supplement scheduled here: after 8D (layer analytics ready) and before 8E (broiler harvest needs pen clearance) ──
+  { id:"p8supp", name:"Phase 8-Supplement · Flock Lifecycle — Depletion & Culling", phaseStatus:"next", groups:[
+    { name:"API Routes", tasks:[
+      { t:"POST /api/flocks/[id]/cull — partial cull, update currentCount", s:"planned"},
+      { t:"POST /api/flocks/[id]/deplete — full depletion (SOLD/CULLED/DIED), mark DEPLETED", s:"planned"},
+      { t:"GET /api/flocks/[id]/lifecycle-summary — final flock P&L", s:"planned"}
+    ]},
+    { name:"Workflow", tasks:[
+      { t:"Depletion summary report: chick cost, feed cost, medication cost, revenue", s:"planned"},
+      { t:"Pen clearance confirmation — section becomes VACANT, auto-triggers cleaning task", s:"planned"}
     ]}
   ]},
 
@@ -468,7 +477,7 @@ const phases = [
     ]}
   ]},
 
-  // ── Rev 1.2 note: Phase 8G — code-based templates ARE done; DB model + admin UI still pending ──
+  // ── Rev 1.3 note: Phase 8G — code-based templates ARE done; DB model + admin UI still pending ──
   // phaseStatus remains "active" — phase is partially shipped
   { id:"p8g", name:"Phase 8G · Worker Task Templates System", phaseStatus:"active", groups:[
     { name:"Completed (Shipped in 8B)", tasks:[
@@ -533,14 +542,35 @@ const phases = [
     { name:"10.6 API Routes", tasks:[{ t:"/api/processing/intake, /batches, /storage, /dispatch, /temperature", s:"planned"}]}
   ]},
 
-  { id:"p10n", name:"Phase 10-NEW · Egg Handling & Inventory", phaseStatus:"new", groups:[
-    { name:"Core", tasks:[
-      { t:"Egg store inventory by grade (A/B/cracked) with FIFO lot tracking", s:"new"},
-      { t:"FIFO spoilage tracking — alert when eggs exceed shelf life", s:"new"},
-      { t:"Crate tracking — issue to customers, returns, deposit management", s:"new"},
-      { t:"Egg cleaning records (washing, sanitisation log per batch)", s:"new"},
-      { t:"Sales integration — deduct from egg inventory on confirmed sale", s:"new"},
-      { t:"DB model: egg_inventory with FIFO lots", s:"new"}
+  { id:"p10n", name:"Phase 10-NEW · Egg Handling & Inventory", phaseStatus:"active", groups:[
+    { name:"10-NEW-A · Store Receipt Acknowledgement (DONE)", tasks:[
+      { t:"SQL migration: egg_store_receipts table — status lifecycle PENDING→ACKNOWLEDGED/DISPUTED/FORCE_ACCEPTED/RECOUNT_REQUESTED", s:"done"},
+      { t:"SQL migration: egg_inventory_balance table — daily per-pen balance with generated total columns", s:"done"},
+      { t:"prisma db pull + schema.prisma — egg_store_receipts and egg_inventory_balance models + all FeedRequisition relations fixed", s:"done"},
+      { t:"GET /api/egg-store — receipts grouped by pen+session for card view, role-scoped", s:"done"},
+      { t:"PATCH /api/egg-store/[id] — acknowledge, dispute, withdraw, force_accept, request_recount actions", s:"done"},
+      { t:"GET /api/egg-store/inventory — current balance per pen + per-pen daily history", s:"done"},
+      { t:"app/api/eggs/[id]/route.js — autoCreateStoreReceipt() on PM grading and PM override", s:"done"},
+      { t:"app/api/rearing/[id]/advance/route.js — autoCreateStoreReceipt() on first egg collection (Advance to Production)", s:"done"},
+      { t:"/egg-store page — dedicated page with KPI cards, tabs, pen+session group cards, per-section rows with worker name badge", s:"done"},
+      { t:"Dispute flow — Store disputes → IC force-accepts or requests recount → PM re-grades → Store re-acknowledges", s:"done"},
+      { t:"Recount flow — resets eggProduction + Verification to PENDING, PM sees record in verification queue", s:"done"},
+      { t:"egg_inventory_balance updates atomically on acknowledge and force-accept with inventoryUpdated flag guard", s:"done"},
+      { t:"AppShell nav — Egg Store entry (Package icon, LAYER_ONLY/BOTH, Store/IC/FM roles)", s:"done"},
+      { t:"middleware.js — /egg-store route protection", s:"done"}
+    ]},
+    { name:"10-NEW-B · Inventory Display (Planned)", tasks:[
+      { t:"Egg inventory balance widget on Store Manager dashboard", s:"planned"},
+      { t:"Egg inventory balance surface on Layer Analytics page (/production/layers)", s:"planned"},
+      { t:"IC/Audit page — egg receipts section (disputed + unacknowledged >12hr)", s:"planned"},
+      { t:"Nav badge count for Egg Store (live pending count)", s:"planned"}
+    ]},
+    { name:"10-NEW-C · Full Inventory (Planned)", tasks:[
+      { t:"FIFO lot tracking — each acknowledged batch becomes a dated lot", s:"planned"},
+      { t:"FIFO spoilage tracking — alert when eggs exceed shelf life", s:"planned"},
+      { t:"Crate tracking — issue to customers, returns, deposit management", s:"planned"},
+      { t:"Egg cleaning records (washing, sanitisation log per batch)", s:"planned"},
+      { t:"Sales integration — deduct from egg_inventory_balance on confirmed sales order", s:"planned"}
     ]}
   ]},
 
@@ -642,7 +672,7 @@ const phases = [
 // ─────────────────────────────────────────────────────────────────────────────
 // STATE
 // ─────────────────────────────────────────────────────────────────────────────
-const STORAGE_KEY = "pfp_tracker_v12"; // bumped from v11 to reset on load
+const STORAGE_KEY = "pfp_tracker_v15"; // bumped to v15 — 8D done, 10-NEW-A active (Rev 1.5)
 let checkState = null; // [phaseIdx][groupIdx][taskIdx] = bool
 let activeFilter = "all";
 let allExpanded = false;
@@ -830,7 +860,14 @@ function resetAll() {
 // BOOT
 // ─────────────────────────────────────────────────────────────────────────────
 initState();
-render();
+try {
+  render();
+} catch(e) {
+  document.getElementById('phasesContainer').innerHTML =
+    '<div style="padding:2rem;color:#dc2626;font-weight:700;font-size:14px;">' +
+    '⚠ Render error: ' + e.message + '<br><small style=\"font-weight:400\">' + e.stack + '</small></div>';
+  console.error('Tracker render error:', e);
+}
 </script>
 </body>
 </html>

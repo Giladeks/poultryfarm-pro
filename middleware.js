@@ -28,8 +28,11 @@ const ROLE_ROUTES = {
   '/eggs':           ['PEN_WORKER', 'PEN_MANAGER', 'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'],
   '/mortality':      ['PEN_WORKER', 'PEN_MANAGER', 'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'],
   '/reports':        ['PEN_MANAGER', 'FARM_MANAGER', 'FARM_ADMIN', 'STORE_MANAGER', 'CHAIRPERSON', 'SUPER_ADMIN'],
-  '/audit':          ['FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'],
-  '/verification':   ['FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'PEN_MANAGER', 'STORE_MANAGER', 'SUPER_ADMIN'],
+  '/audit':              ['FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'],
+  '/verification':       ['FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'PEN_MANAGER', 'STORE_MANAGER', 'SUPER_ADMIN'],
+  '/production/layers':  ['FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'],
+  '/production/broilers':['FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'],
+  '/egg-store':          ['STORE_MANAGER', 'STORE_CLERK', 'INTERNAL_CONTROL', 'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'],
 };
 
 // Default landing page per role

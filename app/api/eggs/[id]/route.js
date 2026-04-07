@@ -106,7 +106,20 @@ async function handleOverride(id, body, user) {
       id,
       flock: { penSection: { pen: { farm: { tenantId: user.tenantId } } } },
     },
-    include: { flock: { select: { currentCount: true } } },
+    include: {
+      flock: {
+        select: {
+          currentCount: true,
+          batchCode:    true,   // needed for egg_store_receipt.batchCode
+        },
+      },
+      penSection: {
+        select: {
+          id:    true,
+          penId: true,          // needed for egg_store_receipt.penId
+        },
+      },
+    },
   });
 
   if (!record)
@@ -198,6 +211,17 @@ async function handleOverride(id, body, user) {
 
   await upsertVerification(id, user, now);
 
+  // Auto-create egg store receipt — override also sets APPROVED so store must acknowledge
+  // gradeACount/gradeBCount are null after override (PM must re-grade),
+  // so we pass 0 for grade counts — the receipt will update when PM re-grades
+  // Note: override clears grading so gradeACount = 0 until PM grades again.
+  // The receipt is created as a placeholder; inventory only updates on acknowledgement.
+  await autoCreateStoreReceipt(
+    { ...record, totalEggs: newTotal },
+    0, 0, data.crackedCount,
+    user
+  );
+
   return NextResponse.json({
     record: updated,
     override: { originalValues, overriddenValues, reason: data.overrideReason },
@@ -287,7 +311,20 @@ async function handleGrading(id, body, user) {
       id,
       flock: { penSection: { pen: { farm: { tenantId: user.tenantId } } } },
     },
-    include: { flock: { select: { currentCount: true } } },
+    include: {
+      flock: {
+        select: {
+          currentCount: true,
+          batchCode:    true,   // needed for egg_store_receipt.batchCode
+        },
+      },
+      penSection: {
+        select: {
+          id:    true,
+          penId: true,          // needed for egg_store_receipt.penId
+        },
+      },
+    },
   });
 
   if (!record)
@@ -361,6 +398,9 @@ async function handleGrading(id, body, user) {
   // Create or update a Verification record (VERIFIED) for this egg record
   await upsertVerification(id, user, now);
 
+  // Auto-create egg store receipt so Store Manager can acknowledge delivery
+  await autoCreateStoreReceipt(record, gradeACount, gradeBCount, crackedConfirmed, user);
+
   await prisma.auditLog.create({
     data: {
       tenantId:   user.tenantId,
@@ -430,5 +470,140 @@ async function upsertVerification(referenceId, user, now) {
   } catch (err) {
     // Non-fatal — grading already succeeded; log for visibility
     console.error('[upsertVerification] Failed to create verification record:', err?.message);
+  }
+}
+
+// ── Helper: auto-create egg_store_receipt when PM grades/approves ─────────────
+// Called after PM grading and PM override — creates a PENDING receipt so the
+// Store Manager can acknowledge delivery on the /egg-store page.
+// Non-fatal: grading already succeeded if this fails.
+// Uses $queryRawUnsafe — egg_store_receipts is a snake_case table.
+async function autoCreateStoreReceipt(record, gradeACount, gradeBCount, crackedConfirmed, user) {
+  try {
+    const penId = record.penSection?.penId;
+    if (!penId) {
+      console.error('[autoCreateStoreReceipt] Could not resolve penId for section', record.penSectionId);
+      return;
+    }
+
+    // Resolve the active pen worker for this section (most recently assigned)
+    const workerAssignment = await prisma.penWorkerAssignment.findFirst({
+      where:   { penSectionId: record.penSectionId, isActive: true },
+      select:  { userId: true },
+      orderBy: { assignedAt: 'desc' },
+    });
+
+    // Derive crate breakdown from grade counts
+    const gradeACrates = Math.floor(gradeACount / 30);
+    const gradeALoose  = gradeACount % 30;
+    const gradeBCrates = Math.floor(gradeBCount / 30);
+    const gradeBLoose  = gradeBCount % 30;
+    const totalEggs    = gradeACount + gradeBCount + crackedConfirmed;
+
+    // ON CONFLICT:
+    //   - If receipt is RECOUNT_REQUESTED → update with new graded counts, reset to PENDING
+    //     so Store Manager sees it again in the Awaiting Receipt queue
+    //   - Any other status → do nothing (idempotent, preserves existing receipt state)
+    await prisma.$queryRawUnsafe(`
+      INSERT INTO egg_store_receipts (
+        "tenantId",
+        "eggProductionId",
+        "penSectionId",
+        "penId",
+        "collectionDate",
+        "collectionSession",
+        "flockId",
+        "batchCode",
+        "gradedGradeACrates",
+        "gradedGradeALoose",
+        "gradedGradeACount",
+        "gradedGradeBCrates",
+        "gradedGradeBLoose",
+        "gradedGradeBCount",
+        "gradedCrackedCount",
+        "gradedTotalEggs",
+        "deliveredById",
+        "status"
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8,
+        $9, $10, $11, $12, $13, $14, $15, $16,
+        $17, 'PENDING'
+      )
+      ON CONFLICT ("eggProductionId") DO UPDATE SET
+        -- Only update when IC has requested a recount — PM has now re-graded
+        "gradedGradeACrates"  = CASE WHEN egg_store_receipts."status" = 'RECOUNT_REQUESTED'
+                                     THEN EXCLUDED."gradedGradeACrates"
+                                     ELSE egg_store_receipts."gradedGradeACrates" END,
+        "gradedGradeALoose"   = CASE WHEN egg_store_receipts."status" = 'RECOUNT_REQUESTED'
+                                     THEN EXCLUDED."gradedGradeALoose"
+                                     ELSE egg_store_receipts."gradedGradeALoose" END,
+        "gradedGradeACount"   = CASE WHEN egg_store_receipts."status" = 'RECOUNT_REQUESTED'
+                                     THEN EXCLUDED."gradedGradeACount"
+                                     ELSE egg_store_receipts."gradedGradeACount" END,
+        "gradedGradeBCrates"  = CASE WHEN egg_store_receipts."status" = 'RECOUNT_REQUESTED'
+                                     THEN EXCLUDED."gradedGradeBCrates"
+                                     ELSE egg_store_receipts."gradedGradeBCrates" END,
+        "gradedGradeBLoose"   = CASE WHEN egg_store_receipts."status" = 'RECOUNT_REQUESTED'
+                                     THEN EXCLUDED."gradedGradeBLoose"
+                                     ELSE egg_store_receipts."gradedGradeBLoose" END,
+        "gradedGradeBCount"   = CASE WHEN egg_store_receipts."status" = 'RECOUNT_REQUESTED'
+                                     THEN EXCLUDED."gradedGradeBCount"
+                                     ELSE egg_store_receipts."gradedGradeBCount" END,
+        "gradedCrackedCount"  = CASE WHEN egg_store_receipts."status" = 'RECOUNT_REQUESTED'
+                                     THEN EXCLUDED."gradedCrackedCount"
+                                     ELSE egg_store_receipts."gradedCrackedCount" END,
+        "gradedTotalEggs"     = CASE WHEN egg_store_receipts."status" = 'RECOUNT_REQUESTED'
+                                     THEN EXCLUDED."gradedTotalEggs"
+                                     ELSE egg_store_receipts."gradedTotalEggs" END,
+        -- Reset status to PENDING and clear dispute/resolution fields
+        "status"              = CASE WHEN egg_store_receipts."status" = 'RECOUNT_REQUESTED'
+                                     THEN 'PENDING'
+                                     ELSE egg_store_receipts."status" END,
+        "disputeNotes"        = CASE WHEN egg_store_receipts."status" = 'RECOUNT_REQUESTED'
+                                     THEN NULL
+                                     ELSE egg_store_receipts."disputeNotes" END,
+        "disputedById"        = CASE WHEN egg_store_receipts."status" = 'RECOUNT_REQUESTED'
+                                     THEN NULL
+                                     ELSE egg_store_receipts."disputedById" END,
+        "disputedAt"          = CASE WHEN egg_store_receipts."status" = 'RECOUNT_REQUESTED'
+                                     THEN NULL
+                                     ELSE egg_store_receipts."disputedAt" END,
+        "resolvedById"        = CASE WHEN egg_store_receipts."status" = 'RECOUNT_REQUESTED'
+                                     THEN NULL
+                                     ELSE egg_store_receipts."resolvedById" END,
+        "resolvedAt"          = CASE WHEN egg_store_receipts."status" = 'RECOUNT_REQUESTED'
+                                     THEN NULL
+                                     ELSE egg_store_receipts."resolvedAt" END,
+        "resolutionAction"    = CASE WHEN egg_store_receipts."status" = 'RECOUNT_REQUESTED'
+                                     THEN NULL
+                                     ELSE egg_store_receipts."resolutionAction" END,
+        "resolutionNotes"     = CASE WHEN egg_store_receipts."status" = 'RECOUNT_REQUESTED'
+                                     THEN NULL
+                                     ELSE egg_store_receipts."resolutionNotes" END,
+        "updatedAt"           = CASE WHEN egg_store_receipts."status" = 'RECOUNT_REQUESTED'
+                                     THEN NOW()
+                                     ELSE egg_store_receipts."updatedAt" END
+    `,
+      user.tenantId,
+      record.id,
+      record.penSectionId,
+      penId,
+      record.collectionDate,
+      record.collectionSession,
+      record.flockId,
+      record.flock.batchCode,
+      gradeACrates,
+      gradeALoose,
+      gradeACount,
+      gradeBCrates,
+      gradeBLoose,
+      gradeBCount,
+      crackedConfirmed,
+      totalEggs,
+      workerAssignment?.userId || null,
+    );
+
+  } catch (err) {
+    console.error('[autoCreateStoreReceipt] Failed:', err?.message);
   }
 }

@@ -28,7 +28,7 @@ import {
 const ICON_MAP = {
   LayoutDashboard, Building2, Egg, ClipboardList, ClipboardCheck, Bird,
   TrendingUp, Scale, Factory, Syringe, Wheat, Cog,
-  CheckSquare, DollarSign, Search, Drumstick,
+  CheckSquare, DollarSign, Search, Drumstick, Package,
 };
 // Group header icons (not from string map — referenced directly)
 const LayersIcon    = Sun;       // Layer group
@@ -100,7 +100,7 @@ const NAV_ITEMS = [
   },
   {
     href: '/production/layers', icon: 'TrendingUp', label: 'Layer Analytics', section: 'layer',
-    roles: MANAGER_UP_ROLES,
+    roles: ['FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'], // FARM_MANAGER excluded — financial analytics is Farm Admin and above
     opModes: ['LAYER_ONLY', 'BOTH'],
   },
 
@@ -134,6 +134,11 @@ const NAV_ITEMS = [
   {
     href: '/feed-requisitions', icon: 'ClipboardList', label: 'Feed Requisitions', section: 'shared',
     roles: ['PEN_MANAGER','STORE_MANAGER','INTERNAL_CONTROL','FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN'],
+  },
+  {
+    href: '/egg-store', icon: 'Package', label: 'Egg Store', section: 'shared',
+    roles: ['STORE_MANAGER','STORE_CLERK','INTERNAL_CONTROL','FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN'],
+    opModes: ['LAYER_ONLY', 'BOTH'],
   },
   {
     href: '/feed-mill', icon: 'Cog', label: 'Feed Mill', section: 'shared',

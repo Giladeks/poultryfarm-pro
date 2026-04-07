@@ -481,10 +481,40 @@ export default function EggsPage() {
 
   const todayEggs   = productionLayers.reduce((a, s) => a + (s.metrics?.todayEggs || 0), 0);
   const weekEggs    = productionLayers.reduce((a, s) => a + (s.metrics?.weekEggs || 0), 0);
-  // avgRate computed from total eggs / total birds (not avg of per-section rates)
-  const avgRate     = prodBirds > 0 ? parseFloat((todayEggs / prodBirds * 100).toFixed(1)) : null;
+
+  // avgRate: use chartData's most recent day (correctly aggregates all sessions for that date
+  // from the filtered records) rather than todayEggs from metrics (which always reflects
+  // today's live count — wrong when Yesterday is selected, and also only counts one session).
+  // Fall back to todayEggs from metrics if chartData is empty (e.g. page just loaded).
+  const lastChartDay  = chartData.length > 0 ? chartData[chartData.length - 1] : null;
+  const periodEggs    = lastChartDay?.totalEggs ?? 0;
+  const avgRate       = prodBirds > 0
+    ? parseFloat(((periodEggs > 0 ? periodEggs : todayEggs) / prodBirds * 100).toFixed(1))
+    : null;
+  // periodEggsDisplay: what to show in the "Eggs Today/Yesterday" KPI
+  const periodEggsDisplay = periodEggs > 0 ? periodEggs : todayEggs;
+  const eggsKpiLabel      = days === YESTERDAY_DAYS ? 'Eggs Yesterday' : 'Eggs Today';
+  const layRateKpiLabel   = days === YESTERDAY_DAYS ? 'Lay Rate (Yesterday)' : 'Lay Rate (Today)';
   const gradeASecns = productionLayers.filter(s => (s.metrics?.todayGradeAPct || 0) > 0);
-  const gradeAPct   = gradeASecns.length ? parseFloat((gradeASecns.reduce((a, s) => a + (s.metrics?.todayGradeAPct || 0), 0) / gradeASecns.length).toFixed(1)) : null;
+  // gradeAPct: derive from chartData's last day records rather than metrics.todayGradeAPct
+  // metrics.todayGradeAPct always reflects today — wrong when Yesterday is selected.
+  // Use the filtered records for the selected period to compute Grade A %.
+  const periodRecords = days === YESTERDAY_DAYS
+    ? records.filter(r => {
+        const d = new Date(r.collectionDate).toISOString().slice(0, 10);
+        const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+        return d === yesterday;
+      })
+    : records;
+  const periodGradeACount  = periodRecords.reduce((a, r) => a + (r.gradeACount  || 0), 0);
+  const periodTotalEggs    = periodRecords.reduce((a, r) => a + (r.totalEggs    || 0), 0);
+  const periodGradedCount  = periodRecords.filter(r => r.gradeACount != null).length;
+  // Only show Grade A % if at least one record in the period has been graded
+  const gradeAPct = periodGradedCount > 0 && periodTotalEggs > 0
+    ? parseFloat((periodGradeACount / periodTotalEggs * 100).toFixed(1))
+    : (gradeASecns.length > 0
+        ? parseFloat((gradeASecns.reduce((a, s) => a + (s.metrics?.todayGradeAPct || 0), 0) / gradeASecns.length).toFixed(1))
+        : null);
   const prodWaterSecns = productionLayers.filter(s => s.metrics?.avgWaterLPB != null);
   const prodAvgWater   = prodWaterSecns.length ? parseFloat((prodWaterSecns.reduce((a, s) => a + (s.metrics?.avgWaterLPB || 0), 0) / prodWaterSecns.length).toFixed(2)) : null;
   const prodAvgAge  = productionLayers.length ? Math.round(productionLayers.reduce((a, s) => a + (s.ageInDays || 365), 0) / productionLayers.length) : 365;
@@ -596,14 +626,14 @@ export default function EggsPage() {
           : prodFeedGpbToday < feedBenchmarkGpb * 0.85 ? 'Below recommended level' : 'Above recommended level')
         : 'No feed logged yet today',
       status: feedStatus(prodFeedGpbToday) },
-    { icon:'📊', label:'Lay Rate (Today)',
+    { icon:'📊', label:layRateKpiLabel,
       value:avgRate!=null?`${avgRate}%`:'—', sub:'Target 82%',
       delta:avgRate!=null?(avgRate>=82?`+${(avgRate-82).toFixed(1)}% above target`:`${(avgRate-82).toFixed(1)}% below target`):'No data yet',
       status:avgRate!=null?layRateStatus(avgRate):'neutral' },
-    { icon:'🥚', label:'Eggs Today', value:fmt(todayEggs),
+    { icon:'🥚', label:eggsKpiLabel, value:fmt(periodEggsDisplay),
       sub:`7d total ${fmt(weekEggs)}`,
-      delta:todayEggs>0?`${fmt(todayEggs)} collected today`:'None recorded yet',
-      status:todayEggs>0?'good':'neutral' },
+      delta:periodEggsDisplay>0?`${fmt(periodEggsDisplay)} collected`:'None recorded yet',
+      status:periodEggsDisplay>0?'good':'neutral' },
     { icon:'⭐', label:'Grade A Rate',
       value:gradeAPct!=null?`${gradeAPct}%`:'—', sub:'Target ≥85%',
       delta:gradeAPct!=null?(gradeAPct>=85?`+${(gradeAPct-85).toFixed(1)}% above target`:`${(gradeAPct-85).toFixed(1)}% below target`):'No data yet',
@@ -748,10 +778,10 @@ export default function EggsPage() {
                       sub={`Week ${Math.floor((rearAvgAge||0)/7)} of rearing`} color="var(--blue)"/>
                   </>);
                 })() : (<>
-                  <KpiCard icon="🥚" label="Total Eggs"      value={fmt(summary.totalEggs)}           sub={`last ${days} days`}              color="var(--amber)"/>
-                  <KpiCard icon="📊" label="Avg Laying Rate" value={`${summary.avgLayingRate||0}%`}   sub="of active birds"                  color={Number(summary.avgLayingRate)>=80?'var(--green)':'var(--amber)'}/>
-                  <KpiCard icon="⭐" label="Grade A"         value={fmt(summary.totalGradeA)}         sub={`${gradeAPct2(summary)}% of total`} color="var(--green)"/>
-                  <KpiCard icon="🧺" label="Total Crates"    value={fmt(summary.totalCrates)}         sub="30 eggs per crate"                color="var(--purple)"/>
+                  <KpiCard icon="🥚" label="Total Eggs"      value={fmt(periodTotalEggs || summary.totalEggs)} sub={`last ${days === YESTERDAY_DAYS ? 1 : days} days`}  color="var(--amber)"/>
+                  <KpiCard icon="📊" label="Avg Laying Rate" value={avgRate!=null?`${avgRate}%`:`${summary.avgLayingRate||0}%`} sub="of active birds" color={Number(avgRate??summary.avgLayingRate)>=80?'var(--green)':'var(--amber)'}/>
+                  <KpiCard icon="⭐" label="Grade A"         value={fmt(periodGradeACount || summary.totalGradeA)} sub={`${gradeAPct!=null?gradeAPct:gradeAPct2(summary)}% of total`} color="var(--green)"/>
+                  <KpiCard icon="🧺" label="Total Crates"    value={fmt(periodRecords.reduce((a,r)=>a+(r.cratesCollected||0),0) || summary.totalCrates)} sub="30 eggs per crate" color="var(--purple)"/>
                   <KpiCard icon="🌾" label="Daily Feed Avg"
                     value={avgDailyFeedKg ? `${avgDailyFeedKg} kg` : '—'}
                     sub={(() => {
@@ -976,7 +1006,7 @@ export default function EggsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {[...annotatedRecords].reverse().map(r => (
+                  {annotatedRecords.map(r => (
                     <tr key={r.id} style={{ background: r.rejectionReason ? '#fff5f5' : undefined }}>
                       <td style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>
                         {fmtDate(r.collectionDate)}
