@@ -1674,6 +1674,18 @@ function PenManagerDashboard({ pens, tasks, user, apiFetch, showYesterday }) {
 }
 
 // ── Operation KPI block (Farm Manager / Admin) — cards always visible ────────
+// Compact stat for the rearing/brooding awareness strip
+function StripStat({ label, value, note, status }) {
+  const color = status==='good'?'#16a34a':status==='warn'?'#d97706':status==='critical'?'#dc2626':'#166534';
+  return (
+    <div style={{display:'flex',flexDirection:'column',gap:1}}>
+      <span style={{fontSize:10,fontWeight:700,textTransform:'uppercase',letterSpacing:'.05em',color:'#4b7a5c'}}>{label}</span>
+      <span style={{fontSize:13,fontWeight:800,color}}>{typeof value==='number'?value.toLocaleString('en-NG'):value}</span>
+      {note && <span style={{fontSize:10,color:'#166534'}}>{note}</span>}
+    </div>
+  );
+}
+
 function OpKpiBlock({ title, opIcon, isLayer, cards }) {
   const crit = cards.filter(c=>c.status==='critical').length;
   const warn = cards.filter(c=>c.status==='warn').length;
@@ -1945,9 +1957,9 @@ function ManagerDashboard({ pens, orgTotals, user, apiFetch , showYesterday }) {
   const router       = useRouter();
   const [navTarget, setNavTarget]       = useState(null); // { penId, sectionName, opType }
 
-  const alerts    = pens.filter(p => p.alertLevel !== 'ok').length;
+  const alerts      = pens.filter(p => p.alertLevel !== 'ok').length;
   const isFarmAdmin = user?.role === 'FARM_ADMIN';
-  const roleLabel = { FARM_MANAGER:'Farm Manager', FARM_ADMIN:'Farm Admin', CHAIRPERSON:'Chairperson', SUPER_ADMIN:'Super Admin' }[user?.role] || user?.role || '';
+  const roleLabel   = { FARM_MANAGER:'Farm Manager', FARM_ADMIN:'Farm Admin', CHAIRPERSON:'Chairperson', SUPER_ADMIN:'Super Admin' }[user?.role] || user?.role || '';
 
   const layerPens   = pens.filter(p => p.operationType === 'LAYER');
   const broilerPens = pens.filter(p => p.operationType === 'BROILER');
@@ -1968,22 +1980,59 @@ function ManagerDashboard({ pens, orgTotals, user, apiFetch , showYesterday }) {
     { key: 'BROILER', icon: '🍗', label: 'Broiler Operations', count: broilerPens.length },
   ].filter(t => t.count > 0);
 
-  // ── Layer aggregates ─────────────────────────────────────────────────────────
+  // ── Layer aggregates — split by stage at SECTION level ─────────────────────
+  // Stage splitting uses section-level data to correctly exclude rearing birds
+  // from the lay rate denominator. Egg/grade/water metrics use pen-level aggregates
+  // which are pre-computed by the API and reliably populated for yesterday mode too.
   const lPens     = layerPens;
-  const lBirds    = lPens.reduce((s,p)=>s+p.totalBirds,0);
-  const lEggs     = lPens.reduce((s,p)=>s+(p.metrics.todayEggs||0),0);
-  const lWeekEggs = lPens.reduce((s,p)=>s+(p.metrics.weekEggs||0),0);
-  const lDead7    = lPens.reduce((s,p)=>s+(p.metrics.weekMortality||0),0);
+  const allLayerSecs = lPens.flatMap(p => (p.sections || []).map(s => ({
+    ...s, penName: p.name,
+  })));
+  const getSectionStage = (s) => s.metrics?.stage || s.flock?.stage || 'PRODUCTION';
+  const prodLayerSecs    = allLayerSecs.filter(s => getSectionStage(s) === 'PRODUCTION' && (s.currentBirds || 0) > 0);
+  const rearingLayerSecs = allLayerSecs.filter(s => getSectionStage(s) === 'REARING'    && (s.currentBirds || 0) > 0);
+  const broodingLayerSecs= allLayerSecs.filter(s => getSectionStage(s) === 'BROODING'   && (s.currentBirds || 0) > 0);
+  const nonProdLayerSecs = [...rearingLayerSecs, ...broodingLayerSecs];
+
+  // Bird counts — section level (accurate stage split)
+  const lProdBirds = prodLayerSecs.reduce((s,sec)=>s+(sec.currentBirds||0),0);
+  const lAllBirds  = lPens.reduce((s,p)=>s+(p.totalBirds||0),0);
+  // Use pen-level bird count for total if section-level gives 0 (e.g. sections array empty)
+  const lBirds     = lProdBirds > 0 ? lProdBirds : Math.max(0, lAllBirds - nonProdLayerSecs.reduce((s,sec)=>s+(sec.currentBirds||0),0));
+
+  // Egg/grade/water metrics — use pen-level aggregates (reliably populated for yesterday mode)
+  const lEggs     = lPens.reduce((s,p)=>s+(p.metrics?.todayEggs||0),0);
+  const lWeekEggs = lPens.reduce((s,p)=>s+(p.metrics?.weekEggs||0),0);
+  const lDead7    = lPens.reduce((s,p)=>s+(p.metrics?.weekMortality||0),0);
   const lMortR    = lBirds>0 ? parseFloat(((lDead7/lBirds)*100).toFixed(2)) : 0;
-  // lAvgRate = today's total eggs / total birds across all layer pens
+  // Lay rate denominator = production birds only (excludes rearing/brooding)
   const lAvgRate  = lBirds > 0 ? parseFloat((lEggs / lBirds * 100).toFixed(1)) : 0;
-  const lRates    = lPens.filter(p=>(p.metrics.todayEggs||0)>0);
-  const lGAPens   = lPens.filter(p=>(p.metrics.todayGradeAPct||0)>0);
-  const lGradeA   = lGAPens.length ? parseFloat((lGAPens.reduce((s,p)=>s+(p.metrics.todayGradeAPct||0),0)/lGAPens.length).toFixed(1)) : null;
-  const lWaterPens  = lPens.filter(p => p.metrics.avgWaterLPB != null);
-  const lAvgWater   = lWaterPens.length ? parseFloat((lWaterPens.reduce((s,p)=>s+(p.metrics.avgWaterLPB||0),0)/lWaterPens.length).toFixed(2)) : null;
-  const lAvgAge     = lPens.length ? Math.round(lPens.reduce((s,p)=>s+(p.sections&&p.sections[0]?p.sections[0].ageInDays||180:180),0)/lPens.length) : 180;
+  const lRates    = lEggs > 0 ? [1] : [];
+
+  // Grade A — pen-level
+  const lGAPens   = lPens.filter(p=>(p.metrics?.todayGradeAPct||0)>0);
+  const lGradeA   = lGAPens.length ? parseFloat((lGAPens.reduce((s,p)=>s+(p.metrics?.todayGradeAPct||0),0)/lGAPens.length).toFixed(1)) : null;
+
+  // Water — pen-level
+  const lWaterPens  = lPens.filter(p=>p.metrics?.avgWaterLPB!=null);
+  const lAvgWater   = lWaterPens.length ? parseFloat((lWaterPens.reduce((s,p)=>s+(p.metrics?.avgWaterLPB||0),0)/lWaterPens.length).toFixed(2)) : null;
+  const lAvgAge     = prodLayerSecs.length ? Math.round(prodLayerSecs.reduce((s,sec)=>s+(sec.ageInDays||180),0)/prodLayerSecs.length) : 180;
   const lWaterBench = layerWaterBenchmark(lAvgAge);
+
+  // Rearing/brooding aggregate for compact awareness strip
+  const rearBirds    = nonProdLayerSecs.reduce((s,sec)=>s+(sec.currentBirds||0),0);
+  const rearDead7    = nonProdLayerSecs.reduce((s,sec)=>s+(sec.metrics?.weekMortality||0),0);
+  const rearMortR    = rearBirds>0 ? parseFloat(((rearDead7/rearBirds)*100).toFixed(2)) : 0;
+  const rearWtSecs   = nonProdLayerSecs.filter(sec=>sec.metrics?.latestWeightG!=null);
+  const rearAvgWtG   = rearWtSecs.length ? Math.round(rearWtSecs.reduce((s,sec)=>s+(sec.metrics.latestWeightG||0),0)/rearWtSecs.length) : null;
+  const rearAvgAge   = nonProdLayerSecs.length ? Math.round(nonProdLayerSecs.reduce((s,sec)=>s+(sec.ageInDays||0),0)/nonProdLayerSecs.length) : null;
+  const rearAvgWeeks = rearAvgAge != null ? Math.floor(rearAvgAge / 7) : null;
+  // ISA Brown weight target for rearing age
+  const isaRearTarget = rearAvgWeeks != null ? ([40,60,100,150,210,280,360,450,550,660,770,880,990,1100,1200,1290,1370,1440][Math.min(rearAvgWeeks,17)] || 1440) : null;
+  const rearWeightStatus = rearAvgWtG==null||isaRearTarget==null ? 'neutral'
+    : rearAvgWtG >= isaRearTarget * 0.95 ? 'good'
+    : rearAvgWtG >= isaRearTarget * 0.85 ? 'warn' : 'critical';
+  const hasNonProd = nonProdLayerSecs.length > 0;
 
   // ── Broiler aggregates ───────────────────────────────────────────────────────
   const bPens     = broilerPens;
@@ -2018,14 +2067,22 @@ function ManagerDashboard({ pens, orgTotals, user, apiFetch , showYesterday }) {
   }
 
   // ── Layer story: Total Birds → Lay Rate → Eggs Today → Grade A → Water → Mortality
+  // Only count pens that have production sections for the pen count label
+  const lProdPens = lPens.filter(p => (p.sections||[]).some(s => getSectionStage(s) === 'PRODUCTION'));
+  const eggsLabel = showYesterday ? 'Eggs Yesterday' : 'Eggs Today';
+  // Use weekEggs as lay rate source when no same-day eggs (yesterday mode or no collections today)
+  const lRateEggs = lEggs > 0 ? lEggs : lWeekEggs;
+  const lRateDays = lEggs > 0 ? 1 : 7;
+  const lAvgRateCalc = lBirds > 0 && lRateEggs > 0
+    ? parseFloat((lRateEggs / lRateDays / lBirds * 100).toFixed(1)) : 0;
   const layerCards = lPens.length ? [
-    { label:'Total Birds',    value: fmt(lBirds),                         sub: lPens.length + ' pen' + (lPens.length!==1?'s':''),                                         delta:'',                                                                                            trend:'stable', status:'neutral',                  icon:'🐦', context:'Layer flock'    },
-    { label:'Lay Rate',       value: lAvgRate>0 ? lAvgRate+'%' : '—',     sub: 'Target 82%',                                                                              delta:lAvgRate>0?(lAvgRate>=82?'+'+((lAvgRate-82).toFixed(1))+'% above target':((lAvgRate-82).toFixed(1))+'% below target'):'No data yet', trend:lAvgRate>=82?'up':lAvgRate>0?'down':'stable', status:lRates.length?layRateStatus(lAvgRate):'neutral', icon:'📊', context:'Performance' },
-    { label:'Eggs Today',     value: fmt(lEggs),                           sub: '7d total ' + fmt(lWeekEggs),                                                              delta:lEggs>0?fmt(lEggs)+' collected today':'None recorded yet',                                       trend:'stable', status:lEggs>0?'good':'neutral', icon:'🥚', context:'Output'         },
-    { label:'Grade A Rate',   value: lGradeA ? lGradeA+'%' : '—',         sub: 'Target ≥85%',                                                                        delta:lGradeA?(lGradeA>=85?'+'+((lGradeA-85).toFixed(1))+'% above target':((lGradeA-85).toFixed(1))+'% below target'):'No data yet', trend:lGradeA>=85?'up':'down', status:gradeAStatus(lGradeA), icon:'⭐', context:'Quality'       },
-    { label:'Water Intake',   value: lAvgWater ? lAvgWater+' L/bird' : '—', sub: 'Benchmark '+lWaterBench+' L/bird · age '+lAvgAge+'d',                                  delta:waterDelta(lAvgWater, lWaterBench),                                                               trend:lAvgWater?(lAvgWater>=lWaterBench*0.85?'up':'down'):'stable', status:lAvgWater?waterStatus(lAvgWater,lWaterBench):'neutral', icon:'💧', context:'Health signal' },
-    { label:'Mortality (7d)', value: fmt(lDead7),                          sub: lMortR+'% of flock',                                                                       delta:lMortR<=0.05?'Within normal range':lMortR<=0.15?'Slightly elevated':'Elevated — investigate', trend:lMortR<=0.05?'up':'down', status:mortalityStatus(lMortR), icon:'📉', context:'Health losses' },
-    ...(isFarmAdmin ? [{ label:'Est. Revenue (Eggs)', value: lEggs>0?'₦'+Math.round(lEggs*280).toLocaleString():'—', sub:'Est. @ ₦280/egg', delta:'Projection', trend:'stable', status:'neutral', icon:'💰', context:'Financial' }] : []),
+    { label:'Total Birds',    value: fmt(lBirds),                              sub: lProdPens.length + ' production pen' + (lProdPens.length!==1?'s':'') + (nonProdLayerSecs.length>0?' · excl. brooding/rearing':''),  delta:'',  trend:'stable', status:'neutral', icon:'🐦', context:'Layer flock' },
+    { label:'Lay Rate',       value: lAvgRateCalc>0 ? lAvgRateCalc+'%' : '—', sub: lEggs>0?'Today vs target 82%':'7d avg vs target 82%',                   delta:lAvgRateCalc>0?(lAvgRateCalc>=82?'+'+((lAvgRateCalc-82).toFixed(1))+'% above target':((lAvgRateCalc-82).toFixed(1))+'% below target'):'No data yet', trend:lAvgRateCalc>=82?'up':lAvgRateCalc>0?'down':'stable', status:lAvgRateCalc>0?layRateStatus(lAvgRateCalc):'neutral', icon:'📊', context:'Performance' },
+    { label:eggsLabel,        value: fmt(lEggs),                               sub: '7d total ' + fmt(lWeekEggs),                                            delta:lEggs>0?fmt(lEggs)+' collected':'None recorded yet', trend:'stable', status:lEggs>0?'good':lWeekEggs>0?'warn':'neutral', icon:'🥚', context:'Output' },
+    { label:'Grade A Rate',   value: lGradeA ? lGradeA+'%' : '—',             sub: 'Target ≥85%',                                                           delta:lGradeA?(lGradeA>=85?'+'+((lGradeA-85).toFixed(1))+'% above target':((lGradeA-85).toFixed(1))+'% below target'):'No data yet', trend:lGradeA>=85?'up':'down', status:gradeAStatus(lGradeA), icon:'⭐', context:'Quality' },
+    { label:'Water Intake',   value: lAvgWater ? lAvgWater+' L/bird' : '—',   sub: 'Benchmark '+lWaterBench+' L/bird · age '+lAvgAge+'d',                   delta:waterDelta(lAvgWater, lWaterBench), trend:lAvgWater?(lAvgWater>=lWaterBench*0.85?'up':'down'):'stable', status:lAvgWater?waterStatus(lAvgWater,lWaterBench):'neutral', icon:'💧', context:'Health signal' },
+    { label:'Mortality (7d)', value: fmt(lDead7),                              sub: lMortR+'% of flock',                                                     delta:lMortR<=0.05?'Within normal range':lMortR<=0.15?'Slightly elevated':'Elevated — investigate', trend:lMortR<=0.05?'up':'down', status:mortalityStatus(lMortR), icon:'📉', context:'Health losses' },
+    ...(isFarmAdmin ? [{ label:'Est. Revenue (Eggs)', value: lWeekEggs>0?'₦'+Math.round(lWeekEggs*280).toLocaleString():'—', sub:'Est. @ ₦280/egg · 7d total', delta:'Projection', trend:'stable', status:'neutral', icon:'💰', context:'Financial' }] : []),
   ] : [];
 
   // ── Broiler story: Total Birds → Avg Weight → Harvest → FCR → Water → Mortality
@@ -2061,6 +2118,42 @@ function ManagerDashboard({ pens, orgTotals, user, apiFetch , showYesterday }) {
 
       {/* ── KPI blocks — always visible, flat headers ── */}
       {layerCards.length>0   && <OpKpiBlock title="Layer Production"   opIcon="🥚" isLayer={true}  cards={layerCards} />}
+
+      {/* ── Layer Rearing / Brooding compact awareness strip ── */}
+      {hasNonProd && (
+        <div style={{
+          background:'#f0fdf4', borderRadius:10, border:'1px solid #bbf7d0',
+          padding:'10px 16px', marginBottom:12,
+          display:'flex', alignItems:'center', flexWrap:'wrap', gap:16,
+        }}>
+          <div style={{display:'flex',alignItems:'center',gap:8,marginRight:4}}>
+            <span style={{fontSize:16}}>{broodingLayerSecs.length>0&&rearingLayerSecs.length===0?'🐣':'🌱'}</span>
+            <span style={{fontSize:12,fontWeight:700,color:'#166534'}}>
+              {broodingLayerSecs.length>0&&rearingLayerSecs.length===0?'Layer Brooding':'Layer Rearing'}
+            </span>
+          </div>
+          <StripStat label="Pullets" value={rearBirds.toLocaleString('en-NG')} />
+          {rearAvgWeeks!=null && <StripStat label="Avg Age" value={`Wk ${rearAvgWeeks}`} />}
+          {rearAvgWtG!=null && (
+            <StripStat
+              label="Avg Weight"
+              value={`${(rearAvgWtG/1000).toFixed(3)} kg`}
+              note={isaRearTarget ? `Target ${(isaRearTarget/1000).toFixed(3)} kg` : null}
+              status={rearWeightStatus}
+            />
+          )}
+          <StripStat
+            label="Mortality (7d)"
+            value={rearDead7}
+            note={`${rearMortR}% of flock`}
+            status={rearMortR<=0.05?'good':rearMortR<=0.15?'warn':'critical'}
+          />
+          <div style={{marginLeft:'auto',fontSize:11,color:'#166534',fontStyle:'italic'}}>
+            {nonProdLayerSecs.length} section{nonProdLayerSecs.length!==1?'s':''} · not yet in production
+          </div>
+        </div>
+      )}
+
       {/* Broiler block + harvest popover anchored below it */}
       <div>
         {broilerCards.length>0 && <OpKpiBlock title="Broiler Production" opIcon="🍗" isLayer={false} cards={broilerCards} />}

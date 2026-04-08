@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>PoultryFarm Pro · Implementation Tracker Rev 1.5</title>
+<title>PoultryFarm Pro · Implementation Tracker Rev 1.6</title>
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
   body{background:#f0f4f8;font-family:'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:#0f172a;padding:0}
@@ -113,7 +113,7 @@
 <div class="banner">
   <div class="banner-top">
     <div>
-      <h1>🐔 PoultryFarm Pro <span>Implementation Tracker · Workplan Rev 1.5 · April 2026</span></h1>
+      <h1>🐔 PoultryFarm Pro <span>Implementation Tracker · Workplan Rev 1.6 · April 2026</span></h1>
       <div class="banner-meta">Multi-tenant poultry ERP · Next.js 16 · Prisma 5.22 · PostgreSQL · JWT · Recharts</div>
     </div>
     <div class="overall-pill">
@@ -134,10 +134,10 @@
         <li>Phases 1–7 <span class="tag tag-done">DONE</span> — Full foundation, finance, billing, audit</li>
         <li>Phase 8A <span class="tag tag-done">DONE</span> — Operation mode selector</li>
         <li>Phase 8B <span class="tag tag-done">DONE</span> — All dashboards, worker page, daily summaries, task generation, spot-checks, feed requisition workflow, IC override, statistical alerts</li>
-        <li>Phase 8C <span class="tag tag-done">DONE</span> — Brooding / Rearing / Production lifecycle</li>
+        <li>Phase 8C <span class="tag tag-done">DONE</span> — Brooding / Rearing / Production lifecycle + dashboard/performance bug fixes (Rev 1.6): section-level lay rate, yesterday mode, period-aware rates, force-dynamic caching fix</li>
         <li>Phase 8D <span class="tag tag-done">DONE</span> — Layer Production Module: /production/layers, HH rate, feed cost/crate, persistence curve, ISA Brown overlay, per-flock lines, peak week, cull trigger, mortality chart</li>
         <li>Phase 8G <span class="tag tag-active">PARTIAL</span> — Code-based templates done; task_templates DB model + admin UI pending</li>
-        <li>Phase 10-NEW-A <span class="tag tag-active">ACTIVE</span> — Egg Store Receipt Acknowledgement: full dispute/recount/force-accept flow, egg_inventory_balance, /egg-store page deployed</li>
+        <li>Phase 10-NEW-A <span class="tag tag-active">ACTIVE</span> — Egg Store Receipt Acknowledgement: full dispute/recount/force-accept flow, egg_inventory_balance, /egg-store page deployed; Flocks tab layingRate fix applied</li>
         <li>Phase 8-Supplement <span class="tag tag-next">NEXT SPRINT</span> — Flock Depletion &amp; Culling (after 8D, before 8E)</li>
       </ul>
     </div>
@@ -191,16 +191,24 @@
 
 <script>
 // ─────────────────────────────────────────────────────────────────────────────
-// WORKPLAN DATA — Rev 1.5 (April 2026)
-// Rev 1.5 changes vs Rev 1.4:
-//   • Phase 8D — phaseStatus next→done (all tasks completed this session)
-//   • Phase 8D — ISA Brown curve overlay + per-flock lines added as done task
-//   • Phase 10-NEW — phaseStatus new→active; sub-group 10-NEW-A added with done tasks
-//   • Context box updated: 8D → DONE, 10-NEW-A → ACTIVE, 8-Supplement → NEXT
-//   • Storage key bumped v14→v15
-//   • Phase 8-Supplement repositioned: now scheduled AFTER 8D and BEFORE 8E
-//     Rationale: lifecycle-summary P&L requires 8D layer analytics to be meaningful;
-//     depletion/pen-clearance infrastructure must exist before 8E broiler harvest flow
+// WORKPLAN DATA — Rev 1.6 (April 2026)
+// Rev 1.6 changes vs Rev 1.5:
+//   • Phase 8C — new "Dashboard & Performance Bug Fixes (Rev 1.6 Session)" group added
+//     - Farm Admin/Manager dashboard: section-level stage split for lay rate (excludes rearing/brooding birds)
+//     - ManagerDashboard: pen-level metrics used for todayEggs/weekEggs (reliable for yesterday mode)
+//     - ManagerDashboard: Layer Rearing compact awareness strip added
+//     - ManagerDashboard: Brooding Pen excluded from production bird count & lay rate denominator
+//     - ManagerDashboard: lAvgRate uses 7d avg fallback when no same-day eggs
+//     - ManagerDashboard: "Eggs Today" label switches to "Eggs Yesterday" in yesterday mode
+//     - ManagerDashboard: Est. Revenue uses 7d weekEggs total (not today-only)
+//     - export const dynamic = 'force-dynamic' added to /api/dashboard/route.js (was being cached)
+//     - Performance page: avgRate is now period-aware (Yesterday=single day, 7d/30d=avg daily rate)
+//     - Performance page: eggsKpiLabel = "Total Eggs (7d)" for multi-day periods
+//     - Performance page: "My Section Performance" badge "Live · Today" added
+//     - Performance page: Production Records heading shows "Yesterday" vs "Last N days"
+//     - Layer Analytics Flocks tab: layingRate uses most recent collection date (not strictly today)
+//   • All debug console.logs removed from dashboard page and dashboard route
+//   • Storage key bumped v15→v16
 // status: "done" | "active" | "next" | "planned" | "new" | "future"
 // ─────────────────────────────────────────────────────────────────────────────
 const phases = [
@@ -423,6 +431,21 @@ const phases = [
       { t:"COI guard — excludes PM self-approved records (Advance to Production) from same-day block in both conflictOfInterest.js and verification/route.js", s:"done"},
       { t:"feedBagWeightKg added to tenant settings (default 25kg), used for bags display across performance page", s:"done"},
       { t:"settings route default includes feedBagWeightKg — configurable per farm", s:"done"}
+    ]},
+    { name:"Dashboard & Performance Bug Fixes (Rev 1.6 Session)", tasks:[
+      { t:"export const dynamic = 'force-dynamic' added to /api/dashboard/route.js — was returning cached 0-egg response for all roles", s:"done"},
+      { t:"ManagerDashboard: section-level stage split — rearing/brooding birds excluded from lay rate denominator", s:"done"},
+      { t:"ManagerDashboard: pen-level metrics (todayEggs/weekEggs/weekMortality) used as primary source — reliable for yesterday mode", s:"done"},
+      { t:"ManagerDashboard: Brooding Pen (operationType=LAYER) excluded from production pen count and bird aggregates", s:"done"},
+      { t:"ManagerDashboard: lAvgRate uses 7d daily avg as fallback when no same-day eggs", s:"done"},
+      { t:"ManagerDashboard: 'Eggs Today' label switches to 'Eggs Yesterday' in yesterday mode", s:"done"},
+      { t:"ManagerDashboard: Est. Revenue card uses weekEggs (7d total) not todayEggs", s:"done"},
+      { t:"ManagerDashboard: Layer Rearing compact awareness strip (pullets, avg age, weight vs ISA Brown, 7d mortality)", s:"done"},
+      { t:"Performance page: avgRate period-aware — Yesterday=single day rate, multi-day=total eggs/days with data/birds", s:"done"},
+      { t:"Performance page: egg KPI label shows 'Total Eggs (7d)' for multi-day, 'Eggs Yesterday' for yesterday mode", s:"done"},
+      { t:"Performance page: 'My Section Performance' block badged 'Live · Today' to clarify it always shows current data", s:"done"},
+      { t:"Performance page: Production Records heading shows 'Yesterday' vs 'Last N days' correctly", s:"done"},
+      { t:"Layer Analytics Flocks tab: layingRate uses most recent available collection date not strictly today", s:"done"}
     ]}
   ]},
 
@@ -672,7 +695,7 @@ const phases = [
 // ─────────────────────────────────────────────────────────────────────────────
 // STATE
 // ─────────────────────────────────────────────────────────────────────────────
-const STORAGE_KEY = "pfp_tracker_v15"; // bumped to v15 — 8D done, 10-NEW-A active (Rev 1.5)
+const STORAGE_KEY = "pfp_tracker_v16"; // bumped to v16 — Rev 1.6 dashboard/performance bug fixes
 let checkState = null; // [phaseIdx][groupIdx][taskIdx] = bool
 let activeFilter = "all";
 let allExpanded = false;

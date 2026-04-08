@@ -576,13 +576,22 @@ export async function GET(request) {
       const ageInDays = Math.floor((Date.now() - new Date(flock.dateOfPlacement)) / 86400000);
       const ageWeeks  = Math.floor(ageInDays / 7);
 
-      // Today's eggs for this flock
-      const todayEggRows = eggRows.filter(r =>
-        r.flockId === flock.id && toDateKey(r.collectionDate) === today
-      );
-      const flockTodayEggs = todayEggRows.reduce((s, r) => s + (r.totalEggs || 0), 0);
-      const flockLayingRate = flock.currentCount > 0 && flockTodayEggs > 0
-        ? parseFloat((flockTodayEggs / flock.currentCount * 100).toFixed(1)) : null;
+    // Today's eggs for this flock
+    // Most-recent day's eggs for this flock — use latest available date, not strictly today
+    // This ensures the Flocks tab shows a rate even when no collections have happened yet today
+    const flockEggRows  = eggRows.filter(r => r.flockId === flock.id);
+    const latestFlockDate = flockEggRows.length > 0
+      ? flockEggRows.reduce((best, r) =>
+          toDateKey(r.collectionDate) > best ? toDateKey(r.collectionDate) : best,
+          toDateKey(flockEggRows[0].collectionDate)
+        )
+      : null;
+    const latestDayEggRows = latestFlockDate
+      ? flockEggRows.filter(r => toDateKey(r.collectionDate) === latestFlockDate)
+      : [];
+    const flockLatestEggs = latestDayEggRows.reduce((s, r) => s + (r.totalEggs || 0), 0);
+    const flockLayingRate = flock.currentCount > 0 && flockLatestEggs > 0
+  ? parseFloat((flockLatestEggs / flock.currentCount * 100).toFixed(1)) : null;
 
       // Hen-housed rate for this flock
       const flockTotalEggs = eggRows

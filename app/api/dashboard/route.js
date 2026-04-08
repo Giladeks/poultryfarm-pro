@@ -9,6 +9,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
 import { verifyToken } from '@/lib/middleware/auth';
+export const dynamic = 'force-dynamic';
 
 const MANAGER_ROLES = ['FARM_ADMIN', 'FARM_MANAGER', 'CHAIRPERSON', 'SUPER_ADMIN'];
 
@@ -150,7 +151,7 @@ export async function GET(request) {
           take: 20,
         }),
       ]);
-
+	  
     // Fetch 7-day water consumption per section
     // consumptionLPB is pre-computed in the table (consumptionL / bird count at time of reading)
     let waterIdx = {};
@@ -197,7 +198,6 @@ export async function GET(request) {
           ...sectionIds,
           cutoff
         );
-        console.log('[TEMP] fetched:', JSON.stringify(latestTemps));
       } catch (tempErr) {
         console.error('[TEMP] error:', tempErr?.message);
         latestTemps = [];

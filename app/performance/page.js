@@ -482,19 +482,39 @@ export default function EggsPage() {
   const todayEggs   = productionLayers.reduce((a, s) => a + (s.metrics?.todayEggs || 0), 0);
   const weekEggs    = productionLayers.reduce((a, s) => a + (s.metrics?.weekEggs || 0), 0);
 
-  // avgRate: use chartData's most recent day (correctly aggregates all sessions for that date
-  // from the filtered records) rather than todayEggs from metrics (which always reflects
-  // today's live count — wrong when Yesterday is selected, and also only counts one session).
-  // Fall back to todayEggs from metrics if chartData is empty (e.g. page just loaded).
-  const lastChartDay  = chartData.length > 0 ? chartData[chartData.length - 1] : null;
-  const periodEggs    = lastChartDay?.totalEggs ?? 0;
-  const avgRate       = prodBirds > 0
-    ? parseFloat(((periodEggs > 0 ? periodEggs : todayEggs) / prodBirds * 100).toFixed(1))
-    : null;
-  // periodEggsDisplay: what to show in the "Eggs Today/Yesterday" KPI
-  const periodEggsDisplay = periodEggs > 0 ? periodEggs : todayEggs;
-  const eggsKpiLabel      = days === YESTERDAY_DAYS ? 'Eggs Yesterday' : 'Eggs Today';
-  const layRateKpiLabel   = days === YESTERDAY_DAYS ? 'Lay Rate (Yesterday)' : 'Lay Rate (Today)';
+  // avgRate: compute correctly based on selected period
+  //   Yesterday → last chartData entry (single day: total eggs that day / birds)
+  //   Multi-day → average daily rate: total eggs across period / days with data / birds
+  // Never use todayEggs from metrics (always today's live count — wrong for any non-today period).
+  const lastChartDay    = chartData.length > 0 ? chartData[chartData.length - 1] : null;
+  const daysWithEggs    = chartData.filter(d => (d.totalEggs || 0) > 0);
+  const periodTotalEggsFromChart = chartData.reduce((a, d) => a + (d.totalEggs || 0), 0);
+
+  let avgRate = null;
+  if (prodBirds > 0) {
+    if (days === YESTERDAY_DAYS) {
+      // Single day: use last chart entry (yesterday's aggregated eggs)
+      const yestEggs = lastChartDay?.totalEggs ?? 0;
+      avgRate = yestEggs > 0
+        ? parseFloat((yestEggs / prodBirds * 100).toFixed(1))
+        : (todayEggs > 0 ? parseFloat((todayEggs / prodBirds * 100).toFixed(1)) : null);
+    } else {
+      // Multi-day: avg daily rate = total eggs / days that had collections / birds
+      const activeDays = daysWithEggs.length || 1;
+      avgRate = periodTotalEggsFromChart > 0
+        ? parseFloat((periodTotalEggsFromChart / activeDays / prodBirds * 100).toFixed(1))
+        : (todayEggs > 0 ? parseFloat((todayEggs / prodBirds * 100).toFixed(1)) : null);
+    }
+  }
+
+  // periodEggsDisplay: eggs count for the KPI card
+  const periodEggsDisplay = days === YESTERDAY_DAYS
+    ? (lastChartDay?.totalEggs ?? todayEggs)
+    : (periodTotalEggsFromChart > 0 ? periodTotalEggsFromChart : todayEggs);
+  const eggsKpiLabel    = days === YESTERDAY_DAYS ? 'Eggs Yesterday'
+    : days > 1 ? `Total Eggs (${days}d)` : 'Eggs Today';
+  const layRateKpiLabel = days === YESTERDAY_DAYS ? 'Lay Rate (Yesterday)'
+    : days > 1 ? `Avg Lay Rate (${days}d)` : 'Lay Rate (Today)';
   const gradeASecns = productionLayers.filter(s => (s.metrics?.todayGradeAPct || 0) > 0);
   // gradeAPct: derive from chartData's last day records rather than metrics.todayGradeAPct
   // metrics.todayGradeAPct always reflects today — wrong when Yesterday is selected.
@@ -729,8 +749,11 @@ export default function EggsPage() {
           if (!kpis.length) return null;
           return (
             <div style={{ marginBottom:24 }}>
-              <div style={{ fontSize:11, fontWeight:700, color:'var(--text-muted)', textTransform:'uppercase', letterSpacing:'.06em', marginBottom:12 }}>
+              <div style={{ fontSize:11, fontWeight:700, color:'var(--text-muted)', textTransform:'uppercase', letterSpacing:'.06em', marginBottom:12, display:'flex', alignItems:'center', gap:8 }}>
                 My Section Performance
+                <span style={{ fontSize:10, fontWeight:600, color:'#6c63ff', background:'#eeecff', border:'1px solid #d4d8ff', borderRadius:4, padding:'1px 6px', textTransform:'none', letterSpacing:0 }}>
+                  Live · Today
+                </span>
               </div>
               <div style={{ display:'grid', gridTemplateColumns:`repeat(${kpis.length},1fr)`, gap:12 }}>
                 {loading ? Array(kpis.length).fill(0).map((_,i)=><Skeleton key={i} h={110}/>)
@@ -747,7 +770,7 @@ export default function EggsPage() {
           return (
             <div style={{ borderTop:'1px solid var(--border)', marginBottom:20, paddingTop:20 }}>
               <div style={{ fontSize:11, fontWeight:700, color:'var(--text-muted)', textTransform:'uppercase', letterSpacing:'.06em', marginBottom:16 }}>
-                {showRearing ? `Weight Records · Last ${days} days` : `Production Records · Last ${days} days`}
+                {showRearing ? `Weight Records · Last ${days} days` : `Production Records · ${days === YESTERDAY_DAYS ? 'Yesterday' : `Last ${days} days`}`}
               </div>
               <div style={{ display:'grid', gridTemplateColumns:'repeat(5,1fr)', gap:12, marginBottom:20 }}>
                 {loading ? Array(5).fill(0).map((_,i)=><Skeleton key={i} h={88}/>) : showRearing ? (() => {
