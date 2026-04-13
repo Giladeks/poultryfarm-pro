@@ -16,12 +16,13 @@ const OP_MODE_ROLES = ['FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
 
 // ── Tab definitions ───────────────────────────────────────────────────────────
 const TABS = [
-  { key: 'overview',      label: 'Settings'     },
-  { key: 'notifications', label: 'Notifications' },
-  { key: 'email',         label: 'Email Alerts'  },
-  { key: 'farm',          label: 'Farm Profile'  },
-  { key: 'security',      label: 'Security'      },
-  { key: 'access',        label: 'Access Logs'   },
+  { key: 'overview',      label: 'Settings'         },
+  { key: 'notifications', label: 'Notifications'    },
+  { key: 'email',         label: 'Email Alerts'     },
+  { key: 'farm',          label: 'Farm Profile'     },
+  { key: 'security',      label: 'Security'         },
+  { key: 'access',        label: 'Access Logs'      },
+  { key: 'stores',        label: 'Store Management' },
 ];
 
 // ── Operation mode options ────────────────────────────────────────────────────
@@ -1102,6 +1103,321 @@ function AccessLogsTab({ apiFetch }) {
   );
 }
 
+// ── Tab: Store Management ─────────────────────────────────────────────────────
+// Farm Admin and above can create and view all stores.
+// Live birds from cull/depletion events go to GENERAL type stores only.
+
+const STORE_TYPE_META = {
+  FEED:       { label: 'Feed Store',       icon: '🌾', color: '#f59e0b' },
+  MEDICATION: { label: 'Medication Store', icon: '💊', color: '#3b82f6' },
+  EQUIPMENT:  { label: 'Equipment Store',  icon: '🔧', color: '#6b7280' },
+  PACKAGING:  { label: 'Packaging Store',  icon: '📦', color: '#8b5cf6' },
+  GENERAL:    { label: 'General Store',    icon: '🏪', color: '#10b981' },
+};
+
+function StoreManagementTab({ apiFetch, canEdit }) {
+  const [stores,      setStores]      = useState([]);
+  const [loading,     setLoading]     = useState(true);
+  const [showForm,    setShowForm]    = useState(false);
+  const [editingId,   setEditingId]   = useState(null);   // store id being edited
+  const [saving,      setSaving]      = useState(false);
+  const [error,       setError]       = useState('');
+  const [success,     setSuccess]     = useState('');
+  const [managers,    setManagers]    = useState([]);
+
+  // Create form state
+  const [form, setForm] = useState({ name: '', storeType: 'GENERAL', location: '', managerId: '' });
+  const setField = (k, v) => setForm(p => ({ ...p, [k]: v }));
+
+  // Edit form state — keyed by store id so each row is independent
+  const [editForms, setEditForms] = useState({});
+  const setEditField = (id, k, v) => setEditForms(p => ({ ...p, [id]: { ...p[id], [k]: v } }));
+
+  const inputSt = {
+    padding: '8px 10px', borderRadius: 8,
+    border: '1px solid var(--border-card)',
+    fontSize: 13, fontFamily: 'inherit',
+    width: '100%', outline: 'none', boxSizing: 'border-box',
+  };
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await apiFetch('/api/stores?type=ALL');
+      if (res.ok) { const d = await res.json(); setStores(d.stores || []); }
+    } finally { setLoading(false); }
+  }, [apiFetch]);
+
+  useEffect(() => {
+    load();
+    apiFetch('/api/users?roles=STORE_MANAGER,FARM_MANAGER,FARM_ADMIN')
+      .then(r => r.ok ? r.json() : { users: [] })
+      .then(d => setManagers(d.users || []))
+      .catch(() => {});
+  }, [load]);
+
+  function openEdit(store) {
+    setEditingId(store.id);
+    setEditForms(p => ({
+      ...p,
+      [store.id]: {
+        name:      store.name,
+        location:  store.location || '',
+        managerId: store.managerId || '',
+      },
+    }));
+    setError('');
+  }
+
+  function closeEdit() { setEditingId(null); setError(''); }
+
+  async function handleCreate(e) {
+    e.preventDefault();
+    if (!form.name.trim()) return setError('Store name is required.');
+    setSaving(true); setError(''); setSuccess('');
+    try {
+      const res = await apiFetch('/api/stores', {
+        method: 'POST',
+        body: JSON.stringify({
+          name:      form.name.trim(),
+          storeType: form.storeType,
+          location:  form.location.trim() || null,
+          managerId: form.managerId       || null,
+        }),
+      });
+      const d = await res.json();
+      if (!res.ok) return setError(d.error || 'Failed to create store.');
+      setSuccess(`"${d.store.name}" created successfully.`);
+      setForm({ name: '', storeType: 'GENERAL', location: '', managerId: '' });
+      setShowForm(false);
+      await load();
+    } finally { setSaving(false); }
+  }
+
+  async function handleEdit(storeId) {
+    const ef = editForms[storeId];
+    if (!ef?.name?.trim()) return setError('Store name is required.');
+    setSaving(true); setError(''); setSuccess('');
+    try {
+      const res = await apiFetch('/api/stores', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          id:        storeId,
+          name:      ef.name.trim(),
+          location:  ef.location?.trim() || null,
+          managerId: ef.managerId        || null,
+        }),
+      });
+      const d = await res.json();
+      if (!res.ok) return setError(d.error || 'Failed to update store.');
+      setSuccess(`"${d.store.name}" updated successfully.`);
+      setEditingId(null);
+      await load();
+    } finally { setSaving(false); }
+  }
+
+  return (
+    <div>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+        <div>
+          <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', fontFamily: "'Poppins',sans-serif" }}>
+            Store Management
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+            Create and manage stores. Live birds from cull and depletion events go to <strong>General</strong> stores.
+          </div>
+        </div>
+        {canEdit && (
+          <button
+            onClick={() => { setShowForm(p => !p); setEditingId(null); setError(''); setSuccess(''); }}
+            className="btn btn-primary"
+            style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
+            {showForm ? '✕ Cancel' : '+ New Store'}
+          </button>
+        )}
+      </div>
+
+      {/* Success banner */}
+      {success && (
+        <div style={{ padding: '10px 14px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, fontSize: 12, color: '#166534', marginBottom: 16 }}>
+          ✓ {success}
+        </div>
+      )}
+
+      {/* Create form */}
+      {showForm && (
+        <div style={{ background: '#fff', border: '1.5px solid var(--purple)', borderRadius: 12, padding: 20, marginBottom: 20 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--purple)', marginBottom: 16, fontFamily: "'Poppins',sans-serif" }}>
+            New Store
+          </div>
+          <form onSubmit={handleCreate}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 14 }}>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: 6 }}>
+                  Store Name *
+                </label>
+                <input value={form.name} onChange={e => setField('name', e.target.value)}
+                  placeholder="e.g. Main General Store" style={inputSt} required />
+              </div>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: 6 }}>
+                  Store Type *
+                </label>
+                <select value={form.storeType} onChange={e => setField('storeType', e.target.value)} style={inputSt}>
+                  {Object.entries(STORE_TYPE_META).map(([key, meta]) => (
+                    <option key={key} value={key}>{meta.icon} {meta.label}</option>
+                  ))}
+                </select>
+                {form.storeType === 'GENERAL' && (
+                  <div style={{ fontSize: 10, color: '#10b981', marginTop: 4 }}>
+                    ✓ General stores receive live birds from cull and depletion events
+                  </div>
+                )}
+              </div>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 18 }}>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: 6 }}>
+                  Location
+                </label>
+                <input value={form.location} onChange={e => setField('location', e.target.value)}
+                  placeholder="e.g. Block A, North Wing" style={inputSt} />
+              </div>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: 6 }}>
+                  Store Manager
+                </label>
+                <select value={form.managerId} onChange={e => setField('managerId', e.target.value)} style={inputSt}>
+                  <option value="">— Assign later —</option>
+                  {managers.map(m => (
+                    <option key={m.id} value={m.id}>{m.firstName} {m.lastName} ({m.role.replace(/_/g, ' ')})</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            {error && (
+              <div style={{ padding: '8px 12px', background: 'var(--red-bg)', border: '1px solid var(--red-border)', borderRadius: 8, fontSize: 12, color: 'var(--red)', marginBottom: 14 }}>
+                ⚠ {error}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button type="button" onClick={() => setShowForm(false)} className="btn btn-ghost" style={{ fontSize: 12 }}>Cancel</button>
+              <button type="submit" disabled={saving} className="btn btn-primary" style={{ fontSize: 12 }}>
+                {saving ? 'Creating…' : 'Create Store'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* Store list */}
+      {loading ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {[1, 2, 3].map(i => (
+            <div key={i} style={{ height: 72, background: 'var(--bg-elevated)', borderRadius: 10, animation: 'pulse 1.5s ease-in-out infinite' }} />
+          ))}
+        </div>
+      ) : stores.length === 0 ? (
+        <div style={{ textAlign: 'center', padding: '48px 20px', color: 'var(--text-muted)' }}>
+          <div style={{ fontSize: 36, marginBottom: 12 }}>🏪</div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 6 }}>No stores configured</div>
+          <div style={{ fontSize: 12 }}>Create a <strong>General Store</strong> first — it receives live birds from cull and depletion events.</div>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {stores.map(store => {
+            const meta      = STORE_TYPE_META[store.storeType] || STORE_TYPE_META.GENERAL;
+            const isEditing = editingId === store.id;
+            const ef        = editForms[store.id] || {};
+
+            return (
+              <div key={store.id} style={{ background: '#fff', border: `1px solid ${isEditing ? 'var(--purple)' : 'var(--border-card)'}`, borderRadius: 10, overflow: 'hidden' }}>
+
+                {/* Row summary */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 18px' }}>
+                  <div style={{ width: 40, height: 40, borderRadius: 9, background: `${meta.color}18`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, flexShrink: 0 }}>
+                    {meta.icon}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{store.name}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                      <span style={{ color: meta.color, fontWeight: 600 }}>{meta.label}</span>
+                      {store.location && <span>📍 {store.location}</span>}
+                    </div>
+                  </div>
+                  <span style={{ fontSize: 10, fontWeight: 700, padding: '3px 9px', borderRadius: 20, background: `${meta.color}15`, color: meta.color, border: `1px solid ${meta.color}30`, whiteSpace: 'nowrap', flexShrink: 0 }}>
+                    {meta.label}
+                  </span>
+                  {canEdit && (
+                    <button
+                      onClick={() => isEditing ? closeEdit() : openEdit(store)}
+                      style={{ padding: '6px 14px', borderRadius: 7, border: `1px solid ${isEditing ? 'var(--purple)' : 'var(--border-card)'}`, background: isEditing ? 'var(--purple-light,#f5f3ff)' : '#fff', color: isEditing ? 'var(--purple)' : 'var(--text-secondary)', fontSize: 12, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                      {isEditing ? '✕ Cancel' : '✏ Edit'}
+                    </button>
+                  )}
+                </div>
+
+                {/* Inline edit form */}
+                {isEditing && (
+                  <div style={{ borderTop: '1px solid var(--border-card)', padding: '16px 18px', background: 'var(--bg-elevated,#f8fafc)' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 14 }}>
+                      <div>
+                        <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: 6 }}>
+                          Store Name *
+                        </label>
+                        <input value={ef.name || ''} onChange={e => setEditField(store.id, 'name', e.target.value)} style={inputSt} />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: 6 }}>
+                          Store Type
+                        </label>
+                        <input value={meta.label} disabled style={{ ...inputSt, background: 'var(--bg-elevated)', color: 'var(--text-muted)', cursor: 'not-allowed' }} />
+                        <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>Store type cannot be changed after creation</div>
+                      </div>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 14 }}>
+                      <div>
+                        <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: 6 }}>
+                          Location
+                        </label>
+                        <input value={ef.location || ''} onChange={e => setEditField(store.id, 'location', e.target.value)}
+                          placeholder="e.g. Block A, North Wing" style={inputSt} />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: 6 }}>
+                          Store Manager
+                        </label>
+                        <select value={ef.managerId || ''} onChange={e => setEditField(store.id, 'managerId', e.target.value)} style={inputSt}>
+                          <option value="">— Unassigned —</option>
+                          {managers.map(m => (
+                            <option key={m.id} value={m.id}>{m.firstName} {m.lastName} ({m.role.replace(/_/g, ' ')})</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                    {error && (
+                      <div style={{ padding: '8px 12px', background: 'var(--red-bg)', border: '1px solid var(--red-border)', borderRadius: 8, fontSize: 12, color: 'var(--red)', marginBottom: 12 }}>
+                        ⚠ {error}
+                      </div>
+                    )}
+                    <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+                      <button onClick={closeEdit} className="btn btn-ghost" style={{ fontSize: 12 }}>Cancel</button>
+                      <button onClick={() => handleEdit(store.id)} disabled={saving} className="btn btn-primary" style={{ fontSize: 12 }}>
+                        {saving ? 'Saving…' : 'Save Changes'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
 export default function SettingsPage() {
   const { user, apiFetch } = useAuth();
@@ -1223,6 +1539,7 @@ export default function SettingsPage() {
             {activeTab === 'farm'          && <FarmProfileTab   settings={settings} tenantDefaults={tenantDefaults} canEdit={canEdit} save={save} saving={saving} />}
             {activeTab === 'security'      && <SecurityTab />}
             {activeTab === 'access'        && <AccessLogsTab    apiFetch={apiFetch} />}
+            {activeTab === 'stores'        && <StoreManagementTab apiFetch={apiFetch} canEdit={canEdit} />}
           </>
         )}
       </div>

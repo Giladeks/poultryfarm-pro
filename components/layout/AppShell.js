@@ -29,6 +29,8 @@ const ICON_MAP = {
   LayoutDashboard, Building2, Egg, ClipboardList, ClipboardCheck, Bird,
   TrendingUp, Scale, Factory, Syringe, Wheat, Cog,
   CheckSquare, DollarSign, Search, Drumstick, Package,
+  Users,
+  // Package already covers Store Inventory icon
 };
 // Group header icons (not from string map — referenced directly)
 const LayersIcon    = Sun;       // Layer group
@@ -89,34 +91,34 @@ const NAV_ITEMS = [
     roles: ['PEN_MANAGER','FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN'],
   },
   {
-    href: '/farm?op=layer', icon: 'Bird', label: 'Layer Flocks', section: 'layer',
+    href: '/farm?op=layer', icon: 'Bird', label: 'Layer Flocks', section: 'layer', group: 'production',
     roles: ['FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','PEN_MANAGER','SUPER_ADMIN'],
     opModes: ['LAYER_ONLY', 'BOTH'],
   },
   {
-    href: '/performance', icon: 'Egg', label: 'Performance', section: 'layer',
+    href: '/performance', icon: 'Egg', label: 'Performance', section: 'layer', group: 'production',
     roles: ['FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','PEN_MANAGER','PRODUCTION_STAFF','SUPER_ADMIN','PEN_WORKER'],
     opModes: ['LAYER_ONLY', 'BOTH'],
   },
   {
-    href: '/production/layers', icon: 'TrendingUp', label: 'Layer Analytics', section: 'layer',
+    href: '/production/layers', icon: 'TrendingUp', label: 'Layer Analytics', section: 'layer', group: 'production',
     roles: ['FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'], // FARM_MANAGER excluded — financial analytics is Farm Admin and above
     opModes: ['LAYER_ONLY', 'BOTH'],
   },
 
   // ── Broiler section ──
   {
-    href: '/farm?op=broiler', icon: 'Drumstick', label: 'Broiler Flocks', section: 'broiler',
+    href: '/farm?op=broiler', icon: 'Drumstick', label: 'Broiler Flocks', section: 'broiler', group: 'production',
     roles: ['FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','PEN_MANAGER','SUPER_ADMIN'],
     opModes: ['BROILER_ONLY', 'BOTH'],
   },
   {
-    href: '/broiler-performance', icon: 'Scale', label: 'Performance', section: 'broiler',
-    roles: ['FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','PEN_MANAGER','PRODUCTION_STAFF','SUPER_ADMIN','PEN_WORKER'],
+    href: '/production/broilers', icon: 'Scale', label: 'Analytics', section: 'broiler', group: 'production',
+    roles: ['FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'],
     opModes: ['BROILER_ONLY', 'BOTH'],
   },
   {
-    href: '/processing', icon: 'Factory', label: 'Processing', section: 'broiler',
+    href: '/processing', icon: 'Factory', label: 'Processing', section: 'broiler', group: 'processing',
     roles: ['FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','PRODUCTION_STAFF','SUPER_ADMIN','QC_TECHNICIAN'],
     opModes: ['BROILER_ONLY', 'BOTH'],
     requiresProcessing: true,
@@ -124,42 +126,51 @@ const NAV_ITEMS = [
 
   // ── Shared section ──
   {
-    href: '/health', icon: 'Syringe', label: 'Health', section: 'shared',
+    href: '/health', icon: 'Syringe', label: 'Health', section: 'shared', group: 'operations',
     roles: ['FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','PEN_MANAGER','SUPER_ADMIN'],
   },
   {
-    href: '/feed', icon: 'Wheat', label: 'Feed', section: 'shared',
+    href: '/feed', icon: 'Wheat', label: 'Feed', section: 'shared', group: 'operations',
     roles: ['STORE_MANAGER','STORE_CLERK','FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN','PEN_MANAGER'],
   },
   {
-    href: '/feed-requisitions', icon: 'ClipboardList', label: 'Feed Requisitions', section: 'shared',
+    href: '/feed-requisitions', icon: 'ClipboardList', label: 'Feed Requisitions', section: 'shared', group: 'operations',
     roles: ['PEN_MANAGER','STORE_MANAGER','INTERNAL_CONTROL','FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN'],
   },
   {
-    href: '/egg-store', icon: 'Package', label: 'Egg Store', section: 'shared',
+    href: '/egg-store', icon: 'Package', label: 'Egg Store', section: 'shared', group: 'operations',
     roles: ['STORE_MANAGER','STORE_CLERK','INTERNAL_CONTROL','FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN'],
     opModes: ['LAYER_ONLY', 'BOTH'],
   },
   {
-    href: '/feed-mill', icon: 'Cog', label: 'Feed Mill', section: 'shared',
+    href: '/feed-mill', icon: 'Cog', label: 'Feed Mill', section: 'shared', group: 'processing',
     roles: ['FEED_MILL_MANAGER','FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN','QC_TECHNICIAN'],
     requiresFeedMill: true,
   },
   {
-    href: '/verification', icon: 'CheckSquare', label: 'Verification', section: 'shared',
+    href: '/verification', icon: 'CheckSquare', label: 'Verification', section: 'shared', group: 'intelligence',
     roles: ['FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','PEN_MANAGER','STORE_MANAGER','SUPER_ADMIN'],
   },
   {
-    href: '/finance', icon: 'DollarSign', label: 'Finance', section: 'shared',
+    href: '/finance', icon: 'DollarSign', label: 'Finance', section: 'shared', group: 'business',
     roles: ['FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN','ACCOUNTANT','INTERNAL_CONTROL'],
   },
   {
-    href: '/audit', icon: 'Search', label: 'Audit', section: 'shared',
+    href: '/audit', icon: 'Search', label: 'Audit', section: 'shared', group: 'intelligence',
     roles: ['FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN','INTERNAL_CONTROL'],
   },
   {
-    href: '/owner', icon: 'TrendingUp', label: 'Analytics', section: 'shared',
+    href: '/owner', icon: 'TrendingUp', label: 'Analytics', section: 'shared', group: 'intelligence',
     roles: ['CHAIRPERSON'],
+  },
+  // ── Phase 8-Supplement-Arch: new Operations items ──
+  {
+    href: '/store', icon: 'Package', label: 'Store Inventory', section: 'shared', group: 'operations',
+    roles: ['STORE_MANAGER','STORE_CLERK','FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN','INTERNAL_CONTROL'],
+  },
+  {
+    href: '/users', icon: 'ClipboardList', label: 'Staff', section: 'shared', group: 'business',
+    roles: ['FARM_ADMIN','FARM_MANAGER','CHAIRPERSON','SUPER_ADMIN'],
   },
 ];
 
@@ -171,10 +182,23 @@ const FLOCKS_SINGLE = {
 
 // ── Section visual metadata ───────────────────────────────────────────────────
 const SECTION_META = {
-  layer:   { label: 'Layers',   color: '#6c63ff', Icon: LayersIcon   },
-  broiler: { label: 'Broilers', color: '#6c63ff', Icon: DrumstickIcon },
-  shared:  { label: 'Shared',   color: '#6c63ff', Icon: null          },
+  layer:   { label: 'Layer Production',   color: '#f59e0b', Icon: LayersIcon   },
+  broiler: { label: 'Broiler Production', color: '#3b82f6', Icon: DrumstickIcon },
+  shared:  { label: 'Shared',             color: '#6c63ff', Icon: null          },
 };
+
+// ── Module group metadata (for the Operations / Intelligence / Business / Processing groups) ──
+// These sit below the production collapsible groups in the sidebar.
+// Each entry: label shown as section divider, color for active accent, emoji icon.
+const MODULE_GROUPS = {
+  operations:   { label: 'Operations',   emoji: '🏪', color: '#6c63ff' },
+  intelligence: { label: 'Intelligence', emoji: '📊', color: '#0ea5e9' },
+  business:     { label: 'Business',     emoji: '💼', color: '#10b981' },
+  processing:   { label: 'Processing',   emoji: '🏭', color: '#8b5cf6' },
+};
+
+// Ordered list of groups to render — controls display sequence
+const MODULE_GROUP_ORDER = ['operations', 'intelligence', 'business', 'processing'];
 
 // ── Notification helpers ──────────────────────────────────────────────────────
 const NOTIF_META = {
@@ -259,11 +283,11 @@ function NotifDropdown({ notifications, unreadCount, onMarkRead, onMarkAll, onCl
         ) : notifications.map(n => {
           const meta = notifMeta(n.type);
           return (
-            <div key={n.id} onClick={() => !n.isRead && onMarkRead(n.id)} style={{
+            <div key={n.id} onClick={() => { if (!n.isRead) onMarkRead(n.id); const url = n.data?.actionUrl; if (url) { onClose(); window.location.href = url; } }} style={{
               display: 'flex', gap: 12, padding: '12px 16px',
               background: n.isRead ? '#fff' : 'var(--purple-light)',
               borderBottom: '1px solid var(--border)',
-              cursor: n.isRead ? 'default' : 'pointer', transition: 'background 0.15s',
+              cursor: (!n.isRead || n.data?.actionUrl) ? 'pointer' : 'default', transition: 'background 0.15s',
             }}
               onMouseEnter={e => { if (!n.isRead) e.currentTarget.style.background = '#e8e6ff'; }}
               onMouseLeave={e => { if (!n.isRead) e.currentTarget.style.background = 'var(--purple-light)'; }}
@@ -943,11 +967,18 @@ export default function AppShell({ children }) {
   // Persisted in localStorage so it survives page navigation.
   // Auto-expands the group that contains the current route on mount.
   const [groupOpen, setGroupOpen] = useState(() => {
-    if (typeof window === 'undefined') return { layer: true, broiler: false };
+    if (typeof window === 'undefined') return { layer: true, broiler: false, operations: true, intelligence: false, business: false, processing: false };
     try {
       const saved = JSON.parse(localStorage.getItem('pfp_nav_groups') || '{}');
-      return { layer: saved.layer ?? true, broiler: saved.broiler ?? false };
-    } catch { return { layer: true, broiler: false }; }
+      return {
+        layer:        saved.layer        ?? true,
+        broiler:      saved.broiler      ?? false,
+        operations:   saved.operations   ?? true,
+        intelligence: saved.intelligence ?? false,
+        business:     saved.business     ?? false,
+        processing:   saved.processing   ?? false,
+      };
+    } catch { return { layer: true, broiler: false, operations: true, intelligence: false, business: false, processing: false }; }
   });
 
   // Auto-expand the group containing the active route
@@ -960,9 +991,22 @@ export default function AppShell({ children }) {
       const [p, q] = i.href.split('?');
       return q ? pathname === p && search === `?${q}` : pathname === p || pathname.startsWith(p + '/');
     });
-    if (activeLayer || activeBroiler) {
+    // Find active module group (operations / intelligence / business / processing)
+    const activeModuleGroup = MODULE_GROUP_ORDER.find(grp =>
+      visibleItems.filter(i => i.group === grp).some(item => {
+        const [p, q] = item.href.split('?');
+        return q ? pathname === p && search === `?${q}` : pathname === p || pathname.startsWith(p + '/');
+      })
+    );
+
+    if (activeLayer || activeBroiler || activeModuleGroup) {
       setGroupOpen(prev => {
-        const next = { ...prev, ...(activeLayer ? { layer: true } : {}), ...(activeBroiler ? { broiler: true } : {}) };
+        const next = {
+          ...prev,
+          ...(activeLayer       ? { layer: true }                      : {}),
+          ...(activeBroiler     ? { broiler: true }                    : {}),
+          ...(activeModuleGroup ? { [activeModuleGroup]: true }        : {}),
+        };
         try { localStorage.setItem('pfp_nav_groups', JSON.stringify(next)); } catch {}
         return next;
       });
@@ -1182,8 +1226,88 @@ export default function AppShell({ children }) {
             ))
           ) : null}
 
-          {/* Shared items — no header, just flow after the groups */}
-          {sharedItems.map(item => (
+          {/* Module groups — Operations, Intelligence, Business, Processing */}
+          {/* Each group shows a slim divider label + its items, collapsible */}
+          {MODULE_GROUP_ORDER.map(grp => {
+            const grpItems = sharedItems.filter(i => i.group === grp);
+            if (grpItems.length === 0) return null;
+            const meta = MODULE_GROUPS[grp];
+            const isOpen = groupOpen[grp];
+            const hasActive = grpItems.some(item => {
+              const [p, q] = item.href.split('?');
+              return q ? pathname === p && search === `?${q}` : pathname === p || pathname.startsWith(p + '/');
+            });
+
+            // Collapsed sidebar: just render the items flat (the CollapsibleGroup flyout
+            // handles the production sections; for these smaller groups we keep it simple)
+            if (collapsed) {
+              return (
+                <div key={grp} style={{ marginTop: 4 }}>
+                  {grpItems.map(item => (
+                    <NavLink key={item.href} href={item.href} icon={item.icon} label={item.label}
+                      collapsed={collapsed} pathname={pathname} search={search} />
+                  ))}
+                </div>
+              );
+            }
+
+            // Expanded sidebar: group header styled to match CollapsibleGroup
+            const bgActive  = hasActive && !isOpen ? '#eeecff' : 'transparent';
+            const iconCol   = hasActive ? meta.color : '#94a3b8';
+            const txtCol    = hasActive ? meta.color : '#64748b';
+            return (
+              <div key={grp} style={{ marginTop: 2 }}>
+                {/* Group header — mirrors CollapsibleGroup button styling exactly */}
+                <button
+                  onClick={() => toggleGroup(grp)}
+                  style={{
+                    width: '100%', background: bgActive, border: 'none',
+                    cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 9,
+                    padding: '7px 10px', borderRadius: 8, marginBottom: 1,
+                    fontFamily: "'Poppins', sans-serif", transition: 'background 0.14s',
+                  }}
+                  onMouseEnter={e => { if (!hasActive || isOpen) e.currentTarget.style.background = '#f1f5f9'; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = bgActive; }}
+                >
+                  <span style={{ fontSize: 15, lineHeight: 1, flexShrink: 0, display: 'flex', alignItems: 'center' }}>
+                    {meta.emoji}
+                  </span>
+                  <span style={{
+                    flex: 1, textAlign: 'left',
+                    fontSize: 13, fontWeight: hasActive ? 600 : 500,
+                    color: txtCol, letterSpacing: 0,
+                  }}>
+                    {meta.label}
+                  </span>
+                  {hasActive && !isOpen && (
+                    <div style={{ width: 5, height: 5, borderRadius: '50%', background: meta.color, flexShrink: 0 }} />
+                  )}
+                  <span style={{
+                    display: 'flex', alignItems: 'center', color: '#94a3b8', flexShrink: 0,
+                    transform: isOpen ? 'rotate(180deg)' : 'none',
+                    transition: 'transform 0.2s ease',
+                  }}>
+                    <ChevronDown size={13} strokeWidth={2} />
+                  </span>
+                </button>
+
+                {/* Animated item list */}
+                <div style={{
+                  overflow: 'hidden',
+                  maxHeight: isOpen ? `${grpItems.length * 36}px` : '0px',
+                  transition: 'max-height 0.22s ease',
+                }}>
+                  {grpItems.map(item => (
+                    <NavLink key={item.href} href={item.href} icon={item.icon} label={item.label}
+                      collapsed={false} pathname={pathname} search={search} accentColor={meta.color} />
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+
+          {/* Any shared items without a group — render flat as before (safety net) */}
+          {sharedItems.filter(i => !i.group).map(item => (
             <NavLink key={item.href} href={item.href} icon={item.icon} label={item.label}
               collapsed={collapsed} pathname={pathname} search={search} />
           ))}

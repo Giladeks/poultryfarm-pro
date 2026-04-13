@@ -46,6 +46,7 @@ export async function GET(request) {
       include: {
         pens: {
           where: {
+            isActive: true,   // exclude archived pens
             ...(allowedOpTypes && { operationType: { in: allowedOpTypes } }),
           },
           include: {

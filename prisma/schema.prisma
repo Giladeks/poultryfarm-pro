@@ -90,91 +90,89 @@ model TenantCurrency {
 }
 
 model User {
-  id                                                    String                @id @default(uuid())
-  tenantId                                              String
-  farmId                                                String?
-  email                                                 String
-  passwordHash                                          String
-  firstName                                             String
-  lastName                                              String
-  phone                                                 String?
-  avatarUrl                                             String?
-  role                                                  UserRole              @default(PEN_WORKER)
-  isActive                                              Boolean               @default(true)
-  lastLoginAt                                           DateTime?
-  passwordResetToken                                    String?
-  passwordResetExpiry                                   DateTime?
-  createdAt                                             DateTime              @default(now())
-  updatedAt                                             DateTime              @updatedAt
-  profilePicUrl                                         String?
-  attendanceRecords                                     AttendanceRecord[]
-  auditLogs                                             AuditLog[]
-  bankTransactionsCreated                               BankTransaction[]     @relation("BankTxCreatedBy")
-  bankTransactionsMatched                               BankTransaction[]     @relation("BankTxMatchedBy")
-  biosecurityLogs                                       BiosecurityLog[]
-  broilerHarvestRecords                                 BroilerHarvest[]
-  chick_arrivals                                        chick_arrivals[]
-  dailyReportsApproved                                  DailyReport[]         @relation("ReportApprovedBy")
-  dailyReports                                          DailyReport[]         @relation("ReportSubmittedBy")
-  dailySummaryReviews                                   DailySummary[]        @relation("DailySummaryReviewedBy")
-  eggProductionApprovals                                EggProduction[]       @relation("EggProductionApprovedBy")
-  eggProductionRecords                                  EggProduction[]
-  feedConsumptionApprovals                              FeedConsumption[]     @relation("FeedConsumptionApprovedBy")
-  feedConsumptionRecords                                FeedConsumption[]
-  feedRequisitionsSubmitted                             FeedRequisition[]     @relation("FeedRequisitionSubmittedBy")
-  feedRequisitionsApproved                              FeedRequisition[]     @relation("FeedRequisitionApprovedBy")
-  feedRequisitionsRejected                              FeedRequisition[]     @relation("FeedRequisitionRejectedBy")
-  feedRequisitionsIssued                                FeedRequisition[]     @relation("FeedRequisitionIssuedBy")
-  feedRequisitionsAcknowledged                          FeedRequisition[]     @relation("FeedRequisitionAcknowledgedBy")
-  feedRequisitionsClosed                                FeedRequisition[]     @relation("FeedRequisitionClosedBy")
-  feedMillBatches                                       FeedMillBatch[]
-  flock_transfers_flock_transfers_received_by_idTousers flock_transfers[]     @relation("flock_transfers_received_by_idTousers")
-  flock_transfers                                       flock_transfers[]
-  healthObservations                                    HealthObservation[]
-  investigationsEscalated                               Investigation[]       @relation("InvestigationEscalatedTo")
-  investigationsFlagged                                 Investigation[]       @relation("InvestigationFlaggedBy")
-  investigationsResolved                                Investigation[]       @relation("InvestigationResolvedBy")
-  leaveApprovals                                        LeaveRequest[]        @relation("LeaveApprovedBy")
-  leaveRequests                                         LeaveRequest[]        @relation("LeaveRequestedBy")
-  maintenanceRequests                                   MaintenanceRequest[]
-  medicationLogs                                        MedicationLog[]
-  mortalityRecords                                      MortalityRecord[]
-  notifications                                         Notification[]        @relation("NotificationRecipient")
-  sentNotifications                                     Notification[]        @relation("NotificationSender")
-  paymentRemindersSent                                  PaymentReminder[]
-  payments                                              Payment[]
-  payrollRecords                                        PayrollRecord[]
-  penAssignments                                        PenWorkerAssignment[]
-  purchaseOrdersApproved                                PurchaseOrder[]       @relation("POApprovedBy")
-  purchaseOrders                                        PurchaseOrder[]       @relation("POCreatedBy")
-  purchaseRequisitions                                  PurchaseRequisition[]
-  qcTests                                               QCTest[]
-  salesInvoicesApproved                                 SalesInvoice[]        @relation("SalesInvoiceApprovedBy")
-  salesInvoicesCreated                                  SalesInvoice[]        @relation("SalesInvoiceCreatedBy")
-  salesInvoicesReconciled                               SalesInvoice[]        @relation("SalesInvoiceReconciledBy")
-  salesOrders                                           SalesOrder[]
-  staffProfile                                          StaffProfile?
-  storeIssuances                                        StoreIssuance[]
-  storeReceipts                                         StoreReceipt[]
-  supplierInvoicesApproved                              SupplierInvoice[]     @relation("SupplierInvoiceApprovedBy")
-  supplierInvoicesCreated                               SupplierInvoice[]     @relation("SupplierInvoiceCreatedBy")
-  supplierInvoicesReconciled                            SupplierInvoice[]     @relation("SupplierInvoiceReconciledBy")
-  tasksApproved                                         Task[]                @relation("TaskApprovedBy")
-  tasksAssigned                                         Task[]                @relation("TaskAssignedTo")
-  tasksCreated                                          Task[]                @relation("TaskCreatedBy")
-  temperature_logs                                      temperature_logs[]
-  farm                                                  Farm?                 @relation(fields: [farmId], references: [id])
-  tenant                                                Tenant                @relation(fields: [tenantId], references: [id])
-  vaccinationsAdministered                              Vaccination[]
-  verificationsEscalated                                Verification[]        @relation("VerificationEscalatedTo")
-  verificationsResolved                                 Verification[]        @relation("VerificationResolvedBy")
-  verifications                                         Verification[]        @relation("VerificationVerifiedBy")
-  vetVisits                                             VetVisit[]
-  waterMeterReadings                                    WaterMeterReading[]
-  weightRecords                                         WeightRecord[]
-  weight_samples                                        weight_samples[]
-  workOrders                                            WorkOrder[]           @relation("WOAssignedTo")
-  workOrdersCreated                                     WorkOrder[]           @relation("WOCreatedBy")
+  id                                                                            String                   @id @default(uuid())
+  tenantId                                                                      String
+  farmId                                                                        String?
+  email                                                                         String
+  passwordHash                                                                  String
+  firstName                                                                     String
+  lastName                                                                      String
+  phone                                                                         String?
+  avatarUrl                                                                     String?
+  role                                                                          UserRole                 @default(PEN_WORKER)
+  isActive                                                                      Boolean                  @default(true)
+  lastLoginAt                                                                   DateTime?
+  passwordResetToken                                                            String?
+  passwordResetExpiry                                                           DateTime?
+  createdAt                                                                     DateTime                 @default(now())
+  updatedAt                                                                     DateTime                 @updatedAt
+  profilePicUrl                                                                 String?
+  attendanceRecords                                                             AttendanceRecord[]
+  auditLogs                                                                     AuditLog[]
+  bankTransactionsCreated                                                       BankTransaction[]        @relation("BankTxCreatedBy")
+  bankTransactionsMatched                                                       BankTransaction[]        @relation("BankTxMatchedBy")
+  biosecurityLogs                                                               BiosecurityLog[]
+  broilerHarvestRecords                                                         BroilerHarvest[]
+  chick_arrivals                                                                chick_arrivals[]
+  dailyReportsApproved                                                          DailyReport[]            @relation("ReportApprovedBy")
+  dailyReports                                                                  DailyReport[]            @relation("ReportSubmittedBy")
+  dailySummaryReviews                                                           DailySummary[]           @relation("DailySummaryReviewedBy")
+  eggProductionApprovals                                                        EggProduction[]          @relation("EggProductionApprovedBy")
+  eggProductionRecords                                                          EggProduction[]
+  feedConsumptionApprovals                                                      FeedConsumption[]        @relation("FeedConsumptionApprovedBy")
+  feedConsumptionRecords                                                        FeedConsumption[]
+  feedMillBatches                                                               FeedMillBatch[]
+  flockLifecycleEventsDisposalVerified   FlockLifecycleEvent[] @relation("flock_lifecycle_events_disposal_verified_by_idTousers")
+  flockLifecycleEventsReviewed           FlockLifecycleEvent[] @relation("flock_lifecycle_events_reviewed_by_idTousers")
+  flockLifecycleEventsStoreAcknowledged  FlockLifecycleEvent[] @relation("flock_lifecycle_events_store_acknowledged_by_idTousers")
+  flockLifecycleEventsSubmitted          FlockLifecycleEvent[] @relation("flock_lifecycle_events_submitted_by_idTousers")
+  flock_transfers_flock_transfers_received_by_idTousers                         flock_transfers[]        @relation("flock_transfers_received_by_idTousers")
+  flock_transfers                                                               flock_transfers[]
+  healthObservations                                                            HealthObservation[]
+  investigationsEscalated                                                       Investigation[]          @relation("InvestigationEscalatedTo")
+  investigationsFlagged                                                         Investigation[]          @relation("InvestigationFlaggedBy")
+  investigationsResolved                                                        Investigation[]          @relation("InvestigationResolvedBy")
+  leaveApprovals                                                                LeaveRequest[]           @relation("LeaveApprovedBy")
+  leaveRequests                                                                 LeaveRequest[]           @relation("LeaveRequestedBy")
+  maintenanceRequests                                                           MaintenanceRequest[]
+  medicationLogs                                                                MedicationLog[]
+  mortalityRecords                                                              MortalityRecord[]
+  notifications                                                                 Notification[]           @relation("NotificationRecipient")
+  sentNotifications                                                             Notification[]           @relation("NotificationSender")
+  paymentRemindersSent                                                          PaymentReminder[]
+  payments                                                                      Payment[]
+  payrollRecords                                                                PayrollRecord[]
+  penAssignments                                                                PenWorkerAssignment[]
+  purchaseOrdersApproved                                                        PurchaseOrder[]          @relation("POApprovedBy")
+  purchaseOrders                                                                PurchaseOrder[]          @relation("POCreatedBy")
+  purchaseRequisitions                                                          PurchaseRequisition[]
+  qcTests                                                                       QCTest[]
+  salesInvoicesApproved                                                         SalesInvoice[]           @relation("SalesInvoiceApprovedBy")
+  salesInvoicesCreated                                                          SalesInvoice[]           @relation("SalesInvoiceCreatedBy")
+  salesInvoicesReconciled                                                       SalesInvoice[]           @relation("SalesInvoiceReconciledBy")
+  salesOrders                                                                   SalesOrder[]
+  staffProfile                                                                  StaffProfile?
+  storeIssuances                                                                StoreIssuance[]
+  storeReceipts                                                                 StoreReceipt[]
+  supplierInvoicesApproved                                                      SupplierInvoice[]        @relation("SupplierInvoiceApprovedBy")
+  supplierInvoicesCreated                                                       SupplierInvoice[]        @relation("SupplierInvoiceCreatedBy")
+  supplierInvoicesReconciled                                                    SupplierInvoice[]        @relation("SupplierInvoiceReconciledBy")
+  tasksApproved                                                                 Task[]                   @relation("TaskApprovedBy")
+  tasksAssigned                                                                 Task[]                   @relation("TaskAssignedTo")
+  tasksCreated                                                                  Task[]                   @relation("TaskCreatedBy")
+  temperature_logs                                                              temperature_logs[]
+  farm                                                                          Farm?                    @relation(fields: [farmId], references: [id])
+  tenant                                                                        Tenant                   @relation(fields: [tenantId], references: [id])
+  vaccinationsAdministered                                                      Vaccination[]
+  verificationsEscalated                                                        Verification[]           @relation("VerificationEscalatedTo")
+  verificationsResolved                                                         Verification[]           @relation("VerificationResolvedBy")
+  verifications                                                                 Verification[]           @relation("VerificationVerifiedBy")
+  vetVisits                                                                     VetVisit[]
+  waterMeterReadings                                                            WaterMeterReading[]
+  weightRecords                                                                 WeightRecord[]
+  weight_samples                                                                weight_samples[]
+  workOrders                                                                    WorkOrder[]              @relation("WOAssignedTo")
+  workOrdersCreated                                                             WorkOrder[]              @relation("WOCreatedBy")
 
   @@unique([tenantId, email])
   @@map("users")
@@ -232,18 +230,17 @@ model Pen {
   egg_inventory_balance egg_inventory_balance[]
   egg_store_receipts    egg_store_receipts[]
   sections              PenSection[]
-  feedRequisitions      FeedRequisition[]
   farm                  Farm                    @relation(fields: [farmId], references: [id])
 
   @@map("pens")
 }
 
 model PenSection {
-  id                                                             String                @id @default(uuid())
+  id                                                             String                   @id @default(uuid())
   penId                                                          String
   name                                                           String
   capacity                                                       Int
-  isActive                                                       Boolean               @default(true)
+  isActive                                                       Boolean                  @default(true)
   broilerHarvests                                                BroilerHarvest[]
   chick_arrivals                                                 chick_arrivals[]
   dailyReports                                                   DailyReport[]
@@ -251,15 +248,15 @@ model PenSection {
   eggProduction                                                  EggProduction[]
   egg_store_receipts                                             egg_store_receipts[]
   feedConsumption                                                FeedConsumption[]
-  flock_transfers_flock_transfers_fromPenSectionIdTopen_sections flock_transfers[]     @relation("flock_transfers_fromPenSectionIdTopen_sections")
-  flock_transfers_flock_transfers_toPenSectionIdTopen_sections   flock_transfers[]     @relation("flock_transfers_toPenSectionIdTopen_sections")
+  flockLifecycleEvents                                           FlockLifecycleEvent[]
+  flock_transfers_flock_transfers_fromPenSectionIdTopen_sections flock_transfers[]        @relation("flock_transfers_fromPenSectionIdTopen_sections")
+  flock_transfers_flock_transfers_toPenSectionIdTopen_sections   flock_transfers[]        @relation("flock_transfers_toPenSectionIdTopen_sections")
   flocks                                                         Flock[]
   healthObservations                                             HealthObservation[]
   mortalityRecords                                               MortalityRecord[]
-  pen                                                            Pen                   @relation(fields: [penId], references: [id])
+  pen                                                            Pen                      @relation(fields: [penId], references: [id])
   workerAssignments                                              PenWorkerAssignment[]
   storeIssuances                                                 StoreIssuance[]
-  feedRequisitions                                               FeedRequisition[]
   tasks                                                          Task[]
   temperature_logs                                               temperature_logs[]
   waterMeterReadings                                             WaterMeterReading[]
@@ -270,41 +267,43 @@ model PenSection {
 }
 
 model Flock {
-  id                      String              @id @default(uuid())
+  id                      String                   @id @default(uuid())
   tenantId                String
   penSectionId            String
   batchCode               String
   operationType           PenOperationType
   breed                   String
-  dateOfPlacement         DateTime            @db.Date
+  dateOfPlacement         DateTime                 @db.Date
   initialCount            Int
   currentCount            Int
-  source                  FlockSource         @default(PURCHASED)
-  purchaseCost            Decimal?            @db.Decimal(14, 2)
-  purchaseCurrency        Currency            @default(NGN)
-  status                  FlockStatus         @default(ACTIVE)
+  source                  FlockSource              @default(PURCHASED)
+  purchaseCost            Decimal?                 @db.Decimal(14, 2)
+  purchaseCurrency        Currency                 @default(NGN)
+  status                  FlockStatus              @default(ACTIVE)
   notes                   String?
-  expectedLayingStartDate DateTime?           @db.Date
-  peakLayingRatePct       Decimal?            @db.Decimal(5, 2)
-  depletionDate           DateTime?           @db.Date
-  targetWeightG           Decimal?            @db.Decimal(8, 2)
-  expectedHarvestDate     DateTime?           @db.Date
-  targetFCR               Decimal?            @db.Decimal(4, 2)
-  createdAt               DateTime            @default(now())
-  updatedAt               DateTime            @updatedAt
-  stage                   String              @default("PRODUCTION")
-  stageUpdatedAt          DateTime?           @db.Timestamptz(6)
-  broodingEndDate         DateTime?           @db.Date
-  rearingStartDate        DateTime?           @db.Date
-  pointOfLayDate          DateTime?           @db.Date
+  expectedLayingStartDate DateTime?                @db.Date
+  peakLayingRatePct       Decimal?                 @db.Decimal(5, 2)
+  depletionDate           DateTime?                @db.Date
+  targetWeightG           Decimal?                 @db.Decimal(8, 2)
+  expectedHarvestDate     DateTime?                @db.Date
+  targetFCR               Decimal?                 @db.Decimal(4, 2)
+  createdAt               DateTime                 @default(now())
+  updatedAt               DateTime                 @updatedAt
+  stage                   String                   @default("PRODUCTION")
+  stageUpdatedAt          DateTime?                @db.Timestamptz(6)
+  broodingEndDate         DateTime?                @db.Date
+  rearingStartDate        DateTime?                @db.Date
+  pointOfLayDate          DateTime?                @db.Date
   originalPenSectionId    String?
+  depletionDisposition    String?                  @db.VarChar(20)
   broilerHarvests         BroilerHarvest[]
   chick_arrivals          chick_arrivals[]
   dailyReports            DailyReport[]
   eggProduction           EggProduction[]
   feedConsumption         FeedConsumption[]
+  flockLifecycleEvents    FlockLifecycleEvent[]
   flock_transfers         flock_transfers[]
-  penSection              PenSection          @relation(fields: [penSectionId], references: [id])
+  penSection              PenSection               @relation(fields: [penSectionId], references: [id])
   healthObservations      HealthObservation[]
   medicationLogs          MedicationLog[]
   mortalityRecords        MortalityRecord[]
@@ -313,7 +312,8 @@ model Flock {
   waterMeterReadings      WaterMeterReading[]
   weightRecords           WeightRecord[]
   weight_samples          weight_samples[]
-  feedRequisitions        FeedRequisition[]
+
+  @@unique([tenantId, batchCode])
   @@index([penSectionId, stage], map: "flocks_stage_penSectionId_idx")
   @@index([tenantId, stage], map: "flocks_stage_tenantId_idx")
   @@map("flocks")
@@ -412,23 +412,24 @@ model BroilerHarvest {
 }
 
 model MortalityRecord {
-  id               String           @id @default(uuid())
-  flockId          String
-  penSectionId     String
-  recordedById     String
-  recordDate       DateTime         @db.Date
-  count            Int
-  causeCode        MortalityCause   @default(UNKNOWN)
-  notes            String?
-  photoUrl         String?
-  approvedById     String?
-  approvedAt       DateTime?
-  submissionStatus SubmissionStatus @default(PENDING)
-  createdAt        DateTime         @default(now())
-  rejectionReason  String?
-  flock            Flock            @relation(fields: [flockId], references: [id])
-  penSection       PenSection       @relation(fields: [penSectionId], references: [id])
-  recordedBy       User             @relation(fields: [recordedById], references: [id])
+  id                     String                   @id @default(uuid())
+  flockId                String
+  penSectionId           String
+  recordedById           String
+  recordDate             DateTime                 @db.Date
+  count                  Int
+  causeCode              MortalityCause           @default(UNKNOWN)
+  notes                  String?
+  photoUrl               String?
+  approvedById           String?
+  approvedAt             DateTime?
+  submissionStatus       SubmissionStatus         @default(PENDING)
+  createdAt              DateTime                 @default(now())
+  rejectionReason        String?
+  flockLifecycleEvents FlockLifecycleEvent[]
+  flock                  Flock                    @relation(fields: [flockId], references: [id])
+  penSection             PenSection               @relation(fields: [penSectionId], references: [id])
+  recordedBy             User                     @relation(fields: [recordedById], references: [id])
 
   @@map("mortality_records")
 }
@@ -511,7 +512,6 @@ model FeedInventory {
   supplier       Supplier?         @relation(fields: [supplierId], references: [id])
   issuances      StoreIssuance[]   @relation("FeedIssuances")
   storeReceipts  StoreReceipt[]    @relation("FeedReceipts")
-  feedRequisitions FeedRequisition[]
 
   @@map("feed_inventory")
 }
@@ -591,19 +591,7 @@ model FeedRequisition {
   updatedAt              DateTime              @default(now()) @updatedAt @db.Timestamptz(6)
   penId                  String?
   sectionBreakdown       Json?
-  
-  pen                    Pen?                  @relation(fields: [penId], references: [id])
-  penSection             PenSection?           @relation(fields: [penSectionId], references: [id])
-  flock                  Flock                 @relation(fields: [flockId], references: [id])
-  feedInventory          FeedInventory         @relation(fields: [feedInventoryId], references: [id])
-  store                  Store?                @relation(fields: [storeId], references: [id])
-  submittedBy            User?                 @relation("FeedRequisitionSubmittedBy",  fields: [submittedById],  references: [id])
-  approvedBy             User?                 @relation("FeedRequisitionApprovedBy",   fields: [approvedById],   references: [id])
-  rejectedBy             User?                 @relation("FeedRequisitionRejectedBy",   fields: [rejectedById],   references: [id])
-  issuedBy               User?                 @relation("FeedRequisitionIssuedBy",     fields: [issuedById],     references: [id])
-  acknowledgedBy         User?                 @relation("FeedRequisitionAcknowledgedBy", fields: [acknowledgedById], references: [id])
-  closedBy               User?                 @relation("FeedRequisitionClosedBy",     fields: [closedById],     references: [id])
-  
+
   @@unique([penId, feedInventoryId, feedForDate], map: "feed_requisitions_pen_inventory_date_unique")
   @@unique([tenantId, requisitionNumber], map: "feed_requisitions_tenant_number_unique")
   @@index([feedInventoryId], map: "feed_requisitions_feed_inventory_idx")
@@ -716,21 +704,21 @@ model QCTest {
 }
 
 model Store {
-  id            String          @id @default(uuid())
-  farmId        String
-  name          String
-  storeType     StoreType
-  managerId     String?
-  location      String?
-  isActive      Boolean         @default(true)
-  createdAt     DateTime        @default(now())
-  feedInventory FeedInventory[]
-  inventory     InventoryItem[]
-  issuances     StoreIssuance[]
-  receipts      StoreReceipt[]
-  farm          Farm            @relation(fields: [farmId], references: [id])
-  verifications Verification[]
-  feedRequisitions FeedRequisition[]
+  id                     String                   @id @default(uuid())
+  farmId                 String
+  name                   String
+  storeType              StoreType
+  managerId              String?
+  location               String?
+  isActive               Boolean                  @default(true)
+  createdAt              DateTime                 @default(now())
+  feedInventory          FeedInventory[]
+  flockLifecycleEvents FlockLifecycleEvent[]
+  inventory              InventoryItem[]
+  issuances              StoreIssuance[]
+  receipts               StoreReceipt[]
+  farm                   Farm                     @relation(fields: [farmId], references: [id])
+  verifications          Verification[]
 
   @@map("stores")
 }
@@ -783,6 +771,8 @@ model StoreReceipt {
   verifiedAt       DateTime?
   notes            String?
   createdAt        DateTime       @default(now())
+  flockId          String?
+  fromSectionId    String?
   feedInventory    FeedInventory? @relation("FeedReceipts", fields: [feedInventoryId], references: [id])
   inventoryItem    InventoryItem? @relation("ItemReceipts", fields: [inventoryItemId], references: [id])
   receivedBy       User           @relation(fields: [receivedById], references: [id])
@@ -1018,29 +1008,30 @@ model BiosecurityLog {
 }
 
 model Task {
-  id              String       @id @default(uuid())
-  tenantId        String
-  penSectionId    String
-  assignedToId    String
-  createdById     String
-  approvedById    String?
-  taskType        TaskType
-  title           String
-  description     String?
-  dueDate         DateTime
-  completedAt     DateTime?
-  completionNotes String?
-  approvedAt      DateTime?
-  status          TaskStatus   @default(PENDING)
-  priority        TaskPriority @default(NORMAL)
-  isRecurring     Boolean      @default(false)
-  recurrenceRule  String?
-  createdAt       DateTime     @default(now())
-  updatedAt       DateTime     @updatedAt
-  approvedBy      User?        @relation("TaskApprovedBy", fields: [approvedById], references: [id])
-  assignedTo      User         @relation("TaskAssignedTo", fields: [assignedToId], references: [id])
-  createdBy       User         @relation("TaskCreatedBy", fields: [createdById], references: [id])
-  penSection      PenSection   @relation(fields: [penSectionId], references: [id])
+  id                     String                   @id @default(uuid())
+  tenantId               String
+  penSectionId           String
+  assignedToId           String
+  createdById            String
+  approvedById           String?
+  taskType               TaskType
+  title                  String
+  description            String?
+  dueDate                DateTime
+  completedAt            DateTime?
+  completionNotes        String?
+  approvedAt             DateTime?
+  status                 TaskStatus               @default(PENDING)
+  priority               TaskPriority             @default(NORMAL)
+  isRecurring            Boolean                  @default(false)
+  recurrenceRule         String?
+  createdAt              DateTime                 @default(now())
+  updatedAt              DateTime                 @updatedAt
+  flockLifecycleEvents FlockLifecycleEvent[]
+  approvedBy             User?                    @relation("TaskApprovedBy", fields: [approvedById], references: [id])
+  assignedTo             User                     @relation("TaskAssignedTo", fields: [assignedToId], references: [id])
+  createdBy              User                     @relation("TaskCreatedBy", fields: [createdById], references: [id])
+  penSection             PenSection               @relation(fields: [penSectionId], references: [id])
 
   @@map("tasks")
 }
@@ -1921,6 +1912,59 @@ model egg_store_receipts {
   @@index([tenantId, status], map: "idx_egg_store_receipts_tenant_status")
 }
 
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model FlockLifecycleEvent {
+  id                        String           @id @default(dbgenerated("(gen_random_uuid())::text"))
+  tenantId                  String           @map("tenant_id")
+  flockId                   String           @map("flock_id")
+  penSectionId              String           @map("pen_section_id")
+  eventType                 String           @map("event_type")
+  status                    String           @default("PENDING_APPROVAL")
+  birdCount                 Int              @map("bird_count")
+  remainingCount            Int              @map("remaining_count")
+  disposition               String
+  disposalMethod            String?          @map("disposal_method")
+  disposalLocation          String?          @map("disposal_location")
+  storeId                   String?          @map("store_id")
+  estimatedValuePerBird     Decimal?         @map("estimated_value_per_bird") @db.Decimal(10, 2)
+  currency                  String           @default("NGN")
+  reason                    String
+  notes                     String?
+  submittedById             String           @map("submitted_by_id")
+  submittedAt               DateTime         @default(now()) @map("submitted_at") @db.Timestamptz(6)
+  reviewedById              String?          @map("reviewed_by_id")
+  reviewedAt                DateTime?        @map("reviewed_at") @db.Timestamptz(6)
+  rejectionReason           String?          @map("rejection_reason")
+  storeAcknowledgedById     String?          @map("store_acknowledged_by_id")
+  storeAcknowledgedAt       DateTime?        @map("store_acknowledged_at") @db.Timestamptz(6)
+  storeActualCount          Int?             @map("store_actual_count")
+  storeDiscrepancyNotes     String?          @map("store_discrepancy_notes")
+  disposalVerifiedById      String?          @map("disposal_verified_by_id")
+  disposalVerifiedAt        DateTime?        @map("disposal_verified_at") @db.Timestamptz(6)
+  disposalVerificationNotes String?          @map("disposal_verification_notes")
+  mortalityRecordId         String?          @map("mortality_record_id")
+  storeReceiptId            String?          @map("store_receipt_id")
+  cleaningTaskId            String?          @map("cleaning_task_id")
+  createdAt                 DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                 DateTime         @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  // Relations — clean camelCase names
+  cleaningTask              Task?            @relation(fields: [cleaningTaskId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  disposalVerifiedBy        User?            @relation("flock_lifecycle_events_disposal_verified_by_idTousers", fields: [disposalVerifiedById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  flock                     Flock            @relation(fields: [flockId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  mortalityRecord           MortalityRecord? @relation(fields: [mortalityRecordId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  penSection                PenSection       @relation(fields: [penSectionId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  reviewedBy                User?            @relation("flock_lifecycle_events_reviewed_by_idTousers", fields: [reviewedById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  storeAcknowledgedBy       User?            @relation("flock_lifecycle_events_store_acknowledged_by_idTousers", fields: [storeAcknowledgedById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  store                     Store?           @relation(fields: [storeId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  submittedBy               User             @relation("flock_lifecycle_events_submitted_by_idTousers", fields: [submittedById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([flockId], map: "idx_fle_flock")
+  @@index([submittedById], map: "idx_fle_submitted_by")
+  @@index([tenantId, status], map: "idx_fle_tenant_status")
+  @@map("flock_lifecycle_events")
+}
+
 enum TenantStatus {
   ACTIVE
   SUSPENDED
@@ -2050,6 +2094,9 @@ enum ItemCategory {
   SPARE_PARTS
   FUEL
   OTHER
+  LIVE_BIRDS
+  MANURE
+  PROCESSED_CHICKEN
 }
 
 enum SupplierType {
