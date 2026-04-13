@@ -206,6 +206,7 @@ async function main() {
   // ── Stores ────────────────────────────────────────────────────────────────
   await prisma.store.upsert({ where: { id: 'store-feed' }, update: {}, create: { id: 'store-feed', farmId: farm.id, name: 'Main Feed Store', storeType: 'FEED', managerId: uid('user-store'), location: 'Block A' } });
   await prisma.store.upsert({ where: { id: 'store-med' },  update: {}, create: { id: 'store-med',  farmId: farm.id, name: 'Medication & Vaccine Store', storeType: 'MEDICATION', managerId: uid('user-store'), location: 'Block B' } });
+  await prisma.store.upsert({ where: { id: 'store-gen' },  update: {}, create: { id: 'store-gen',  farmId: farm.id, name: 'General Store', storeType: 'GENERAL', managerId: uid('user-store'), location: 'Block C' } });
 
   // ── Suppliers ─────────────────────────────────────────────────────────────
   await prisma.supplier.upsert({ where: { id: 'supplier-feeds' },  update: {}, create: { id: 'supplier-feeds',  tenantId: tenant.id, name: 'Lagos Agro Feeds Ltd',   supplierType: 'FEED',   contactName: 'Mr. Babatunde', phone: '+234-801-234-5678', email: 'sales@lagrosfeeds.ng',    address: 'Apapa, Lagos',          paymentTerms: 'Net 30', rating: 4 } });

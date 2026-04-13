@@ -113,8 +113,15 @@ const NAV_ITEMS = [
     opModes: ['BROILER_ONLY', 'BOTH'],
   },
   {
-    href: '/production/broilers', icon: 'Scale', label: 'Analytics', section: 'broiler', group: 'production',
-    roles: ['FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'],
+    // Operational performance page — broiler PM, workers, FM and above
+    href: '/broiler-performance', icon: 'Scale', label: 'Performance', section: 'broiler', group: 'production',
+    roles: ['PEN_MANAGER','PEN_WORKER','PRODUCTION_STAFF','FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN'],
+    opModes: ['BROILER_ONLY', 'BOTH'],
+  },
+  {
+    // Financial analytics — Farm Admin and above only (matches layer analytics gating)
+    href: '/production/broilers', icon: 'TrendingUp', label: 'Analytics', section: 'broiler', group: 'production',
+    roles: ['FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'],
     opModes: ['BROILER_ONLY', 'BOTH'],
   },
   {
@@ -1001,14 +1008,20 @@ export default function AppShell({ children }) {
 
     if (activeLayer || activeBroiler || activeModuleGroup) {
       setGroupOpen(prev => {
+        // Accordion: only keep the newly active group open, close everything else
         const next = {
-          ...prev,
-          ...(activeLayer       ? { layer: true }                      : {}),
-          ...(activeBroiler     ? { broiler: true }                    : {}),
-          ...(activeModuleGroup ? { [activeModuleGroup]: true }        : {}),
+          layer:        activeLayer       ? true  : false,
+          broiler:      activeBroiler     ? true  : false,
+          operations:   activeModuleGroup === 'operations'   ? true : false,
+          intelligence: activeModuleGroup === 'intelligence' ? true : false,
+          business:     activeModuleGroup === 'business'     ? true : false,
+          processing:   activeModuleGroup === 'processing'   ? true : false,
         };
-        try { localStorage.setItem('pfp_nav_groups', JSON.stringify(next)); } catch {}
-        return next;
+        // If nothing matched (e.g. dashboard page not in any group), preserve existing state
+        const anyActive = activeLayer || activeBroiler || activeModuleGroup;
+        const finalNext = anyActive ? next : prev;
+        try { localStorage.setItem('pfp_nav_groups', JSON.stringify(finalNext)); } catch {}
+        return finalNext;
       });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1016,7 +1029,11 @@ export default function AppShell({ children }) {
 
   const toggleGroup = (key) => {
     setGroupOpen(prev => {
-      const next = { ...prev, [key]: !prev[key] };
+      const isOpening = !prev[key];
+      // Accordion behaviour: opening a group collapses all others
+      const next = isOpening
+        ? { layer: false, broiler: false, operations: false, intelligence: false, business: false, processing: false, [key]: true }
+        : { ...prev, [key]: false };
       try { localStorage.setItem('pfp_nav_groups', JSON.stringify(next)); } catch {}
       return next;
     });

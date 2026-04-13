@@ -18,21 +18,28 @@ const PUBLIC_ROUTES = [
 
 // Role-based route restrictions
 const ROLE_ROUTES = {
-  '/owner':          ['CHAIRPERSON', 'SUPER_ADMIN'],
-  '/billing':        ['CHAIRPERSON', 'FARM_ADMIN', 'SUPER_ADMIN'],
-  '/farm':           ['FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'PEN_MANAGER', 'SUPER_ADMIN'],
-  '/farm-structure': ['FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'PEN_MANAGER', 'SUPER_ADMIN'],
-  '/health':         ['FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'PEN_MANAGER', 'SUPER_ADMIN'],
-  '/feed':           ['FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'PEN_MANAGER', 'STORE_MANAGER', 'SUPER_ADMIN'],
-  '/users':          ['FARM_ADMIN', 'FARM_MANAGER', 'CHAIRPERSON', 'SUPER_ADMIN'],
-  '/eggs':           ['PEN_WORKER', 'PEN_MANAGER', 'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'],
-  '/mortality':      ['PEN_WORKER', 'PEN_MANAGER', 'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'],
-  '/reports':        ['PEN_MANAGER', 'FARM_MANAGER', 'FARM_ADMIN', 'STORE_MANAGER', 'CHAIRPERSON', 'SUPER_ADMIN'],
-  '/audit':              ['FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'],
-  '/verification':       ['FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'PEN_MANAGER', 'STORE_MANAGER', 'SUPER_ADMIN'],
-  '/production/layers':  ['FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'],
-  '/production/broilers':['FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'],
-  '/egg-store':          ['STORE_MANAGER', 'STORE_CLERK', 'INTERNAL_CONTROL', 'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'],
+  '/owner':                 ['CHAIRPERSON', 'SUPER_ADMIN'],
+  '/billing':               ['CHAIRPERSON', 'FARM_ADMIN', 'SUPER_ADMIN'],
+  '/farm':                  ['FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'PEN_MANAGER', 'SUPER_ADMIN'],
+  '/farm-structure':        ['FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'PEN_MANAGER', 'SUPER_ADMIN'],
+  '/health':                ['FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'PEN_MANAGER', 'SUPER_ADMIN'],
+  '/feed':                  ['FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'PEN_MANAGER', 'STORE_MANAGER', 'SUPER_ADMIN'],
+  '/users':                 ['FARM_ADMIN', 'FARM_MANAGER', 'CHAIRPERSON', 'SUPER_ADMIN'],
+  '/eggs':                  ['PEN_WORKER', 'PEN_MANAGER', 'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'],
+  '/mortality':             ['PEN_WORKER', 'PEN_MANAGER', 'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'],
+  '/reports':               ['PEN_MANAGER', 'FARM_MANAGER', 'FARM_ADMIN', 'STORE_MANAGER', 'CHAIRPERSON', 'SUPER_ADMIN'],
+  '/audit':                 ['FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN', 'INTERNAL_CONTROL'],
+  '/verification':          ['FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'PEN_MANAGER', 'STORE_MANAGER', 'SUPER_ADMIN'],
+  '/production/layers':     ['FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'],
+  '/production/broilers':   ['FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'],
+  '/egg-store':             ['STORE_MANAGER', 'STORE_CLERK', 'INTERNAL_CONTROL', 'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'],
+  '/store':                 ['STORE_MANAGER', 'STORE_CLERK', 'INTERNAL_CONTROL', 'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'],
+  '/settings':              ['FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'],
+  '/feed-requisitions':     ['PEN_MANAGER', 'STORE_MANAGER', 'INTERNAL_CONTROL', 'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'],
+  '/pen-manager':           ['PEN_MANAGER', 'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'],
+  '/rearing':               ['PEN_MANAGER', 'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'],
+  '/brooding':              ['PEN_WORKER', 'PEN_MANAGER', 'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'],
+  '/finance':               ['FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN', 'ACCOUNTANT', 'INTERNAL_CONTROL'],
 };
 
 // Default landing page per role
@@ -48,6 +55,8 @@ const ROLE_HOME = {
   QC_TECHNICIAN:      '/dashboard',
   PRODUCTION_STAFF:   '/dashboard',
   SUPER_ADMIN:        '/dashboard',
+  INTERNAL_CONTROL:   '/dashboard',
+  ACCOUNTANT:         '/dashboard',
 };
 
 export async function middleware(request) {

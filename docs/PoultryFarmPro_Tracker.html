@@ -142,7 +142,8 @@
         <li>Phase 8-Supp-Arch <span class="tag tag-done">DONE</span> — AppShell 5-group navigation; BusinessUnit architecture documented; 6-product store inventory design</li>
         <li>Phase 8-Supplement <span class="tag tag-done">DONE</span> — Flock Lifecycle: /cull, /deplete, /lifecycle-summary routes deployed; store-mediated flow (TRANSFERRED_TO_STORE); CullModal + DepletionModal + LifecycleSummaryModal in app/farm/page.js</li>
         <li>Phase 8-Supp-Arch <span class="tag tag-done">DONE</span> — Navigation Architecture: AppShell 5-group sidebar (Production/Operations/Intelligence/Business/Processing); BusinessUnit design documented for Phase 10</li>
-        <li>Phase 8E <span class="tag tag-next">NEXT SPRINT</span> — Broiler Production Module Refactor (/production/broilers page)</li>
+        <li>Phase 8E <span class="tag tag-done">DONE</span> — /production/broilers: harvest scheduler, Ross 308/Cobb 500 curves, FCR, batch profitability, 6-tab analytics</li>
+        <li>Phase 8F <span class="tag tag-next">NEXT SPRINT</span> — Worker PWA (manifest, service worker, offline queue, web push)</li>
       </ul>
     </div>
     <div class="ctx-block">
@@ -516,37 +517,42 @@ const phases = [
       { t:"/store, /users, /reports, /billing moved into named groups (Operations/Intelligence/Business)", s:"done"},
       { t:"Collapsed sidebar: hover flyout panels for all 5 groups", s:"done"}
     ]},
-    { name:"Business Unit Architecture (Documented — Phase 10 implementation)", tasks:[
-      { t:"BusinessUnit model design: type FARM | FEED_MILL | PROCESSING | HATCHERY | DISTRIBUTION", s:"planned"},
-      { t:"InternalTransfer model design: fromBUId → toBUId, status DRAFT/PENDING/RECEIVED/REJECTED, lineItems", s:"planned"},
-      { t:"Store model generalised to businessUnitId scope (feeds Feed Mill + Processing stores)", s:"planned"},
-      { t:"Feed Mill BU: raw materials store (inputs) + finished feed store (outputs), Farm as client", s:"planned"},
-      { t:"Processing Plant BU: live intake store + dressed chicken store + by-products store", s:"planned"},
-      { t:"Inter-unit transfer flow: Farm depletes → InternalTransfer → Processing Plant receives", s:"planned"},
-      { t:"BU-scoped /store page: tabs change based on which BU the Store Manager belongs to", s:"planned"}
-    ]},
+
     { name:"Store Inventory — 6 Product Types", tasks:[
       { t:"Eggs: existing egg_store_receipts + egg_inventory_balance (fully built)", s:"done"},
       { t:"Live Birds (Broiler): StoreReceipt auto-created on BroilerHarvest save via /api/broiler-harvests", s:"done"},
       { t:"Live Birds (Layer / spent hens): StoreReceipt auto-created on flock TRANSFERRED_TO_STORE depletion", s:"done"},
       { t:"Processed Chicken: PROCESSED_CHICKEN ItemCategory added — Store Manager manually receives (interim until Phase 10)", s:"done"},
       { t:"Dried Manure: MANURE ItemCategory added — Store Manager manually receives as bags", s:"done"},
-      { t:"Unified /store page: tabs for all 6 product types, scoped to Store Manager's BU", s:"planned"}
     ]}
   ]},
 
-  { id:"p8e", name:"Phase 8E · Broiler Production Module Refactor", phaseStatus:"next", groups:[
+  // ── Rev 1.8: Phase 8E complete ──────────────────────────────────────────────
+  { id:"p8e", name:"Phase 8E · Broiler Production Module Refactor", phaseStatus:"done", groups:[
     { name:"Features", tasks:[
-      { t:"Dedicated /production/broilers replacing current broiler-performance page", s:"planned"},
-      { t:"Harvest scheduler — calendar view across all active batches", s:"planned"},
-      { t:"Weight chart vs Ross 308 / Cobb 500 breed standard curves", s:"planned"},
-      { t:"Alert when projected weight >5% below target with <7 days to harvest", s:"planned"},
-      { t:"Batch profitability comparison — last 5 batches (FCR, mortality %, revenue/bird)", s:"planned"},
-      { t:"Projected harvest date based on current growth rate", s:"planned"}
+      { t:"Dedicated /production/broilers replacing current broiler-performance page", s:"done"},
+      { t:"Harvest scheduler — card view across all active batches sorted by days to harvest", s:"done"},
+      { t:"Weight chart vs Ross 308 / Cobb 500 breed standard curves with linear interpolation", s:"done"},
+      { t:"Alert when projected weight >5% below target with <7 days to harvest", s:"done"},
+      { t:"Batch profitability comparison — last 5 batches (FCR, mortality %, revenue/bird)", s:"done"},
+      { t:"Projected harvest date based on current growth rate vs breed standard slope", s:"done"},
+      { t:"AppShell nav: /broiler-performance → /production/broilers, label → Analytics, roles FM/FA/Chair/SA", s:"done"},
+      { t:"middleware.js: /production/broilers route protection added", s:"done"}
+    ]},
+    { name:"Bug Fixes (Rev 1.8 session)", tasks:[
+      { t:"store/page.js: withdraw button fix — userId = user.id (not user.sub)", s:"done"},
+      { t:"flock-events/[id]/dispute: override restores diff birds to flock via $transaction", s:"done"},
+      { t:"farm/page.js: DepletionModal — HARVESTED removed, date locked to today, PM financial fields hidden", s:"done"},
+      { t:"farm/page.js: CullModal — PM financial fields (estimatedValuePerBird, currency) hidden", s:"done"},
+      { t:"farm/page.js: Lifecycle P&L button gated on canReview (FM+) not canLifecycle", s:"done"},
+      { t:"lifecycle-summary route: farm.settings → tenant.settings (Farm model has no settings field)", s:"done"},
+      { t:"AppShell NotifDropdown: navigates via n.data?.actionUrl on click", s:"done"},
+      { t:"middleware.js: /store, /settings, /feed-requisitions, /pen-manager, /rearing, /brooding, /finance added", s:"done"},
+      { t:"seed.js: store-gen (GENERAL store, Block C) added for fresh reseeds", s:"done"}
     ]}
   ]},
 
-  { id:"p8f", name:"Phase 8F · Worker PWA", phaseStatus:"planned", groups:[
+  { id:"p8f", name:"Phase 8F · Worker PWA", phaseStatus:"next", groups:[
     { name:"PWA Core", tasks:[
       { t:"public/manifest.json — standalone display, theme #6c63ff", s:"planned"},
       { t:"public/sw.js — offline caching, IndexedDB submission queue", s:"planned"},
@@ -619,7 +625,17 @@ const phases = [
     { name:"10.3 Output & Packaging", tasks:[{ t:"Whole bird & cut parts, packs produced, cold storage intake, best-before", s:"planned"}]},
     { name:"10.4 Cold Storage Inventory", tasks:[{ t:"Real-time stock by product/cut, FIFO alerts, temperature log, dispatch", s:"planned"}]},
     { name:"10.5 Processing Dashboard", tasks:[{ t:"Today's run metrics, cold storage stock, yield efficiency trend", s:"planned"}]},
-    { name:"10.6 API Routes", tasks:[{ t:"/api/processing/intake, /batches, /storage, /dispatch, /temperature", s:"planned"}]}
+    { name:"10.6 API Routes", tasks:[{ t:"/api/processing/intake, /batches, /storage, /dispatch, /temperature", s:"planned"}]},
+    { name:"10.7 Business Unit Architecture (carried from 8-Supp-Arch)", tasks:[
+      { t:"BusinessUnit model design: type FARM | FEED_MILL | PROCESSING | HATCHERY | DISTRIBUTION", s:"planned"},
+      { t:"InternalTransfer model design: fromBUId → toBUId, status DRAFT/PENDING/RECEIVED/REJECTED, lineItems", s:"planned"},
+      { t:"Store model generalised to businessUnitId scope (feeds Feed Mill + Processing stores)", s:"planned"},
+      { t:"Feed Mill BU: raw materials store (inputs) + finished feed store (outputs), Farm as client", s:"planned"},
+      { t:"Processing Plant BU: live intake store + dressed chicken store + by-products store", s:"planned"},
+      { t:"Inter-unit transfer flow: Farm depletes → InternalTransfer → Processing Plant receives", s:"planned"},
+      { t:"BU-scoped /store page: tabs for all product types, scoped to Store Manager's BU", s:"planned"},
+      { t:"Unified /store page: tabs for all 6 product types, scoped to Store Manager's BU", s:"planned"}
+    ]}
   ]},
 
   { id:"p10n", name:"Phase 10-NEW · Egg Handling & Inventory", phaseStatus:"active", groups:[
@@ -752,7 +768,7 @@ const phases = [
 // ─────────────────────────────────────────────────────────────────────────────
 // STATE
 // ─────────────────────────────────────────────────────────────────────────────
-const STORAGE_KEY = "pfp_tracker_v17"; // bumped to v17 — Rev 1.7 Phase 8-Supplement final + architecture update
+const STORAGE_KEY = "pfp_tracker_v18"; // bumped to v18 — Rev 1.8 Phase 8E done + bug-fix sprint
 let checkState = null; // [phaseIdx][groupIdx][taskIdx] = bool
 let activeFilter = "all";
 let allExpanded = false;
