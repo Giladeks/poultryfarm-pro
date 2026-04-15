@@ -46,28 +46,52 @@ export async function computeAggregates(penSectionId, forDate) {
   // dateEnd = midnight UTC on the next calendar day
   const dateEnd   = new Date(Date.UTC(year, month, day + 1, 0, 0, 0, 0));
 
-  const [eggAgg, feedAgg, mortAgg, waterRow, pendingEgg, pendingFeed, pendingMort] =
+  const [eggAgg, eggBirds, feedAgg, feedBirds, mortAgg, waterRow, pendingEgg, pendingFeed, pendingMort, activeFlock] =
     await Promise.all([
+      // Egg totals
       prisma.eggProduction.aggregate({
         where: { penSectionId, collectionDate: { gte: dateStart, lt: dateEnd } },
         _sum:   { totalEggs: true },
         _count: true,
       }),
+      // Egg bird snapshots — avg of birdsAtCollection across all sessions today
+      // Only include records where birdsAtCollection is set (written by new code)
+      prisma.eggProduction.findMany({
+        where: {
+          penSectionId,
+          collectionDate:   { gte: dateStart, lt: dateEnd },
+          birdsAtCollection: { not: null },
+        },
+        select: { birdsAtCollection: true },
+      }),
+      // Feed totals
       prisma.feedConsumption.aggregate({
         where: { penSectionId, recordedDate: { gte: dateStart, lt: dateEnd } },
         _sum:   { quantityKg: true },
         _count: true,
       }),
+      // Feed bird snapshots — avg of birdsAtDistribution across all distributions today
+      prisma.feedConsumption.findMany({
+        where: {
+          penSectionId,
+          recordedDate:        { gte: dateStart, lt: dateEnd },
+          birdsAtDistribution: { not: null },
+        },
+        select: { birdsAtDistribution: true },
+      }),
+      // Mortality totals
       prisma.mortalityRecord.aggregate({
         where: { penSectionId, recordDate: { gte: dateStart, lt: dateEnd } },
         _sum:   { count: true },
         _count: true,
       }),
+      // Water reading
       prisma.waterMeterReading.findFirst({
         where:   { penSectionId, readingDate: { gte: dateStart, lt: dateEnd } },
         orderBy: { readingDate: 'desc' },
         select:  { consumptionL: true },
       }),
+      // Pending counts (unchanged)
       prisma.eggProduction.count({
         where: { penSectionId, collectionDate: { gte: dateStart, lt: dateEnd }, submissionStatus: 'PENDING' },
       }),
@@ -77,7 +101,48 @@ export async function computeAggregates(penSectionId, forDate) {
       prisma.mortalityRecord.count({
         where: { penSectionId, recordDate: { gte: dateStart, lt: dateEnd }, submissionStatus: 'PENDING' },
       }),
+      // Active flock — for closingBirdCount
+      prisma.flock.findFirst({
+        where:   { penSectionId, status: 'ACTIVE' },
+        select:  { currentCount: true },
+        orderBy: { createdAt: 'desc' },
+      }),
     ]);
+
+  // ── Compute bird count snapshot values ──────────────────────────────────────
+  // avgBirdsForEggs: average of birdsAtCollection across all egg sessions today
+  // Falls back to flock.currentCount when no snapshot data exists (old records or no eggs)
+  const avgBirdsForEggs = (() => {
+    if (eggBirds.length > 0) {
+      const sum = eggBirds.reduce((s, r) => s + (r.birdsAtCollection || 0), 0);
+      return parseFloat((sum / eggBirds.length).toFixed(2));
+    }
+    return activeFlock?.currentCount ?? null;
+  })();
+
+  // avgBirdsForFeed: average of birdsAtDistribution across all feed events today
+  // Falls back to flock.currentCount when no snapshot data exists
+  const avgBirdsForFeed = (() => {
+    if (feedBirds.length > 0) {
+      const sum = feedBirds.reduce((s, r) => s + (r.birdsAtDistribution || 0), 0);
+      return parseFloat((sum / feedBirds.length).toFixed(2));
+    }
+    return activeFlock?.currentCount ?? null;
+  })();
+
+  // openingBirdCount: largest birdsAtCollection/birdsAtDistribution seen today
+  // (first record of the day will have the highest count — before any intra-day mortality)
+  const openingBirdCount = (() => {
+    const allSnapshots = [
+      ...eggBirds.map(r => r.birdsAtCollection),
+      ...feedBirds.map(r => r.birdsAtDistribution),
+    ].filter(Boolean);
+    if (allSnapshots.length > 0) return Math.max(...allSnapshots);
+    return activeFlock?.currentCount ?? null;
+  })();
+
+  // closingBirdCount: current flock count at time of this computation
+  const closingBirdCount = activeFlock?.currentCount ?? null;
 
   // Only fields that exist on the DailySummary Prisma model — safe to spread into create/update/upsert
   const dbFields = {
@@ -88,6 +153,11 @@ export async function computeAggregates(penSectionId, forDate) {
     pendingEggVerifications:       pendingEgg,
     pendingFeedVerifications:      pendingFeed,
     pendingMortalityVerifications: pendingMort,
+	// Bird count snapshot fields — power accurate n-day rate calculations
+    avgBirdsForEggs,
+    avgBirdsForFeed,
+    openingBirdCount,
+    closingBirdCount,
   };
 
   // Extra counts for task-linking (returned in API response, never written to DB)

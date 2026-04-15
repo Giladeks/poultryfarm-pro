@@ -366,7 +366,16 @@ function ReqCard({ req, userRole, onAction }) {
             {req.sectionBreakdown?.length > 0 && <span style={{marginLeft:6,padding:'1px 6px',background:'#ede9fe',color:'#6c63ff',borderRadius:10,fontSize:10,fontWeight:700}}>{req.sectionBreakdown.length} sections</span>}
           </div>
           <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>
-            Calc: <strong>{fmtBags(req.calculatedQtyKg, req.feedInventory?.bagWeightKg)}</strong>
+            Calc: <strong>
+              {req.totalBagsRequired != null
+                ? `${req.totalBagsRequired} bag${req.totalBagsRequired !== 1 ? 's' : ''}${
+                    req.totalRemainderKg && Number(req.totalRemainderKg) > 0
+                      ? ` + ${Number(req.totalRemainderKg).toFixed(1)} kg`
+                      : ''
+                  } (${fmt(req.calculatedQtyKg)} kg)`
+                : fmtBags(req.calculatedQtyKg, req.feedInventory?.bagWeightKg)
+              }
+            </strong>
             {req.requestedQtyKg && <> · Req: <strong>{fmtBags(req.requestedQtyKg, req.feedInventory?.bagWeightKg)}</strong></>}
             {req.approvedQtyKg  && <> · Approved: <strong>{fmtBags(req.approvedQtyKg, req.feedInventory?.bagWeightKg)}</strong></>}
             {req.issuedQtyKg    && <> · Issued: <strong>{fmtBags(req.issuedQtyKg, req.feedInventory?.bagWeightKg)}</strong></>}
@@ -426,19 +435,42 @@ function ReqCard({ req, userRole, onAction }) {
                     <th style={{padding:'6px 10px',textAlign:'left',color:'var(--text-muted)',fontWeight:600}}>Section</th>
                     <th style={{padding:'6px 10px',textAlign:'left',color:'var(--text-muted)',fontWeight:600}}>Flock</th>
                     <th style={{padding:'6px 10px',textAlign:'right',color:'var(--text-muted)',fontWeight:600}}>Birds</th>
-                    <th style={{padding:'6px 10px',textAlign:'right',color:'var(--text-muted)',fontWeight:600}}>Calc Qty</th>
-                    {req.issuedQtyKg    && <th style={{padding:'6px 10px',textAlign:'right',color:'var(--text-muted)',fontWeight:600}}>Issued</th>}
+                    <th style={{padding:'6px 10px',textAlign:'right',color:'var(--text-muted)',fontWeight:600}}>Bags</th>
+                    <th style={{padding:'6px 10px',textAlign:'right',color:'var(--text-muted)',fontWeight:600}}>Qty (kg)</th>
+                    {req.issuedQtyKg       && <th style={{padding:'6px 10px',textAlign:'right',color:'var(--text-muted)',fontWeight:600}}>Issued</th>}
                     {req.acknowledgedQtyKg && <th style={{padding:'6px 10px',textAlign:'right',color:'var(--text-muted)',fontWeight:600}}>Received</th>}
                   </tr>
                 </thead>
                 <tbody>
                   {req.sectionBreakdown.map((s, i) => (
                     <tr key={s.penSectionId || i} style={{borderTop:'1px solid var(--border-card)',background: i%2===0?'#fff':'#fafafa'}}>
-                      <td style={{padding:'7px 10px',fontWeight:600,color:'var(--text-primary)'}}>{s.sectionName}</td>
+                      <td style={{padding:'7px 10px',fontWeight:600,color:'var(--text-primary)'}}>
+                        {s.sectionName}
+                        {s.formulaUsed && s.formulaUsed !== 'BAG_COUNT' && (
+                          <span style={{
+                            marginLeft:5, padding:'1px 5px', borderRadius:8,
+                            fontSize:9, fontWeight:700,
+                            background: s.formulaUsed === 'DEFAULT' ? '#fef2f2' : '#fffbeb',
+                            color:      s.formulaUsed === 'DEFAULT' ? '#dc2626' : '#d97706',
+                          }}>
+                            {s.formulaUsed === 'DEFAULT' ? 'est.' : '7d avg'}
+                          </span>
+                        )}
+                      </td>
                       <td style={{padding:'7px 10px',color:'var(--text-muted)'}}>{s.batchCode}</td>
                       <td style={{padding:'7px 10px',textAlign:'right',color:'var(--text-secondary)'}}>{(s.birdCount||0).toLocaleString()}</td>
                       <td style={{padding:'7px 10px',textAlign:'right',fontWeight:700,color:'var(--purple)'}}>
-                        {fmtBags(s.calculatedQtyKg, req.feedInventory?.bagWeightKg)}
+                        {s.bagsRequired != null
+                          ? `${s.bagsRequired} bag${s.bagsRequired !== 1 ? 's' : ''}${
+                              s.remainderKg && Number(s.remainderKg) > 0
+                                ? ` +${Number(s.remainderKg).toFixed(1)}kg`
+                                : ''
+                            }`
+                          : `${Math.floor((s.calculatedQtyKg||0) / (Number(req.feedInventory?.bagWeightKg)||25))} bags`
+                        }
+                      </td>
+                      <td style={{padding:'7px 10px',textAlign:'right',color:'var(--text-secondary)',fontSize:11}}>
+                        {fmt(s.calculatedQtyKg)} kg
                       </td>
                       {req.issuedQtyKg && <td style={{padding:'7px 10px',textAlign:'right',color:'#6c63ff',fontWeight:600}}>{s.issuedQtyKg != null ? fmtBags(s.issuedQtyKg, req.feedInventory?.bagWeightKg) : '—'}</td>}
                       {req.acknowledgedQtyKg && <td style={{padding:'7px 10px',textAlign:'right',color:'#16a34a',fontWeight:600}}>{s.acknowledgedQtyKg != null ? fmtBags(s.acknowledgedQtyKg, req.feedInventory?.bagWeightKg) : '—'}</td>}

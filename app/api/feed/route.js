@@ -77,8 +77,8 @@ export async function GET(request) {
       SELECT
         fc."flockId",
         f."batchCode",
-        SUM(fc."quantityKg") AS "totalFeedKg",
-        COUNT(fc.id)         AS "consumptionEntries"
+        SUM(fc."quantityKg")::float      AS "totalFeedKg",
+        COUNT(fc.id)::int                AS "consumptionEntries"
       FROM feed_consumption fc
       JOIN flocks       f  ON f.id  = fc."flockId"
       JOIN pen_sections ps ON ps.id = f."penSectionId"

@@ -7,7 +7,11 @@ import { prisma } from '@/lib/db/prisma';
 import { verifyToken } from '@/lib/middleware/auth';
 import { z } from 'zod';
 import { sendFeedLowStockEmail, resolveEmailSettings } from '@/lib/services/notifications';
-import { calculateRequisitionQty, nextRequisitionNumber } from '@/lib/utils/feedRequisitionCalc';
+import {
+  calculateSectionRequisition,
+  calculateRequisitionQty,
+  nextRequisitionNumber,
+} from '@/lib/utils/feedRequisitionCalc';
 import { autoSubmitSummary } from '@/lib/utils/autoSubmitSummary';
 
 const ALLOWED_ROLES = [
@@ -217,9 +221,12 @@ export async function POST(request) {
       if (!penSectionId) penSectionId = flock.penSectionId;
     }
 
-    const gramsPerBird = (flock && flock.currentCount > 0)
+    const gramsPerBird = (quantityKg && flock.currentCount > 0)
       ? parseFloat(((quantityKg * 1000) / flock.currentCount).toFixed(2))
       : null;
+    // Snapshot bird count at distribution time — used by computeAggregates
+    // for accurate avgBirdsForFeed calculation in daily_summaries
+    const birdsAtDistribution = flock.currentCount > 0 ? flock.currentCount : null;
 
     // Re-fetch feedItem for stock-deduction (needed for both paths)
     const feedItemFinal = await prisma.feedInventory.findUnique({
@@ -241,6 +248,7 @@ export async function POST(request) {
           bagWeightKg,
           quantityKg,
           gramsPerBird,
+		  birdsAtDistribution,   // ← snapshot at distribution time
           costAtTime,
           currency:         'NGN',
           recordedById:     user.sub,
@@ -292,17 +300,37 @@ export async function POST(request) {
       }).catch(() => {});
     }
 
-    // ── Phase 8B+: Requisition draft trigger (fire-and-forget) ───────────────
-    // After a worker logs feed, the system auto-calculates tomorrow's need and
-    // upserts a DRAFT requisition for the PM to review and submit.
-    upsertDraftRequisition({
-      tenantId:       user.tenantId,
-      penSectionId:   penSectionId,
-      flockId:        flockId,
-      feedInventoryId,
-      triggerLogId:   record.id,
-      recordedDate,
-    }).catch(err => console.error('[REQUISITION] Draft upsert error:', err.message));
+    // ── Requisition draft + auto-submit (fire-and-forget) ────────────────────
+    // 1. Upsert the DRAFT with today's bag-count data
+    // 2. If past the farm's cutoff time, auto-escalate to SUBMITTED
+    if (penSectionId) {
+      prisma.penSection.findUnique({
+        where:   { id: penSectionId },
+        include: { pen: { include: { farm: { select: { id: true, autoSummaryTime: true } } } } },
+      }).then(async sec => {
+        if (!sec) return;
+        const cutoffTime = sec.pen.farm.autoSummaryTime || '19:00';
+
+        // Step 1 — upsert draft
+        await upsertDraftRequisition({
+          tenantId:       user.tenantId,
+          penSectionId,
+          flockId,
+          feedInventoryId,
+          triggerLogId:   record.id,
+          recordedDate,
+        });
+
+        // Step 2 — auto-submit if past cutoff
+        await autoSubmitRequisition({
+          tenantId:       user.tenantId,
+          penSectionId,
+          feedInventoryId,
+          recordedDate,
+          autoSummaryTime: cutoffTime,
+        });
+      }).catch(err => console.error('[REQUISITION] Trigger error:', err?.message));
+    }
 
     return NextResponse.json({
       consumption: record,
@@ -376,20 +404,21 @@ async function checkLowFeedStock(tenantId, feedInventoryId, feedItem, stockAfter
 // Creates or updates a DRAFT FeedRequisition at the PEN level for the next day.
 //
 // Design:
-//   • One requisition per pen per feed type per day (not per section).
-//   • sectionBreakdown (JSONB) stores per-section quantities so the store
-//     knows exactly how much to issue to each section.
-//   • When any section in the pen logs feed, the pen-level requisition is
-//     refreshed to include ALL active sections in that pen for the same feed type.
+//   • One requisition per pen per FEED TYPE per day.
+//   • Only sections that have consumed this specific feedInventoryId in the
+//     past 7 days are included — prevents rearing/production cross-contamination
+//     in mixed-stage pens where different feed types are used simultaneously.
+//   • sectionBreakdown (JSONB) stores per-section bag counts for the store.
+//   • Primary formula: emptyBagsToday + 1 − fullBagsRemainingInSection
+//   • Fallback: 7-day kg average when no bag-count data is available.
 async function upsertDraftRequisition({
   tenantId, penSectionId, flockId, feedInventoryId, triggerLogId, recordedDate,
 }) {
   if (!penSectionId || !flockId || !feedInventoryId) return;
 
   // The requisition is FOR the next day
-  const feedForDate = new Date(recordedDate);
-  feedForDate.setDate(feedForDate.getDate() + 1);
-  feedForDate.setHours(0, 0, 0, 0);
+  const rd = typeof recordedDate === 'string' ? new Date(recordedDate) : recordedDate;
+  const feedForDate = new Date(Date.UTC(rd.getFullYear(), rd.getMonth(), rd.getDate() + 1));
 
   // Resolve pen and feed inventory
   const [section, feedInv] = await Promise.all([
@@ -404,14 +433,37 @@ async function upsertDraftRequisition({
   ]);
   if (!section || !feedInv) return;
 
-  const penId      = section.pen.id;
+  const penId       = section.pen.id;
   const bagWeightKg = Number(feedInv.bagWeightKg) || 25;
 
-  // Find ALL active sections in this pen that have an active flock
+  // Date boundaries for today and 7-day lookback
+  // Use UTC to avoid WAT/UTC shift issues (server runs WAT = UTC+1)
+  const todayStart   = new Date(Date.UTC(rd.getFullYear(), rd.getMonth(), rd.getDate()));
+  const todayEnd     = new Date(Date.UTC(rd.getFullYear(), rd.getMonth(), rd.getDate() + 1));
+  const sevenDaysAgo = new Date(Date.UTC(rd.getFullYear(), rd.getMonth(), rd.getDate() - 6));
+
+  // ── Find sibling flocks scoped to this feed type ──────────────────────────
+  // Only include sections that have consumed THIS feedInventoryId in the past 7 days.
+  // This prevents rearing-stage pullets (eating grower feed) appearing on the
+  // layer mash requisition for the same pen, and vice versa.
+  // The triggering section is always included even if it's the first day.
   const siblingFlocks = await prisma.flock.findMany({
     where: {
       status:     'ACTIVE',
       penSection: { penId, isActive: true },
+      OR: [
+        // Always include the section that triggered this upsert
+        { penSectionId },
+        // Include siblings that have consumed this feed type recently
+        {
+          feedConsumption: {
+            some: {
+              feedInventoryId,
+              recordedDate: { gte: sevenDaysAgo, lt: todayEnd },
+            },
+          },
+        },
+      ],
     },
     select: {
       id: true, currentCount: true, batchCode: true,
@@ -421,66 +473,82 @@ async function upsertDraftRequisition({
 
   if (siblingFlocks.length === 0) return;
 
-  const sevenDaysAgo = new Date(recordedDate);
-  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
-  sevenDaysAgo.setHours(0, 0, 0, 0);
-  const recordedEnd = new Date(recordedDate);
-  recordedEnd.setHours(23, 59, 59, 999);
-
-  // Calculate per-section quantities
+  // ── Compute per-section bag requirements ──────────────────────────────────
   const breakdownEntries = await Promise.all(siblingFlocks.map(async (f) => {
+    // Today's logs — used for primary bag-count formula
+    const todayLogs = await prisma.feedConsumption.findMany({
+      where: {
+        penSectionId:   f.penSection.id,
+        feedInventoryId,
+        recordedDate:   { gte: todayStart, lt: todayEnd },
+      },
+      select: {
+        bagsUsed:    true,
+        remainingKg: true,
+        bagWeightKg: true,
+        quantityKg:  true,
+        recordedDate: true,
+        feedTime:    true,
+      },
+      orderBy: { feedTime: 'asc' },
+    });
+
+    // 7-day logs — fallback formula when no bag-count data
     const recentLogs = await prisma.feedConsumption.findMany({
       where: {
         penSectionId:   f.penSection.id,
         feedInventoryId,
-        recordedDate:   { gte: sevenDaysAgo, lte: recordedEnd },
+        recordedDate:   { gte: sevenDaysAgo, lt: todayStart }, // exclude today
       },
       select:  { quantityKg: true, recordedDate: true },
       orderBy: { recordedDate: 'desc' },
     });
 
-    const calc = calculateRequisitionQty({
+    const calc = calculateSectionRequisition({
+      todayLogs,
       recentLogs,
       currentBirdCount: f.currentCount,
+      bagWeightKg,
       bufferPct:        5,
-      lookbackDays:     7,
     });
 
-    // Bag breakdown for this section
-    const bags        = Math.floor(calc.calculatedQtyKg / bagWeightKg);
-    const remainderKg = parseFloat((calc.calculatedQtyKg % bagWeightKg).toFixed(2));
-
     return {
-      penSectionId:          f.penSection.id,
-      sectionName:           f.penSection.name,
-      flockId:               f.id,
-      batchCode:             f.batchCode,
-      birdCount:             f.currentCount,
+      penSectionId:           f.penSection.id,
+      sectionName:            f.penSection.name,
+      flockId:                f.id,
+      batchCode:              f.batchCode,
+      birdCount:              f.currentCount,
       avgConsumptionPerBirdG: calc.avgConsumptionPerBirdG,
-      calculatedQtyKg:       calc.calculatedQtyKg,
-      bags,
-      remainderKg,
-      requestedQtyKg:        null,  // PM fills on submit
-      issuedQtyKg:           null,  // Store fills on issue
-      acknowledgedQtyKg:     null,  // PM fills on acknowledge
+      bagsRequired:           calc.bagsRequired,
+      remainderKg:            calc.remainderKg,
+      calculatedQtyKg:        calc.calculatedQtyKg,
+      formulaUsed:            calc.formulaUsed,
+      basis:                  calc.basis,
+      // Lifecycle fields filled by later workflow stages
+      requestedQtyKg:         null,
+      issuedQtyKg:            null,
+      acknowledgedQtyKg:      null,
     };
   }));
 
-  // Sum across all sections for the pen total
-  const totalCalcKg = parseFloat(
-    breakdownEntries.reduce((s, e) => s + e.calculatedQtyKg, 0).toFixed(2)
+  // ── Pen-level totals ──────────────────────────────────────────────────────
+  const totalBagsRequired = breakdownEntries.reduce((s, e) => s + (e.bagsRequired || 0), 0);
+  const totalRemainderKg  = parseFloat(
+    breakdownEntries.reduce((s, e) => s + (e.remainderKg || 0), 0).toFixed(2)
   );
-  if (totalCalcKg <= 0) return;
+  const totalCalcKg = parseFloat(
+    breakdownEntries.reduce((s, e) => s + (e.calculatedQtyKg || 0), 0).toFixed(2)
+  );
 
-  const totalBags      = Math.floor(totalCalcKg / bagWeightKg);
-  const totalRemainKg  = parseFloat((totalCalcKg % bagWeightKg).toFixed(2));
+  if (totalCalcKg <= 0 && totalBagsRequired <= 0) return;
 
-  // Representative values (for backward compat fields) — use triggering section
-  const trigger = breakdownEntries.find(e => e.penSectionId === penSectionId) || breakdownEntries[0];
+  // Representative trigger entry for backward-compat scalar fields
+  const trigger = breakdownEntries.find(e => e.penSectionId === penSectionId)
+    || breakdownEntries[0];
 
-  // Upsert: update if DRAFT exists for this pen/feedType/date
+  // ── Upsert the pen-level requisition ─────────────────────────────────────
   const existing = await prisma.feedRequisition.findFirst({
-    where: { penId, feedInventoryId, feedForDate, status: 'DRAFT' },
+    where:  { penId, feedInventoryId, feedForDate, status: 'DRAFT' },
     select: { id: true },
   });
 
@@ -489,9 +557,11 @@ async function upsertDraftRequisition({
       where: { id: existing.id },
       data: {
         calculatedQtyKg:        totalCalcKg,
+        totalBagsRequired,
+        totalRemainderKg,
         avgConsumptionPerBirdG: trigger.avgConsumptionPerBirdG,
         currentBirdCount:       breakdownEntries.reduce((s, e) => s + e.birdCount, 0),
-        calculationDays:        7,
+        calculationDays:        1,
         triggerLogId,
         sectionBreakdown:       breakdownEntries,
       },
@@ -504,16 +574,18 @@ async function upsertDraftRequisition({
         tenantId,
         requisitionNumber:      reqNumber,
         penId,
-        penSectionId:           null,           // pen-level — no single section
-        flockId:                trigger.flockId, // representative flock
+        penSectionId:           null,             // pen-level — no single section
+        flockId:                trigger.flockId,  // representative flock
         feedInventoryId,
         storeId:                feedInv?.storeId ?? undefined,
         feedForDate,
         triggerLogId,
         calculatedQtyKg:        totalCalcKg,
+        totalBagsRequired,
+        totalRemainderKg,
         avgConsumptionPerBirdG: trigger.avgConsumptionPerBirdG,
         currentBirdCount:       breakdownEntries.reduce((s, e) => s + e.birdCount, 0),
-        calculationDays:        7,
+        calculationDays:        1,
         sectionBreakdown:       breakdownEntries,
         status:                 'DRAFT',
       },
@@ -526,32 +598,134 @@ async function upsertDraftRequisition({
         penSectionId: { in: penSectionIds },
         user: { role: 'PEN_MANAGER', isActive: true },
       },
-      select:  { userId: true },
+      select:   { userId: true },
       distinct: ['userId'],
     });
 
     if (pmAssignments.length > 0) {
-      const totalBagsStr = totalRemainKg > 0
-        ? `${totalBags} bags + ${totalRemainKg} kg`
-        : `${totalBags} bags`;
+      const bagStr = totalRemainderKg > 0
+        ? `${totalBagsRequired} bags + ${totalRemainderKg} kg`
+        : `${totalBagsRequired} bag${totalBagsRequired !== 1 ? 's' : ''}`;
+
       await prisma.notification.createMany({
         data: pmAssignments.map(a => ({
           tenantId,
           recipientId: a.userId,
           type:        'ALERT',
           title:       'Feed Requisition Ready for Review',
-          message:     `Draft requisition for ${section.pen.name} on ${feedForDate.toLocaleDateString('en-NG', { day: 'numeric', month: 'short' })}. Total: ${totalCalcKg} kg (${totalBagsStr}) across ${breakdownEntries.length} section${breakdownEntries.length !== 1 ? 's' : ''}.`,
-          data:        {
+          message:     `Draft requisition for ${section.pen.name} — ${feedInv.feedType} on ${
+            feedForDate.toLocaleDateString('en-NG', { day: 'numeric', month: 'short' })
+          }. Total: ${bagStr} across ${breakdownEntries.length} section${breakdownEntries.length !== 1 ? 's' : ''}.`,
+          data: {
             entityType:        'FeedRequisition',
             requisitionNumber: reqNumber,
             penId,
             feedForDate:       feedForDate.toISOString(),
-            calculatedQtyKg:   totalCalcKg,
+            totalBagsRequired,
+            totalCalcKg,
           },
           channel: 'IN_APP',
         })),
         skipDuplicates: true,
       });
     }
+  }
+}
+
+// ─── Requisition auto-submit (cutoff-time gated) ─────────────────────────────
+// Called fire-and-forget after each feed record save, same as autoSubmitSummary.
+// Checks if it's past the farm's autoSummaryTime. If so, any DRAFT requisition
+// for tomorrow that belongs to this pen is automatically submitted (DRAFT → SUBMITTED),
+// saving the PM from having to act before the store's preparation window closes.
+//
+// The PM still has until the cutoff to make manual adjustments. If they've already
+// submitted or the requisition doesn't exist yet (first feed of the day), nothing happens.
+async function autoSubmitRequisition({ tenantId, penSectionId, feedInventoryId, recordedDate, autoSummaryTime = '19:00' }) {
+  try {
+    // Check if we're past the cutoff
+    const [cutoffH, cutoffM] = autoSummaryTime.split(':').map(Number);
+    const now        = new Date();
+    const nowMinutes = now.getHours() * 60 + now.getMinutes();
+    const cutoffMins = cutoffH * 60 + (cutoffM || 0);
+    if (nowMinutes < cutoffMins) return; // before cutoff — PM still has time
+
+    // Resolve penId
+    const section = await prisma.penSection.findUnique({
+      where:  { id: penSectionId },
+      select: { penId: true },
+    });
+    if (!section) return;
+
+    const rd = typeof recordedDate === 'string' ? new Date(recordedDate) : recordedDate;
+    const feedForDate = new Date(Date.UTC(rd.getFullYear(), rd.getMonth(), rd.getDate() + 1));
+
+    // Find DRAFT requisition for this pen + feed type + tomorrow
+    const draft = await prisma.feedRequisition.findFirst({
+      where: {
+        penId:          section.penId,
+        feedInventoryId,
+        feedForDate,
+        status:         'DRAFT',
+      },
+      select: {
+        id: true, requisitionNumber: true, calculatedQtyKg: true,
+        totalBagsRequired: true, totalRemainderKg: true,
+        sectionBreakdown: true,
+      },
+    });
+    if (!draft) return; // no draft — upsert hasn't run yet or was already submitted
+
+    // Auto-submit: set requestedQtyKg = calculatedQtyKg (system recommendation)
+    const updated = await prisma.feedRequisition.update({
+      where: { id: draft.id },
+      data: {
+        status:          'SUBMITTED',
+        requestedQtyKg:  draft.calculatedQtyKg,
+        submittedAt:     new Date(),
+        // No submittedById — system submission; IC can see this in audit
+        pmNotes:         'Auto-submitted by system at cutoff time. PM had not reviewed.',
+        deviationPct:    0, // system used its own recommendation
+      },
+    });
+
+    // Notify IC team
+    const icUsers = await prisma.user.findMany({
+      where: {
+        tenantId,
+        role:     { in: ['INTERNAL_CONTROL', 'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'] },
+        isActive: true,
+      },
+      select: { id: true },
+    });
+
+    if (icUsers.length > 0) {
+      const bagStr = (draft.totalRemainderKg && Number(draft.totalRemainderKg) > 0)
+        ? `${draft.totalBagsRequired} bags + ${Number(draft.totalRemainderKg).toFixed(1)} kg`
+        : `${draft.totalBagsRequired ?? '?'} bags`;
+
+      await prisma.notification.createMany({
+        data: icUsers.map(u => ({
+          tenantId,
+          recipientId: u.id,
+          type:        'ALERT',
+          title:       `Feed Requisition Auto-Submitted — ${draft.requisitionNumber}`,
+          message:     `Requisition ${draft.requisitionNumber} for ${
+            feedForDate.toLocaleDateString('en-NG', { day: 'numeric', month: 'short' })
+          } was auto-submitted at cutoff (${bagStr}). PM did not review. Awaiting IC approval.`,
+          data: {
+            entityType:        'FeedRequisition',
+            entityId:          draft.id,
+            requisitionNumber: draft.requisitionNumber,
+            autoSubmitted:     true,
+          },
+          channel: 'IN_APP',
+        })),
+        skipDuplicates: true,
+      });
+    }
+
+    console.log(`[REQUISITION] Auto-submitted ${draft.requisitionNumber} at cutoff (${autoSummaryTime})`);
+  } catch (err) {
+    console.error('[REQUISITION] Auto-submit error:', err?.message);
   }
 }

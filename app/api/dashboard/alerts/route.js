@@ -152,27 +152,36 @@ export async function GET(request) {
         },
       }),
 
+// Read from daily_summaries snapshots instead of averaging per-session rates.
+// This uses the pre-computed avgBirdsForEggs denominator for correctness.
+
       // Statistical: 30-day avg laying rate per section (baseline)
-      prisma.eggProduction.groupBy({
+      // Read from daily_summaries — uses avgBirdsForEggs for correct per-day denominator
+      prisma.dailySummary.groupBy({
         by:    ['penSectionId'],
         where: {
-          collectionDate:   { gte: thirtyDaysAgo, lt: today },
-          submissionStatus: { in: ['PENDING', 'APPROVED'] },
-          ...sectionFilterDirect,
+          summaryDate: { gte: thirtyDaysAgo, lt: today },
+          ...(allowedSectionIds ? { penSectionId: { in: allowedSectionIds } }
+            : { penSection: { pen: { farm: { tenantId: user.tenantId } } } }),
         },
-        _avg: { layingRatePct: true },
+        _sum:   { totalEggsCollected: true },
+        _avg:   { avgBirdsForEggs: true },
         _count: true,
       }),
 
       // Statistical: today's laying rate per section
-      prisma.eggProduction.groupBy({
-        by:    ['penSectionId'],
+      prisma.dailySummary.findMany({
         where: {
-          collectionDate:   { gte: today },
-          submissionStatus: { in: ['PENDING', 'APPROVED'] },
-          ...sectionFilterDirect,
+          summaryDate: { gte: today },
+          ...(allowedSectionIds ? { penSectionId: { in: allowedSectionIds } }
+            : { penSection: { pen: { farm: { tenantId: user.tenantId } } } }),
         },
-        _avg: { layingRatePct: true },
+        select: {
+          penSectionId:       true,
+          totalEggsCollected: true,
+          avgBirdsForEggs:    true,
+          closingBirdCount:   true,
+        },
       }),
 
       // Statistical: 30-day total feed per section
@@ -331,38 +340,61 @@ export async function GET(request) {
     // ─────────────────────────────────────────────────────────────────────────
 
     // 6. Laying rate drop vs section's own 30-day baseline
-    //    Only fires when today has ≥1 record AND the baseline has ≥7 days of data
-    const baselineBySection = Object.fromEntries(
-      layingRate30d.map(r => [r.penSectionId, { avg: Number(r._avg.layingRatePct || 0), days: r._count }])
+    function rateFromSummary(eggs, avgBirds, closingBirds) {
+      const denominator = avgBirds || closingBirds;
+      if (!denominator || denominator <= 0 || !eggs) return null;
+      return parseFloat((eggs / denominator * 100).toFixed(1));
+    }
+
+    // 30-day baseline rate per section
+    // layingRate30d is the destructured name from Promise.all
+    const baselineRates = Object.fromEntries(
+      (layingRate30d || []).map(r => [
+        r.penSectionId,
+        rateFromSummary(
+          r._sum.totalEggsCollected,
+          r._avg.avgBirdsForEggs,
+          null
+        ),
+      ])
     );
-    const todayRateBySection = Object.fromEntries(
-      layingRateToday.map(r => [r.penSectionId, Number(r._avg.layingRatePct || 0)])
+
+    // Today's rate per section
+    // layingRateToday is the destructured name from Promise.all
+    const todayRates = Object.fromEntries(
+      (layingRateToday || []).map(r => [
+        r.penSectionId,
+        rateFromSummary(
+          r.totalEggsCollected,
+          r.avgBirdsForEggs ? Number(r.avgBirdsForEggs) : null,
+          r.closingBirdCount,
+        ),
+      ])
     );
 
-    activeFlocks
-      .filter(f => f.operationType === 'LAYER')
-      .forEach(flock => {
-        const baseline = baselineBySection[flock.penSectionId];
-        const todayRate = todayRateBySection[flock.penSectionId];
-        if (!baseline || baseline.days < 7 || !todayRate || baseline.avg < 5) return;
+    // LAYING_RATE_DROP: flag sections where today's rate is >15% below 30-day baseline
+    Object.entries(todayRates).forEach(([sectionId, todayRate]) => {
+      const baseline = baselineRates[sectionId];
+      if (!todayRate || !baseline || baseline <= 0) return;
+      const dropPct = ((baseline - todayRate) / baseline) * 100;
+      if (dropPct <= 15) return;
 
-        const drop = baseline.avg > 0
-          ? ((baseline.avg - todayRate) / baseline.avg) * 100
-          : 0;
-        const penLabel = `${flock.penSection.pen.name} › ${flock.penSection.name}`;
+      const flock   = flockBySection[sectionId];
+      const penLabel = flock
+        ? `${flock.penSection.pen.name} › ${flock.penSection.name}`
+        : sectionId;
 
-        if (drop >= 25) {
-          alerts.push({ id: mkId(), severity: 'CRITICAL', type: 'LAYING_RATE_DROP',
-            title:   `Laying rate collapsed: ${todayRate.toFixed(1)}% (baseline ${baseline.avg.toFixed(1)}%)`,
-            message: `${drop.toFixed(0)}% drop from the 30-day baseline for flock ${flock.batchCode}. Investigate disease, feed, or stress.`,
-            context: penLabel, actionUrl: '/performance', createdAt: now.toISOString() });
-        } else if (drop >= 15) {
-          alerts.push({ id: mkId(), severity: 'WARNING', type: 'LAYING_RATE_DROP',
-            title:   `Laying rate drop: ${todayRate.toFixed(1)}% (baseline ${baseline.avg.toFixed(1)}%)`,
-            message: `${drop.toFixed(0)}% below 30-day baseline for flock ${flock.batchCode}. Monitor closely.`,
-            context: penLabel, actionUrl: '/performance', createdAt: now.toISOString() });
-        }
+      alerts.push({
+        id:        mkId(),
+        severity:  dropPct > 25 ? 'CRITICAL' : 'WARNING',   // uppercase — matches RANK{}
+        type:      'LAYING_RATE_DROP',
+        title:     `Laying rate dropped ${parseFloat(dropPct.toFixed(1))}% below baseline`,
+        message:   `Today: ${todayRate}% vs 30-day baseline: ${baseline}%. Check flock health and feed intake.`,
+        context:   penLabel,
+        actionUrl: '/performance',
+        createdAt: now.toISOString(),
       });
+    });
 
     // 7. Zero-mortality streak (≥5 days no deaths in an active flock)
     //    Suspicious for large flocks — some natural attrition is expected

@@ -24,8 +24,9 @@ const ALLOWED_ROLES = [
 ];
 
 const INCLUDE = {
-  pen:           { select: { id: true, name: true } },
-  penSection:    { select: { id: true, name: true, pen: { select: { name: true } } } },
+  // NOTE: `pen` is NOT here — FeedRequisition.penId is a plain string with no
+  // Prisma relation. Pen name is retrieved via penSection → pen below.
+  penSection:    { select: { id: true, name: true, pen: { select: { id: true, name: true, operationType: true } } } },
   flock:         { select: { id: true, batchCode: true, currentCount: true, operationType: true } },
   feedInventory: { select: { id: true, feedType: true, currentStockKg: true, bagWeightKg: true } },
   store:         { select: { id: true, name: true } },

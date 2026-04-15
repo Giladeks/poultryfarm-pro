@@ -39,7 +39,6 @@ const VIEW_ROLES    = ['PEN_MANAGER', 'STORE_MANAGER', 'STORE_CLERK', 'INTERNAL_
                        'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
 
 const INCLUDE = {
-  pen:           { select: { id: true, name: true } },
   penSection:    { select: { id: true, name: true, pen: { select: { name: true } } } },
   flock:         { select: { id: true, batchCode: true, currentCount: true } },
   feedInventory: { select: { id: true, feedType: true, currentStockKg: true, bagWeightKg: true, costPerKg: true } },

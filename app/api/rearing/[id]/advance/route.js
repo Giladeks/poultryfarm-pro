@@ -99,6 +99,7 @@ export async function POST(request, { params: rawParams }) {
           looseEggs:         firstEggCollection.looseEggs,
           totalEggs:         firstEggCollection.totalEggs,
           layingRatePct:     firstEggCollection.layingRatePct,
+		  birdsAtCollection:  flock.currentCount,   // ← snapshot at advance time
           gradeACount:       firstEggCollection.gradeACount ?? null,
           gradeBCrates:      firstEggCollection.gradeBCrates ?? null,
           gradeBLoose:       firstEggCollection.gradeBLoose  ?? null,

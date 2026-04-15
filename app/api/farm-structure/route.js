@@ -95,7 +95,7 @@ export async function GET(request) {
       ? { penSectionId: { in: allowedSectionIds } }
       : { penSection: { pen: { farm: { tenantId: user.tenantId } } } };
 
-    const [todayMortality, weekMortality, weekFeed, todayEggs, weekEggs, weekWeights] =
+    const [todayMortality, weekMortality, weekFeed, todayEggs, weekEggs, weekWeights, weekSummaries] =
       await Promise.all([
         prisma.mortalityRecord.groupBy({
           by: ['penSectionId'],
@@ -119,10 +119,10 @@ export async function GET(request) {
             ...(allowedSectionIds
               ? { penSectionId: { in: allowedSectionIds } }
               : { penSection: { pen: { farm: { tenantId: user.tenantId } } } }),
-            collectionDate: { gte: today },
+            collectionDate:   { gte: today },
+            submissionStatus: { in: ['PENDING', 'APPROVED'] },   // ← exclude REJECTED
           },
           _sum: { totalEggs: true, gradeACount: true, crackedCount: true },
-          
         }),
         prisma.eggProduction.groupBy({
           by: ['penSectionId'],
@@ -130,10 +130,10 @@ export async function GET(request) {
             ...(allowedSectionIds
               ? { penSectionId: { in: allowedSectionIds } }
               : { penSection: { pen: { farm: { tenantId: user.tenantId } } } }),
-            collectionDate: { gte: sevenDaysAgo },
+            collectionDate:   { gte: sevenDaysAgo },
+            submissionStatus: { in: ['PENDING', 'APPROVED'] },   // ← exclude REJECTED
           },
           _sum: { totalEggs: true, gradeACount: true },
-          
         }),
         prisma.weightRecord.findMany({
           where: {
@@ -146,6 +146,21 @@ export async function GET(request) {
           select: {
             penSectionId: true, avgWeightG: true, ageInDays: true,
             uniformityPct: true, recordDate: true,
+          },
+        }),
+		// 7-day daily summaries for snapshot-based rate calculations
+        prisma.dailySummary.findMany({
+          where: {
+            ...(allowedSectionIds
+              ? { penSectionId: { in: allowedSectionIds } }
+              : { penSection: { pen: { farm: { tenantId: user.tenantId } } } }),
+            summaryDate: { gte: sevenDaysAgo },
+          },
+          select: {
+            penSectionId:       true,
+            totalEggsCollected: true,
+            avgBirdsForEggs:    true,
+            closingBirdCount:   true,
           },
         }),
       ]);
@@ -165,11 +180,35 @@ export async function GET(request) {
         rate:         null, // computed per-section using totalEggs/currentBirds below
         gradePending: (r._sum.totalEggs || 0) > 0 && !r._sum.gradeACount,
       }])),
-      weekEggs:   Object.fromEntries(weekEggs.map(r => [r.penSectionId, {
-        total:  r._sum.totalEggs   || 0,
-        gradeA: r._sum.gradeACount || 0,
-        rate:   null, // computed per-section using totalEggs/currentBirds below
-      }])),
+      weekEggs: (() => {
+        // Build summary-based rate index: penSectionId → n-day rate
+        const summaryIdx = {};
+        (weekSummaries || []).forEach(row => {
+          if (!summaryIdx[row.penSectionId]) {
+            summaryIdx[row.penSectionId] = { totalEggs: 0, birdRows: [] };
+          }
+          summaryIdx[row.penSectionId].totalEggs += (row.totalEggsCollected || 0);
+          if (row.avgBirdsForEggs != null) {
+            summaryIdx[row.penSectionId].birdRows.push(Number(row.avgBirdsForEggs));
+          } else if (row.closingBirdCount != null) {
+            summaryIdx[row.penSectionId].birdRows.push(row.closingBirdCount);
+          }
+        });
+        // Merge with raw eggProduction groupBy totals (for gradeA counts not in summaries)
+        return Object.fromEntries(weekEggs.map(r => {
+          const snap = summaryIdx[r.penSectionId];
+          const snapshotRate = snap && snap.birdRows.length > 0
+            ? parseFloat(((snap.totalEggs) /
+                (snap.birdRows.reduce((s, b) => s + b, 0) / snap.birdRows.length)
+              * 100).toFixed(1))
+            : null; // will fall back to currentBirds in section enrichment
+          return [r.penSectionId, {
+            total:        r._sum.totalEggs   || 0,
+            gradeA:       r._sum.gradeACount || 0,
+            rate:         snapshotRate,   // null = fall back to currentBirds
+          }];
+        }));
+      })(),
       latestWeight: weekWeights.reduce((acc, w) => {
         if (!acc[w.penSectionId]) acc[w.penSectionId] = w;
         return acc;
@@ -236,8 +275,14 @@ export async function GET(request) {
               : null) : null,
             gradePending:     isLayer ? (idx.todayEggs[sec.id]?.gradePending || false) : null,
             weekEggs:         isLayer ? (idx.weekEggs[sec.id]?.total || 0) : null,
-            weekLayRate:      isLayer && currentBirds > 0
-              ? parseFloat(((idx.weekEggs[sec.id]?.total || 0) / 7 / currentBirds * 100).toFixed(1))
+            // Use snapshot rate from weekEggs index (computed from dailySummary avgBirdsForEggs).
+// Falls back to old formula only when no snapshot rate exists (first week after deploy).
+            weekLayRate: isLayer
+              ? (idx.weekEggs[sec.id]?.rate ?? (
+                  currentBirds > 0
+                    ? parseFloat(((idx.weekEggs[sec.id]?.total || 0) / 7 / currentBirds * 100).toFixed(1))
+                    : 0
+                ))
               : 0,
             latestWeightG:    isBroiler ? (idx.latestWeight[sec.id]?.avgWeightG
               ? parseFloat(Number(idx.latestWeight[sec.id].avgWeightG).toFixed(0)) : null) : null,
@@ -278,8 +323,17 @@ export async function GET(request) {
             weekMortality:  sections.reduce((s, sec) => s + (sec.metrics?.weekMortality  || 0), 0),
             weekFeedKg:     parseFloat(sections.reduce((s, sec) => s + (sec.metrics?.weekFeedKg || 0), 0).toFixed(1)),
             todayEggs:      isLayer   ? sections.reduce((s, sec) => s + (sec.metrics?.todayEggs || 0), 0) : null,
-            avgLayingRate:  isLayer && penTotalBirds > 0
-              ? parseFloat((sections.reduce((s, sec) => s + (sec.metrics?.todayEggs || 0), 0) / penTotalBirds * 100).toFixed(1))
+            // Only count PRODUCTION-stage sections in both numerator and denominator.
+// BROODING/REARING sections have no egg records but their birds inflate the denominator.
+            avgLayingRate: isLayer
+              ? (() => {
+                  const prodSecs = sections.filter(s =>
+                    (s.metrics?.stage || 'PRODUCTION') === 'PRODUCTION'
+                  );
+                  const eggs    = prodSecs.reduce((s, sec) => s + (sec.metrics?.todayEggs || 0), 0);
+                  const birds   = prodSecs.reduce((s, sec) => s + (sec.currentBirds || 0), 0);
+                  return birds > 0 ? parseFloat((eggs / birds * 100).toFixed(1)) : null;
+                })()
               : null,
             latestWeightG:  isBroiler ? (sections.map(s => s.metrics?.latestWeightG).find(Boolean) || null) : null,
           },

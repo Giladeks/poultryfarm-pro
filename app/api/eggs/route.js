@@ -161,17 +161,18 @@ export async function POST(request) {
 
     const record = await prisma.eggProduction.create({
       data: {
-        flockId:           data.flockId,
-        penSectionId:      data.penSectionId,
-        collectionDate:    new Date(data.collectionDate),
-        collectionSession: data.collectionSession,
-        cratesCollected:   data.cratesCollected,
-        looseEggs:         data.looseEggs,
-        crackedCount:      data.crackedCount,
+        flockId:            data.flockId,
+        penSectionId:       data.penSectionId,
+        collectionDate:     new Date(data.collectionDate),
+        collectionSession:  data.collectionSession,
+        cratesCollected:    data.cratesCollected,
+        looseEggs:          data.looseEggs,
+        crackedCount:       data.crackedCount,
         totalEggs,
         layingRatePct,
-        recordedById:     user.sub,
-        submissionStatus: 'PENDING',
+        birdsAtCollection:  flock.currentCount,   // ← snapshot at submission time
+        recordedById:       user.sub,
+        submissionStatus:   'PENDING',
       },
     });
 
