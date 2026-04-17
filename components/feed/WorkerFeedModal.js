@@ -1,13 +1,21 @@
 'use client';
 // components/feed/WorkerFeedModal.js
-// Worker logs daily feed distribution for their pen section (Phase 8B bag-based).
+// Worker logs daily feed distribution for their pen section.
 //
-// Business logic:
-//   quantityKg = (bagsUsed × bagWeightKg) + (bagWeightKg − remainingKg)
-//   gramsPerBird = quantityKg × 1000 / flock.currentCount   (computed server-side)
+// Feed type is sourced from the most recent ISSUED/ACKNOWLEDGED requisition
+// for this pen — not from the full inventory. This matches what the store
+// physically delivered and prevents workers selecting the wrong feed type.
+//
+// Task-aware behaviour:
+//   Mandatory sessions (Batch 1, Batch 2, Final, Morning, Evening):
+//     → Normal bag log form, must enter bags used
+//   Conditional sessions (Top-up, Supplemental, Midday):
+//     → "No Feed Added" one-tap path shown prominently
+//     → If feed was added, enter bags used as normal
 //
 // Props:
 //   section  — section object from /api/dashboard
+//   task     — task object (for session type detection)
 //   apiFetch — from useAuth()
 //   onClose  — close handler
 //   onSave   — called after successful save
@@ -18,88 +26,160 @@ import Modal from '@/components/ui/Modal';
 const fmt    = (n, d = 1) => Number(n || 0).toLocaleString('en-NG', { maximumFractionDigits: d });
 const fmtCur = n => new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN', maximumFractionDigits: 0 }).format(Number(n || 0));
 
-// Grams-per-bird status thresholds (typical layer/broiler range)
 function gpbStatus(gpb, opType) {
   if (gpb == null || gpb <= 0) return null;
-  // Layers: 100–140 g/bird/day; Broilers: 80–160 g/bird/day
   const [low, high] = opType === 'LAYER' ? [80, 160] : [60, 180];
   if (gpb < low)  return { label: 'Low',    color: '#2563eb', bg: '#eff6ff', border: '#bfdbfe' };
   if (gpb > high) return { label: 'High',   color: '#dc2626', bg: '#fef2f2', border: '#fecaca' };
   return             { label: 'Normal', color: '#16a34a', bg: '#f0fdf4', border: '#bbf7d0' };
 }
 
-export default function WorkerFeedModal({ section, apiFetch, onClose, onSave }) {
+// Determine if this is a conditional top-up task (no feed required if troughs still full)
+function isTopUpTask(task) {
+  const t = task?.title || '';
+  // These are the exact conditional task titles from the generate route
+  return t.includes('Supplemental Feed Top-up') || t.includes('Midday Feed Top-up');
+}
+
+// Derive a human-readable session label from the task title
+function sessionLabel(task) {
+  const t = task?.title || '';
+  // Match exact titles from app/api/tasks/generate/route.js
+  if (t.includes('Morning Feed Distribution') || t.includes('Batch 1')) return 'Morning (Batch 1)';
+  if (t.includes('Final Feed Distribution')   || t.includes('Batch 2')) return 'Afternoon (Batch 2)';
+  if (t.includes('Midday Feed Top-up'))                                  return 'Midday Top-up';
+  if (t.includes('Supplemental Feed Top-up'))                            return 'Supplemental Top-up (Morning)';
+  // Brooding/rearing feed tasks
+  if (t.includes('Morning Feed') || t.includes('Morning Feed Round'))    return 'Morning Feed Round';
+  if (t.includes('Evening Feed') || t.includes('Evening Feed Round'))    return 'Evening Feed Round';
+  if (t.includes('Afternoon Feed') || t.includes('Midday Feed & Water')) return 'Afternoon / Midday';
+  // Quick-log button (no task context) — show generic label
+  return 'Feed Distribution';
+}
+
+export default function WorkerFeedModal({ section, task, apiFetch, onClose, onSave }) {
   const flock  = section.flock ?? section.activeFlock ?? null;
   const opType = section?.pen?.operationType || 'LAYER';
   const today  = new Date().toISOString().split('T')[0];
 
-  const [inventory,   setInventory]   = useState([]);
-  const [loading,     setLoading]     = useState(true);
-  const [saving,      setSaving]      = useState(false);
-  const [error,       setError]       = useState('');
+  const isTopUp = isTopUpTask(task);
+  const label   = sessionLabel(task);
+
+  // Feed inventory item auto-resolved from requisition
+  const [feedItem,  setFeedItem]  = useState(null);  // { id, feedType, bagWeightKg, currentStockKg, costPerKg }
+  const [loading,   setLoading]   = useState(true);
+  const [saving,    setSaving]    = useState(false);
+  const [error,     setError]     = useState('');
+  const [noFeed,    setNoFeed]    = useState(false); // conditional top-up: worker confirms no feed added
+
   const [form, setForm] = useState({
-    feedInventoryId: '',
-    recordedDate:    today,
-    bagsUsed:        '',
-    remainingKg:     '',
-    notes:           '',
+    recordedDate: today,
+    bagsUsed:     '',
+    remainingKg:  '',
+    notes:        '',
   });
 
   const set = (k, v) => { setForm(p => ({ ...p, [k]: v })); setError(''); };
 
-  // ── Load feed inventory for this tenant ────────────────────────────────────
+  // ── Fetch feed type from most recent requisition for this pen ───────────────
+  // Falls back to most recent consumption record if no requisition found.
+  // This ensures the worker always sees the correct, store-approved feed type.
   useEffect(() => {
-    apiFetch('/api/feed/inventory')
-      .then(r => r.json())
-      .then(d => setInventory((d.inventory || []).filter(i => Number(i.currentStockKg) > 0)))
-      .catch(() => setError('Failed to load feed inventory'))
-      .finally(() => setLoading(false));
-  }, []);
+    async function loadFeedItem() {
+      setLoading(true);
+      try {
+        // Step 1: look for today's ISSUED or ACKNOWLEDGED requisition for this pen
+        const reqRes = await apiFetch(
+          `/api/feed/requisitions?penSectionId=${section.id}&status=ISSUED`
+        );
+        if (reqRes.ok) {
+          const { requisitions } = await reqRes.json();
+          // Find the most recent requisition that covers today's feed
+          const todayStr = new Date().toISOString().slice(0, 10);
+          const todayReq = (requisitions || []).find(r =>
+            r.feedForDate?.slice(0, 10) === todayStr &&
+            r.feedInventory
+          ) || requisitions?.[0]; // fall back to most recent
 
-  // ── Derived calculations ───────────────────────────────────────────────────
-  const selectedFeed = inventory.find(i => i.id === form.feedInventoryId) || null;
-  const bagWt        = selectedFeed ? Number(selectedFeed.bagWeightKg) || 25 : 25;
-  const bagsUsed     = Math.max(0, parseInt(form.bagsUsed)  || 0);
-  const remainingKg  = Math.max(0, parseFloat(form.remainingKg) || 0);
+          if (todayReq?.feedInventory) {
+            setFeedItem({
+              id:             todayReq.feedInventoryId,
+              feedType:       todayReq.feedInventory.feedType,
+              bagWeightKg:    Number(todayReq.feedInventory.bagWeightKg) || 25,
+              currentStockKg: Number(todayReq.feedInventory.currentStockKg),
+              costPerKg:      Number(todayReq.feedInventory.costPerKg || 0),
+            });
+            return;
+          }
+        }
 
-  // quantityKg = (bagsUsed × bagWt) + partialConsumed
-  // partialConsumed = (bagWt − remainingKg) only when a bag is opened (remainingKg > 0.1)
-  // If remainingKg is 0 or empty, no partial bag was opened — add nothing extra.
-  const hasPartialBag = remainingKg > 0.1;
+        // Step 2: fall back — find the last feed consumption record for this section
+        const consumRes = await apiFetch(
+          `/api/feed/consumption?penSectionId=${section.id}&limit=1`
+        );
+        if (consumRes.ok) {
+          const { consumption } = await consumRes.json();
+          const last = consumption?.[0];
+          if (last?.feedInventory) {
+            setFeedItem({
+              id:             last.feedInventoryId,
+              feedType:       last.feedInventory.feedType,
+              bagWeightKg:    Number(last.feedInventory.bagWeightKg) || 25,
+              currentStockKg: null, // stock level not critical here
+              costPerKg:      Number(last.feedInventory.costPerKg || 0),
+            });
+            return;
+          }
+        }
+
+        // Step 3: couldn't determine feed type — show error
+        setError('No feed type found for this section. Check that feed has been issued via requisition.');
+      } catch {
+        setError('Failed to load feed information. Please try again.');
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadFeedItem();
+  }, [section.id]);
+
+  // ── Derived values ─────────────────────────────────────────────────────────
+  const bagWt      = feedItem?.bagWeightKg || 25;
+  const bagsUsed   = Math.max(0, parseInt(form.bagsUsed)   || 0);
+  const remainingKg= Math.max(0, parseFloat(form.remainingKg) || 0);
+
+  const hasPartialBag   = remainingKg > 0.1;
   const partialConsumed = hasPartialBag ? (bagWt - remainingKg) : 0;
-  const quantityKg = (bagsUsed > 0 || hasPartialBag)
+  const quantityKg      = (bagsUsed > 0 || hasPartialBag)
     ? parseFloat(((bagsUsed * bagWt) + partialConsumed).toFixed(2))
     : 0;
 
-  const birdCount  = flock?.currentCount || 0;
-  const gpb        = (quantityKg > 0 && birdCount > 0)
+  const birdCount = flock?.currentCount || 0;
+  const gpb       = (quantityKg > 0 && birdCount > 0)
     ? parseFloat((quantityKg * 1000 / birdCount).toFixed(1))
     : null;
-  const gpbSt      = gpbStatus(gpb, opType);
+  const gpbSt = gpbStatus(gpb, opType);
 
-  const stockAfter = selectedFeed
-    ? parseFloat((Number(selectedFeed.currentStockKg) - quantityKg).toFixed(2))
+  const stockAfter   = feedItem?.currentStockKg != null
+    ? parseFloat((feedItem.currentStockKg - quantityKg).toFixed(2))
     : null;
   const willOverdraw = stockAfter !== null && stockAfter < 0;
-
-  const costPreview = selectedFeed && quantityKg > 0
-    ? quantityKg * Number(selectedFeed.costPerKg)
-    : null;
+  const costPreview  = feedItem && quantityKg > 0 ? quantityKg * feedItem.costPerKg : null;
 
   // ── Validation ─────────────────────────────────────────────────────────────
   function validate() {
-    if (!flock)                     return 'No active flock in this section';
-    if (!form.feedInventoryId)      return 'Select a feed type';
+    if (!flock)    return 'No active flock in this section';
+    if (!feedItem) return 'Feed type not yet loaded';
     if (bagsUsed <= 0 && remainingKg <= 0)
       return 'Enter bags used (or at least a partial bag amount)';
     if (remainingKg > bagWt)
       return `Remaining kg (${remainingKg}) cannot exceed bag weight (${bagWt} kg)`;
     if (willOverdraw)
-      return `Insufficient stock — only ${fmt(selectedFeed?.currentStockKg, 1)} kg available`;
+      return `Insufficient stock — only ${fmt(feedItem.currentStockKg, 1)} kg available`;
     return null;
   }
 
-  // ── Submit ─────────────────────────────────────────────────────────────────
+  // ── Submit with feed ───────────────────────────────────────────────────────
   async function save() {
     const err = validate();
     if (err) { setError(err); return; }
@@ -108,7 +188,7 @@ export default function WorkerFeedModal({ section, apiFetch, onClose, onSave }) 
       const res = await apiFetch('/api/feed/consumption', {
         method: 'POST',
         body: JSON.stringify({
-          feedInventoryId: form.feedInventoryId,
+          feedInventoryId: feedItem.id,
           flockId:         flock.id,
           penSectionId:    section.id,
           recordedDate:    form.recordedDate,
@@ -124,6 +204,14 @@ export default function WorkerFeedModal({ section, apiFetch, onClose, onSave }) 
     finally { setSaving(false); }
   }
 
+  // ── Submit: no feed added (top-up only) ────────────────────────────────────
+  // Does NOT create a feed consumption record — zero feed means nothing to log.
+  // Just calls onSave() which triggers completeLinkedTask() in the parent,
+  // marking the task complete with a 'No feed added' completion note.
+  function saveNoFeed() {
+    onSave(null); // null signals no consumption record was created
+  }
+
   return (
     <Modal
       title="🍽️ Log Feed Distribution"
@@ -131,11 +219,26 @@ export default function WorkerFeedModal({ section, apiFetch, onClose, onSave }) 
       onClose={onClose}
       footer={
         <>
-          <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="btn btn-ghost" onClick={onClose} disabled={saving}>Cancel</button>
+          {/* Top-up tasks: show "No Feed Added" as the prominent left button */}
+          {isTopUp && feedItem && (
+            <button
+              onClick={saveNoFeed}
+              disabled={saving}
+              style={{
+                padding: '9px 14px', borderRadius: 9,
+                border: '1.5px solid #bbf7d0', background: '#f0fdf4',
+                color: '#16a34a', fontSize: 13, fontWeight: 700,
+                cursor: saving ? 'not-allowed' : 'pointer', fontFamily: 'inherit',
+              }}
+            >
+              {saving ? '…' : '✓ No Feed Added'}
+            </button>
+          )}
           <button
             className="btn btn-primary"
             onClick={save}
-            disabled={saving || loading || willOverdraw}
+            disabled={saving || loading || willOverdraw || !feedItem}
           >
             {saving ? 'Saving…' : 'Save Record'}
           </button>
@@ -152,55 +255,59 @@ export default function WorkerFeedModal({ section, apiFetch, onClose, onSave }) 
         )}
       </div>
 
-      {error && (
-        <div className="alert alert-red" style={{ marginBottom: 14 }}>⚠ {error}</div>
-      )}
+      {error && <div className="alert alert-red" style={{ marginBottom: 14 }}>⚠ {error}</div>}
 
       {loading ? (
         <div style={{ textAlign: 'center', padding: '24px 0', color: 'var(--text-muted)', fontSize: 13 }}>
-          Loading feed inventory…
+          Loading feed information…
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
 
-          {/* Feed type */}
-          <div>
-            <label className="label">Feed Type *</label>
-            <select
-              className="input"
-              value={form.feedInventoryId}
-              onChange={e => set('feedInventoryId', e.target.value)}
-            >
-              <option value="">— Select feed type —</option>
-              {inventory.map(i => (
-                <option key={i.id} value={i.id}>
-                  {i.feedType} — {fmt(i.currentStockKg, 1)} kg in stock
-                  {i.stockStatus === 'LOW' ? ' ⚠ Low' : ''}
-                </option>
-              ))}
-            </select>
-            {selectedFeed && (
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>
-                Bag weight: <strong>{bagWt} kg</strong>
-                {' · '}Cost: <strong>₦{fmt(selectedFeed.costPerKg, 2)}/kg</strong>
-                {' · '}Stock: <strong style={{ color: selectedFeed.stockStatus === 'LOW' ? 'var(--amber)' : 'inherit' }}>
-                  {fmt(selectedFeed.currentStockKg, 1)} kg
-                </strong>
+          {/* Session label — read only, derived from task */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div>
+              <label className="label">Session</label>
+              <div style={{ padding: '9px 12px', borderRadius: 8, background: 'var(--bg-elevated)', border: '1px solid var(--border-card)', fontSize: 13, fontWeight: 600 }}>
+                {label}
               </div>
-            )}
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 3 }}>From task schedule</div>
+            </div>
+            <div>
+              <label className="label">Date *</label>
+              <input
+                type="date"
+                className="input"
+                value={form.recordedDate}
+                max={today}
+                onChange={e => set('recordedDate', e.target.value)}
+              />
+            </div>
           </div>
 
-          {/* Date */}
-          <div>
-            <label className="label">Date *</label>
-            <input
-              type="date"
-              className="input"
-              value={form.recordedDate}
-              max={today}
-              onChange={e => set('recordedDate', e.target.value)}
-            />
-          </div>
+          {/* Feed type — auto-filled from requisition, read-only */}
+          {feedItem && (
+            <div>
+              <label className="label">Feed Type</label>
+              <div style={{ padding: '9px 12px', borderRadius: 8, background: 'var(--bg-elevated)', border: '1px solid var(--border-card)', fontSize: 13, fontWeight: 600, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span>{feedItem.feedType}</span>
+                <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 400 }}>
+                  {feedItem.bagWeightKg} kg/bag
+                  {feedItem.currentStockKg != null && ` · ${fmt(feedItem.currentStockKg, 1)} kg in stock`}
+                </span>
+              </div>
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 3 }}>
+                Auto-filled from today's store issuance
+              </div>
+            </div>
+          )}
+
+          {/* Top-up hint */}
+          {isTopUp && (
+            <div style={{ padding: '9px 13px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, fontSize: 12, color: '#15803d' }}>
+              Check the troughs first. If birds still have sufficient feed, tap <strong>No Feed Added</strong> below. Only fill this form if a top-up was actually distributed.
+            </div>
+          )}
 
           {/* Bag inputs */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
@@ -214,7 +321,7 @@ export default function WorkerFeedModal({ section, apiFetch, onClose, onSave }) 
                 value={form.bagsUsed}
                 onChange={e => set('bagsUsed', e.target.value)}
                 placeholder="0"
-                autoFocus
+                autoFocus={!isTopUp}
               />
               <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 3 }}>
                 Completely emptied bags
@@ -239,78 +346,51 @@ export default function WorkerFeedModal({ section, apiFetch, onClose, onSave }) 
           </div>
 
           {/* Live calculation preview */}
-          {(bagsUsed > 0 || remainingKg > 0) && selectedFeed && (
+          {(bagsUsed > 0 || remainingKg > 0) && feedItem && (
             <div style={{
               padding: '12px 14px',
-              background: willOverdraw ? 'var(--red-bg)' : 'var(--purple-light)',
-              border: `1px solid ${willOverdraw ? 'var(--red-border)' : '#d4d8ff'}`,
+              background: willOverdraw ? 'var(--red-bg, #fef2f2)' : 'var(--purple-light, #f5f3ff)',
+              border: `1px solid ${willOverdraw ? 'var(--red-border, #fecaca)' : '#d4d8ff'}`,
               borderRadius: 9,
             }}>
-              {/* Formula breakdown */}
               <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>
                 ({bagsUsed} bags × {bagWt} kg)
-                {hasPartialBag
-                  ? ` + (${bagWt} − ${remainingKg} kg remaining) = `
-                  : ' = '}
-                <strong style={{ color: willOverdraw ? 'var(--red)' : 'var(--purple)', fontSize: 13 }}>
-                  {fmt(quantityKg, 2)} kg total
+                {hasPartialBag ? ` + (${bagWt} − ${remainingKg} kg remaining) = ` : ' = '}
+                <strong style={{ color: willOverdraw ? '#dc2626' : 'var(--purple, #6c63ff)' }}>
+                  {quantityKg} kg
                 </strong>
-                {!hasPartialBag && bagsUsed > 0 && (
-                  <span style={{ color: 'var(--text-muted)', marginLeft: 6 }}>
-                    (no partial bag)
-                  </span>
-                )}
               </div>
-
-              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-                {/* Stock after */}
-                <div style={{ fontSize: 12 }}>
-                  Stock after:{' '}
-                  <strong style={{ color: willOverdraw ? 'var(--red)' : stockAfter < Number(selectedFeed.reorderLevelKg) ? 'var(--amber)' : 'var(--green)' }}>
-                    {willOverdraw ? '⚠ Overdraw' : `${fmt(stockAfter, 1)} kg`}
-                  </strong>
+              {gpbSt && (
+                <div style={{ fontSize: 11, padding: '4px 8px', borderRadius: 6, display: 'inline-flex', alignItems: 'center', gap: 5, background: gpbSt.bg, border: `1px solid ${gpbSt.border}`, color: gpbSt.color }}>
+                  <strong>{gpb} g/bird</strong>
+                  <span>· {gpbSt.label}</span>
                 </div>
-
-                {/* Cost preview */}
-                {costPreview !== null && (
-                  <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                    Cost: <strong>{fmtCur(costPreview)}</strong>
-                  </div>
-                )}
-
-                {/* Grams per bird */}
-                {gpbSt && (
-                  <div style={{
-                    display: 'inline-flex', alignItems: 'center', gap: 5,
-                    padding: '3px 10px',
-                    background: gpbSt.bg, border: `1px solid ${gpbSt.border}`,
-                    borderRadius: 20, fontSize: 11,
-                  }}>
-                    <span style={{ color: gpbSt.color, fontWeight: 700 }}>{fmt(gpb, 1)} g/bird</span>
-                    <span style={{
-                      padding: '1px 6px', borderRadius: 99,
-                      background: gpbSt.color, color: '#fff',
-                      fontSize: 9, fontWeight: 700,
-                    }}>{gpbSt.label}</span>
-                  </div>
-                )}
-              </div>
+              )}
+              {costPreview != null && (
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+                  Cost: <strong>{fmtCur(costPreview)}</strong>
+                  {stockAfter != null && !willOverdraw && (
+                    <> · Stock after: <strong>{fmt(stockAfter, 1)} kg</strong></>
+                  )}
+                  {willOverdraw && (
+                    <span style={{ color: '#dc2626', marginLeft: 6 }}>⚠ Insufficient stock</span>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
           {/* Notes */}
           <div>
             <label className="label">Notes <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(optional)</span></label>
-            <textarea
+            <input
+              type="text"
               className="input"
-              rows={2}
               value={form.notes}
               onChange={e => set('notes', e.target.value)}
-              placeholder="e.g. switched to new batch, spillage noted…"
-              style={{ resize: 'vertical' }}
+              placeholder="Any observations about the feed round…"
             />
           </div>
-
         </div>
       )}
     </Modal>

@@ -1,6 +1,6 @@
 'use client';
 // app/eggs/page.js — Layer Performance (formerly Egg Collection)
-import { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import AppShell from '@/components/layout/AppShell';
 import { useAuth } from '@/components/layout/AuthProvider';
 import PortalModal from '@/components/ui/Modal';
@@ -313,6 +313,8 @@ export default function EggsPage() {
   const [weightData,  setWeightData]  = useState(null);
   const [stageTab,    setStageTab]    = useState('production'); // 'brooding' | 'rearing' | 'production' — for mixed mode
   const [tab,         setTab]         = useState('overview');
+  const [feedRecords, setFeedRecords] = useState([]);
+  const [feedLoading, setFeedLoading] = useState(false);
 
   // Section-level KPI data from dashboard API
   const [dashData, setDashData] = useState(null);
@@ -445,6 +447,17 @@ export default function EggsPage() {
       .then(d => setRearingChartData(d.series || d.chart || []))
       .catch(() => {});
   }, [firstRearingSectionId, days, apiFetch]);
+
+  useEffect(() => {
+    if (tab !== 'feed') return;
+    setFeedLoading(true);
+    apiFetch(`/api/feed/consumption?limit=200&days=${days === YESTERDAY_DAYS ? 2 : days}`)
+      .then(r => r.json())
+      .then(d => setFeedRecords(d.consumption || []))
+      .catch(() => setFeedRecords([]))
+      .finally(() => setFeedLoading(false));
+  }, [tab, days, apiFetch]);
+
 
   // ISA Brown target weight by age (weeks)
   const isaTarget = (ageDays) => { const w = Math.floor((ageDays||0)/7); return [40,60,100,150,210,280,360,450,550,660,770,880,990,1100,1200,1290,1370,1440][Math.min(w,17)] || 1440; };
@@ -685,25 +698,7 @@ export default function EggsPage() {
             <p style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 3 }}>
               {hasMixed ? 'Mixed flock stages — rearing & production sections' : isLayerRearing ? 'Pullet weight tracking, feed & mortality' : 'Layer section metrics & egg production records'}
             </p>
-          </div>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            {/* Yesterday special filter */}
-            <button onClick={() => setDays(YESTERDAY_DAYS)} className="btn"
-              style={{ fontSize: 11, padding: '5px 12px',
-                background: days === YESTERDAY_DAYS ? 'var(--purple-light)' : '#fff',
-                color:      days === YESTERDAY_DAYS ? 'var(--purple)' : 'var(--text-muted)',
-                border:    `1px solid ${days === YESTERDAY_DAYS ? '#d4d8ff' : 'var(--border)'}`,
-                fontWeight: days === YESTERDAY_DAYS ? 700 : 600 }}>
-              Yesterday
-            </button>
-            {PERIOD_OPTIONS.map(d => (
-              <button key={d} onClick={() => setDays(d)} className="btn"
-                style={{ fontSize: 11, padding: '5px 12px', background: days === d ? 'var(--purple-light)' : '#fff', color: days === d ? 'var(--purple)' : 'var(--text-muted)', border: `1px solid ${days === d ? '#d4d8ff' : 'var(--border)'}`, fontWeight: days === d ? 700 : 600 }}>
-                {d}d
-              </button>
-            ))}
-            {canLog && hasProduction && <button className="btn btn-primary" onClick={() => setShowModal(true)}>+ Log Collection</button>}
-          </div>
+          </div>  
         </div>
 
         {/* ── Stage toggle (mixed mode only) ── */}
@@ -769,8 +764,25 @@ export default function EggsPage() {
           const showProduction = hasMixed ? stageTab==='production' : hasProduction;
           return (
             <div style={{ borderTop:'1px solid var(--border)', marginBottom:20, paddingTop:20 }}>
-              <div style={{ fontSize:11, fontWeight:700, color:'var(--text-muted)', textTransform:'uppercase', letterSpacing:'.06em', marginBottom:16 }}>
-                {showRearing ? `Weight Records · Last ${days} days` : `Production Records · ${days === YESTERDAY_DAYS ? 'Yesterday' : `Last ${days} days`}`}
+              <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:16, gap:8, flexWrap:'wrap' }}>
+                <div style={{ fontSize:11, fontWeight:700, color:'var(--text-muted)', textTransform:'uppercase', letterSpacing:'.06em' }}>
+                  {showRearing ? `Weight Records · Last ${days} days` : `Production Records · ${days === YESTERDAY_DAYS ? 'Yesterday' : `Last ${days} days`}`}
+                </div>
+                {/* Date filter pills — scoped to Production Records */}
+                {showProduction && (
+                  <div style={{ display:'flex', gap:4, alignItems:'center' }}>
+                    <button onClick={() => setDays(YESTERDAY_DAYS)}
+                      style={{ fontSize:10, padding:'3px 9px', borderRadius:6, border:`1px solid ${days === YESTERDAY_DAYS ? '#d4d8ff' : 'var(--border)'}`, background: days === YESTERDAY_DAYS ? 'var(--purple-light)' : '#fff', color: days === YESTERDAY_DAYS ? 'var(--purple)' : 'var(--text-muted)', fontWeight: days === YESTERDAY_DAYS ? 700 : 500, cursor:'pointer', fontFamily:'inherit' }}>
+                      Yesterday
+                    </button>
+                    {PERIOD_OPTIONS.map(d => (
+                      <button key={d} onClick={() => setDays(d)}
+                        style={{ fontSize:10, padding:'3px 9px', borderRadius:6, border:`1px solid ${days === d ? '#d4d8ff' : 'var(--border)'}`, background: days === d ? 'var(--purple-light)' : '#fff', color: days === d ? 'var(--purple)' : 'var(--text-muted)', fontWeight: days === d ? 700 : 500, cursor:'pointer', fontFamily:'inherit' }}>
+                        {d}d
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
               <div style={{ display:'grid', gridTemplateColumns:'repeat(5,1fr)', gap:12, marginBottom:20 }}>
                 {loading ? Array(5).fill(0).map((_,i)=><Skeleton key={i} h={88}/>) : showRearing ? (() => {
@@ -806,13 +818,20 @@ export default function EggsPage() {
                   <KpiCard icon="⭐" label="Grade A"         value={fmt(periodGradeACount || summary.totalGradeA)} sub={`${gradeAPct!=null?gradeAPct:gradeAPct2(summary)}% of total`} color="var(--green)"/>
                   <KpiCard icon="🧺" label="Total Crates"    value={fmt(periodRecords.reduce((a,r)=>a+(r.cratesCollected||0),0) || summary.totalCrates)} sub="30 eggs per crate" color="var(--purple)"/>
                   <KpiCard icon="🌾" label="Daily Feed Avg"
-                    value={avgDailyFeedKg ? `${avgDailyFeedKg} kg` : '—'}
+                    value={(() => {
+                      // Primary: period average from chart data (multi-day)
+                      if (avgDailyFeedKg) return `${avgDailyFeedKg} kg`;
+                      // Fallback: today's actual feed from dashboard metrics
+                      if (prodTodayFeedKg > 0) return `${prodTodayFeedKg} kg`;
+                      return '—';
+                    })()}
                     sub={(() => {
-                      if (!avgDailyFeedKg) return 'No feed data';
-                      const bags = fmtBags(avgDailyFeedKg, bagWeightKg);
-                      const gpb = feedGpbProd ? `${feedGpbProd} g/bird` : null;
-                      const total = `total ${totalFeedKg} kg`;
-                      return [bags, gpb, total].filter(Boolean).join(' · ');
+                      const feedKg = avgDailyFeedKg || (prodTodayFeedKg > 0 ? prodTodayFeedKg : null);
+                      if (!feedKg) return 'No feed records yet';
+                      const bags = fmtBags(feedKg, bagWeightKg);
+                      const gpb  = (prodBirds > 0 && feedKg > 0) ? `${parseFloat((feedKg * 1000 / prodBirds).toFixed(1))} g/bird` : null;
+                      const suffix = avgDailyFeedKg ? `total ${totalFeedKg} kg` : 'today only';
+                      return [bags, gpb, suffix].filter(Boolean).join(' · ');
                     })()}
                     color="var(--purple)"/>
                 </>)}
@@ -833,7 +852,7 @@ export default function EggsPage() {
 
         {/* Tab bar */}
         <div style={{ display: 'flex', borderBottom: '2px solid var(--border)', marginBottom: 20 }}>
-          {[['overview', '📊 Overview'], ['log', '📋 Daily Log']].map(([key, label]) => (
+          {[['overview', '📊 Overview'], ['log', '📋 Egg Log'], ['feed', '🌾 Feed Log']].map(([key, label]) => (
             <button key={key} onClick={() => setTab(key)}
               style={{ padding: '10px 20px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 700, fontFamily: 'inherit', color: tab === key ? 'var(--purple)' : 'var(--text-muted)', borderBottom: `3px solid ${tab === key ? 'var(--purple)' : 'transparent'}`, marginBottom: -2, transition: 'all 0.15s' }}>
               {label}
@@ -1011,7 +1030,6 @@ export default function EggsPage() {
               <div style={{ padding: 60, textAlign: 'center' }}>
                 <div style={{ fontSize: 40, marginBottom: 12 }}>🥚</div>
                 <div style={{ fontWeight: 600, color: 'var(--text-muted)' }}>No egg records in this period</div>
-                {canLog && hasProduction && <button className="btn btn-primary" style={{ marginTop: 16 }} onClick={() => setShowModal(true)}>Log First Collection</button>}
               </div>
             ) : (
               <table className="table">
@@ -1068,6 +1086,117 @@ export default function EggsPage() {
           </div>
         )}
       </div>
+
+
+        {/* ── Feed Log tab ── */}
+        {tab === 'feed' && (() => {
+          const prodSectionIds = new Set(productionLayers.map(s => s.id));
+          const cutoff = (() => {
+            const d = new Date();
+            d.setDate(d.getDate() - (days === YESTERDAY_DAYS ? 1 : days));
+            d.setHours(0,0,0,0); return d;
+          })();
+          const filteredFeed = feedRecords.filter(r => {
+            if (prodSectionIds.size > 0 && !prodSectionIds.has(r.penSectionId)) return false;
+            if (r.recordedDate && new Date(r.recordedDate) < cutoff) return false;
+            return true;
+          });
+          const dailyTotals = {};
+          filteredFeed.forEach(r => {
+            const dk = new Date(r.recordedDate).toISOString().slice(0,10);
+            if (!dailyTotals[dk]) dailyTotals[dk] = { kg: 0, bags: 0, count: 0 };
+            dailyTotals[dk].kg   += Number(r.quantityKg || 0);
+            dailyTotals[dk].bags += Number(r.bagsUsed   || 0);
+            dailyTotals[dk].count += 1;
+          });
+          const totalKg = filteredFeed.reduce((s,r) => s + Number(r.quantityKg||0), 0);
+          const bw = bagWeightKg || 25;
+          const periodDays = days === YESTERDAY_DAYS ? 1 : days;
+          return (
+            <div className='card' style={{ padding:0, overflow:'hidden' }}>
+              {feedLoading ? (
+                <div style={{ padding:40, textAlign:'center' }}><Skeleton h={200}/></div>
+              ) : filteredFeed.length === 0 ? (
+                <div style={{ padding:60, textAlign:'center' }}>
+                  <div style={{ fontSize:40, marginBottom:12 }}>🌾</div>
+                  <div style={{ fontWeight:600, color:'var(--text-muted)' }}>No feed records in this period</div>
+                </div>
+              ) : (
+                <>
+                  <div style={{ padding:'10px 16px', background:'#f0fdf4', borderBottom:'1px solid #bbf7d0', display:'flex', gap:24, alignItems:'center', flexWrap:'wrap' }}>
+                    <div style={{ fontSize:12 }}><span style={{ color:'var(--text-muted)' }}>Total fed: </span><strong style={{ color:'#16a34a' }}>{parseFloat(totalKg.toFixed(1))} kg</strong></div>
+                    <div style={{ fontSize:12 }}><span style={{ color:'var(--text-muted)' }}>Records: </span><strong>{filteredFeed.length}</strong></div>
+                    {prodBirds > 0 && totalKg > 0 && (
+                      <div style={{ fontSize:12 }}>
+                        <span style={{ color:'var(--text-muted)' }}>Avg g/bird/day: </span>
+                        <strong style={{ color: (totalKg*1000/prodBirds/periodDays) > 160 ? '#dc2626' : '#16a34a' }}>
+                          {(totalKg * 1000 / prodBirds / periodDays).toFixed(0)} g
+                        </strong>
+                      </div>
+                    )}
+                  </div>
+                  <table className='table'>
+                    <thead>
+                      <tr>
+                        <th>Date</th><th>Time</th><th>Section</th><th>Feed Type</th>
+                        <th style={{ textAlign:'right' }}>Bags Used</th>
+                        <th style={{ textAlign:'right' }}>Remaining (kg)</th>
+                        <th style={{ textAlign:'right' }}>Total (kg)</th>
+                        <th style={{ textAlign:'right' }}>g/Bird</th>
+                        <th>Recorded By</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredFeed.map((r, idx) => {
+                        const dk = new Date(r.recordedDate).toISOString().slice(0,10);
+                        const isFirstOfDay = idx === 0 || new Date(filteredFeed[idx-1].recordedDate).toISOString().slice(0,10) !== dk;
+                        const dayTotal = dailyTotals[dk];
+                        const gpb = Number(r.gramsPerBird || 0);
+                        const gpbHigh = gpb > 160;
+                        const gpbLow  = gpb > 0 && gpb < 80;
+                        return (
+                          <React.Fragment key={r.id}>
+                            {isFirstOfDay && (
+                              <tr style={{ background:'#f8fafc', borderTop:'2px solid var(--border)' }}>
+                                <td colSpan={4} style={{ fontWeight:700, fontSize:12, color:'var(--text-secondary)', padding:'6px 12px' }}>
+                                  📅 {new Date(dk + 'T12:00:00').toLocaleDateString('en-NG', { weekday:'short', day:'numeric', month:'short' })}
+                                  <span style={{ marginLeft:8, fontWeight:400, color:'var(--text-muted)', fontSize:11 }}>{dayTotal.count} distribution{dayTotal.count !== 1 ? 's' : ''}</span>
+                                </td>
+                                <td style={{ textAlign:'right', fontWeight:700, fontSize:12, padding:'6px 12px' }}>{dayTotal.bags}</td>
+                                <td style={{ textAlign:'right', padding:'6px 12px', color:'var(--text-muted)' }}>—</td>
+                                <td style={{ textAlign:'right', fontWeight:800, fontSize:13, color:'#16a34a', padding:'6px 12px' }}>{parseFloat(dayTotal.kg.toFixed(1))} kg</td>
+                                <td colSpan={3} />
+                              </tr>
+                            )}
+                            <tr style={{ background: gpbHigh ? '#fff5f5' : gpbLow ? '#eff6ff' : undefined }}>
+                              <td style={{ color:'var(--text-muted)', fontSize:11, paddingLeft:20 }}>{fmtDate(r.recordedDate)}</td>
+                              <td style={{ color:'var(--text-muted)', fontSize:11 }}>{r.feedTime ? new Date(r.feedTime).toLocaleTimeString('en-NG',{hour:'2-digit',minute:'2-digit'}) : '—'}</td>
+                              <td style={{ fontSize:12 }}><span style={{ fontWeight:600 }}>{r.penSection?.pen?.name}</span><span style={{ color:'var(--text-muted)' }}> › {r.penSection?.name}</span></td>
+                              <td style={{ fontSize:11, color:'var(--text-muted)' }}>{r.feedInventory?.feedType || '—'}</td>
+                              <td style={{ textAlign:'right', fontWeight:600 }}>{r.bagsUsed != null ? r.bagsUsed : '—'}</td>
+                              <td style={{ textAlign:'right', color:'var(--text-muted)', fontSize:12 }}>{r.remainingKg != null ? Number(r.remainingKg).toFixed(1) : '—'}</td>
+                              <td style={{ textAlign:'right', fontWeight:700, color:'#16a34a' }}>{Number(r.quantityKg).toFixed(1)}</td>
+                              <td style={{ textAlign:'right' }}>
+                                {gpb > 0 ? (
+                                  <span style={{ fontWeight:600, color: gpbHigh ? '#dc2626' : gpbLow ? '#2563eb' : '#16a34a' }}>
+                                    {gpb.toFixed(0)}{gpbHigh ? ' ⚠' : ''}
+                                  </span>
+                                ) : '—'}
+                              </td>
+                              <td style={{ fontSize:11, color:'var(--text-muted)' }}>{r.recordedBy ? `${r.recordedBy.firstName} ${r.recordedBy.lastName?.[0]}.` : '—'}</td>
+                              <td><span style={{ fontSize:10, fontWeight:700, padding:'2px 7px', borderRadius:99, background: r.submissionStatus==='APPROVED'?'#f0fdf4':r.submissionStatus==='REJECTED'?'#fef2f2':'#fffbeb', color: r.submissionStatus==='APPROVED'?'#16a34a':r.submissionStatus==='REJECTED'?'#dc2626':'#d97706' }}>{r.submissionStatus||'Pending'}</span></td>
+                            </tr>
+                          </React.Fragment>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </>
+              )}
+            </div>
+          );
+        })()}
 
       {showModal  && <LogEggModal  flocks={flocks} apiFetch={apiFetch} onClose={() => setShowModal(false)}  onSave={() => { setShowModal(false);  load(); }} />}
       {editRecord && <EditEggModal record={editRecord} flocks={flocks} apiFetch={apiFetch} onClose={() => setEditRecord(null)} onSave={() => { setEditRecord(null); load(); }} />}

@@ -8,7 +8,6 @@ import { useAuth } from '@/components/layout/AuthProvider';
 import WaterMeterModal from '@/components/water/WaterMeterModal';
 import WorkerFeedModal from '@/components/feed/WorkerFeedModal';
 import SpotCheckCompleteModal from '@/components/tasks/SpotCheckCompleteModal';
-import DailySummaryCard from '@/components/daily/DailySummaryCard';
 
 const fmt    = n => Number(n || 0).toLocaleString('en-NG');
 const fmtPct = n => `${Number(n || 0).toFixed(1)}%`;
@@ -73,16 +72,28 @@ function ModalShell({ title, onClose, footer, children }) {
 
 // ── Log Egg Modal ─────────────────────────────────────────────────────────────
 
-function LogEggModal({ section, apiFetch, onClose, onSave }) {
+function LogEggModal({ section, task, apiFetch, onClose, onSave }) {
   const flock = section.flock || null;
   const today = new Date().toISOString().split('T')[0];
+
+  // Derive session from exact task title (matches app/api/tasks/generate/route.js)
+  const sessionFromTask = (() => {
+    const t = task?.title || '';
+    // Batch 2 / Second collection = afternoon session
+    if (t.includes('Batch 2') || t.includes('Second Egg')) return '2';
+    // Batch 1 / First collection = morning session (default)
+    return '1';
+  })();
+
   const [form, setForm] = useState({
-    collectionDate: today, collectionSession: '1',
+    collectionDate: today, collectionSession: sessionFromTask,
     cratesCollected: '', looseEggs: '', crackedCount: '',
   });
   const [saving, setSaving] = useState(false);
   const [error,  setError]  = useState('');
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
+
+  const sessionLabel = form.collectionSession === '2' ? 'Afternoon (Batch 2)' : 'Morning (Batch 1)';
 
   const crates  = Math.max(0, Number(form.cratesCollected) || 0);
   const loose   = Math.max(0, Number(form.looseEggs)       || 0);
@@ -126,11 +137,11 @@ function LogEggModal({ section, apiFetch, onClose, onSave }) {
             <input type="date" className="input" value={form.collectionDate} onChange={e => set('collectionDate', e.target.value)} max={today} />
           </div>
           <div>
-            <label className="label">Session *</label>
-            <select className="input" value={form.collectionSession} onChange={e => set('collectionSession', e.target.value)}>
-              <option value="1">Morning (Batch 1)</option>
-              <option value="2">Afternoon (Batch 2)</option>
-            </select>
+            <label className="label">Session</label>
+            <div style={{ padding:'9px 12px', borderRadius:8, background:'var(--bg-elevated)', border:'1px solid var(--border-card)', fontSize:13, fontWeight:600, color:'var(--text-primary)' }}>
+              {sessionLabel}
+            </div>
+            <div style={{ fontSize:10, color:'var(--text-muted)', marginTop:3 }}>Auto-selected from task</div>
           </div>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10 }}>
@@ -169,7 +180,7 @@ function LogEggModal({ section, apiFetch, onClose, onSave }) {
 
 // ── Log Mortality Modal ───────────────────────────────────────────────────────
 
-function LogMortalityModal({ section, apiFetch, onClose, onSave }) {
+function LogMortalityModal({ section, task, apiFetch, onClose, onSave }) {
   const flock = section.flock || null;
   const today = new Date().toISOString().split('T')[0];
   const [form, setForm] = useState({ recordDate: today, count: '', causeCode: 'UNKNOWN', notes: '' });
@@ -615,12 +626,102 @@ function LogWeightModal({ section, apiFetch, onClose, onSave }) {
 }
 
 // ── Section Task Card ─────────────────────────────────────────────────────────
-// Each section gets its own card. Tasks for that section are listed inline.
-// The DailySummaryCard sits below the task list inside the same card.
+// Each section gets its own card.
+// Tasks are grouped into 4 time-based shift blocks that expand/collapse.
+// Completed blocks auto-collapse; the active (current) block auto-expands.
+// Weekly tasks live in a separate collapsible accordion below daily blocks.
+// A slim link to /worker/summary replaces the inline DailySummaryCard.
+
+// ── Observation / Checklist Complete Modal ─────────────────────────────────
+// For INSPECTION, CLEANING, BIOSECURITY, MAINTENANCE, STORE_COUNT tasks
+// that need only a one-tap confirmation and optional flagged notes.
+
+function ObservationModal({ task, section, apiFetch, onClose, onSave }) {
+  const [notes,    setNotes]    = useState('');
+  const [flagging, setFlagging] = useState(false);
+  const [saving,   setSaving]   = useState(false);
+  const [error,    setError]    = useState('');
+  const meta = TYPE_META[task?.taskType] || TYPE_META.OTHER;
+
+  async function complete(note) {
+    setSaving(true); setError('');
+    try {
+      const res = await apiFetch('/api/tasks?action=complete', {
+        method: 'POST',
+        body: JSON.stringify({ taskId: task.id, completionNotes: note }),
+      });
+      if (!res.ok) { const d = await res.json(); setError(d.error || 'Failed'); return; }
+      onSave();
+    } catch { setError('Network error'); }
+    finally { setSaving(false); }
+  }
+
+  return (
+    <ModalShell title={`${meta.icon} ${task?.title || 'Complete Task'}`} onClose={onClose}
+      footer={<>
+        <button className='btn btn-ghost' onClick={onClose} disabled={saving}>Cancel</button>
+        {flagging
+          ? <button onClick={() => { if (!notes.trim()) { setError('Describe the issue'); return; } complete(`Issue flagged: ${notes.trim()}`); }}
+              disabled={saving || !notes.trim()}
+              style={{ padding:'9px 16px', borderRadius:9, border:'none', background: saving?'#94a3b8':'#dc2626', color:'#fff', fontSize:13, fontWeight:700, cursor:'pointer', fontFamily:'inherit' }}>
+              {saving ? 'Saving…' : '⚑ Submit & Flag Issue'}
+            </button>
+          : <button onClick={() => complete('All clear — no issues found.')}
+              disabled={saving}
+              style={{ padding:'9px 16px', borderRadius:9, border:'1.5px solid #bbf7d0', background:'#f0fdf4', color:'#16a34a', fontSize:13, fontWeight:700, cursor: saving?'not-allowed':'pointer', fontFamily:'inherit' }}>
+              {saving ? '…' : '✓ All Clear'}
+            </button>
+        }
+      </>}
+    >
+      <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
+        {section && (
+          <div style={{ padding:'10px 14px', background:'var(--bg-elevated)', borderRadius:9, fontSize:12 }}>
+            <strong>{section.penName} › {section.name}</strong>
+            {section.flock && <span style={{ color:'var(--text-muted)', marginLeft:8 }}>· {section.flock.batchCode}</span>}
+          </div>
+        )}
+        {task?.description && !task.description.includes('SPOT-CHECK') && (
+          <div style={{ fontSize:12, color:'var(--text-secondary)', lineHeight:1.6, padding:'8px 12px', background:'#f8fafc', borderRadius:8, border:'1px solid var(--border-card)' }}>
+            {task.description}
+          </div>
+        )}
+        {!flagging && (
+          <div style={{ padding:'9px 13px', background:'#f0fdf4', border:'1px solid #bbf7d0', borderRadius:8, fontSize:12, color:'#15803d' }}>
+            Tap <strong>All Clear</strong> if no issues were found.
+          </div>
+        )}
+        <button onClick={() => setFlagging(f => !f)}
+          style={{ display:'flex', alignItems:'center', gap:6, padding:'7px 12px', borderRadius:8, border:'1px solid var(--border-card)', background: flagging?'#fef2f2':'#fff', color: flagging?'#dc2626':'var(--text-muted)', fontSize:12, fontWeight:600, cursor:'pointer', fontFamily:'inherit' }}>
+          <span>{flagging ? '▾' : '▸'}</span>
+          <span>{flagging ? 'Hide issue report' : '⚑ Flag an issue instead'}</span>
+        </button>
+        {flagging && (
+          <div>
+            <label style={{ display:'block', fontSize:11, fontWeight:700, color:'var(--text-secondary)', marginBottom:5 }}>Describe the issue *</label>
+            <textarea className='input' rows={3} value={notes} onChange={e => { setNotes(e.target.value); setError(''); }}
+              placeholder='e.g. Blocked nipple in row 3, leaking pipe near cage 7…' style={{ resize:'vertical' }} autoFocus />
+          </div>
+        )}
+        {error && <div style={{ padding:'8px 12px', borderRadius:8, background:'#fef2f2', border:'1px solid #fecaca', fontSize:12, color:'#dc2626' }}>⚠ {error}</div>}
+      </div>
+    </ModalShell>
+  );
+}
+
+// Quick-log button style helper
+function qBtn(color, border, bg) {
+  return {
+    display: 'flex', alignItems: 'center', gap: 4,
+    padding: '4px 10px', borderRadius: 7,
+    border: `1px solid ${border}`, background: bg, color,
+    fontSize: 11, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+  };
+}
 
 function SectionTaskCard({ sec, sectionTasks, onComplete, saving, apiFetch, onLogEggs, onLogMortality, onLogWater, onLogFeed, onLogWeight, onLogTemp, refreshKey = 0 }) {
-  const flock      = sec.flock || null;                          // API returns sec.flock (singular, pre-resolved)
-  const isLayer    = sec.penOperationType === 'LAYER';           // API returns sec.penOperationType (flat field)
+  const flock      = sec.flock || null;
+  const isLayer    = sec.penOperationType === 'LAYER';
   const secStage   = sec.metrics?.stage || flock?.stage || 'PRODUCTION';
   const isBroodingOrRearing = isLayer && (secStage === 'BROODING' || secStage === 'REARING');
   const metrics    = sec.metrics || {};
@@ -633,66 +734,101 @@ function SectionTaskCard({ sec, sectionTasks, onComplete, saving, apiFetch, onLo
   const sectionPct   = sectionTotal > 0 ? Math.round((sectionDone / sectionTotal) * 100) : 0;
   const allDone      = sectionTotal > 0 && sectionDone === sectionTotal;
 
+  // ── Split daily vs weekly tasks ─────────────────────────────────────────────
+  const dailyTasks  = sectionTasks.filter(t => t.recurrenceRule === 'DAILY'  || !t.recurrenceRule);
+  const weeklyTasks = sectionTasks.filter(t => t.recurrenceRule === 'WEEKLY');
+  const [weeklyOpen, setWeeklyOpen] = useState(false);
+
+  // ── Shift blocks ────────────────────────────────────────────────────────────
+  const SHIFT_BLOCKS = [
+    { id: 'morning',    label: '🌅 Morning Shift',  start:  6, end: 10, color: '#d97706', bg: '#fffbeb', border: '#fde68a' },
+    { id: 'midmorning', label: '☀️ Mid-Morning',    start: 10, end: 14, color: '#6c63ff', bg: '#f5f3ff', border: '#ddd6fe' },
+    { id: 'afternoon',  label: '🌤️ Afternoon',      start: 14, end: 17, color: '#16a34a', bg: '#f0fdf4', border: '#bbf7d0' },
+    { id: 'endofday',   label: '🌇 End of Day',      start: 17, end: 24, color: '#0284c7', bg: '#f0f9ff', border: '#bfdbfe' },
+  ];
+
+  function getTaskHour(task) {
+    if (!task.dueDate) return 12;
+    return new Date(task.dueDate).getHours();
+  }
+
+  function getBlockId(hour) {
+    for (const b of SHIFT_BLOCKS) {
+      if (hour >= b.start && hour < b.end) return b.id;
+    }
+    return 'endofday';
+  }
+
+  // Assign each daily task to its block by due hour
+  const tasksByBlock = {};
+  SHIFT_BLOCKS.forEach(b => { tasksByBlock[b.id] = []; });
+  dailyTasks.forEach(task => {
+    tasksByBlock[getBlockId(getTaskHour(task))].push(task);
+  });
+
+  // Current wall-clock block
+  const nowHour       = new Date().getHours();
+  const activeBlockId = getBlockId(nowHour);
+
+  // Init: expand active block + any block with overdue tasks; collapse fully-done blocks
+  const [expanded, setExpanded] = useState(() => {
+    const init = {};
+    SHIFT_BLOCKS.forEach(b => {
+      const bt        = tasksByBlock[b.id] || [];
+      const hasOverdue= bt.some(t => t.status === 'OVERDUE');
+      const allDoneB  = bt.length > 0 && bt.every(t => t.status === 'COMPLETED');
+      init[b.id] = (b.id === activeBlockId || hasOverdue) && !allDoneB;
+    });
+    return init;
+  });
+
+  const toggleBlock = id => setExpanded(prev => ({ ...prev, [id]: !prev[id] }));
+
+  // Overdue across all blocks — float to a red strip above the shift blocks
+  const overdueAll = dailyTasks.filter(t => t.status === 'OVERDUE');
+
   return (
     <div style={{
-      background: '#fff',
-      borderRadius: 14,
+      background: '#fff', borderRadius: 14,
       border: `1.5px solid ${allDone ? '#bbf7d0' : 'var(--border-card)'}`,
       boxShadow: '0 1px 4px rgba(0,0,0,0.05)',
-      overflow: 'hidden',
-      transition: 'border-color 0.3s ease',
+      overflow: 'hidden', transition: 'border-color 0.3s ease',
     }}>
 
       {/* ── Section header ── */}
       <div style={{
-        padding: '14px 16px',
-        background: allDone ? '#f0fdf4' : 'var(--bg-base)',
+        padding: '14px 16px', background: allDone ? '#f0fdf4' : 'var(--bg-base)',
         borderBottom: '1px solid var(--border-card)',
         display: 'flex', alignItems: 'center', gap: 12,
       }}>
-        {/* Op-type icon badge */}
         <div style={{
-          width: 40, height: 40, borderRadius: 11,
-          background: `${opColor}18`,
+          width: 40, height: 40, borderRadius: 11, background: `${opColor}18`,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           fontSize: 20, flexShrink: 0,
         }}>
           {allDone ? '✅' : opIcon}
         </div>
-
-        {/* Section name + flock info */}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 800, fontSize: 14, color: 'var(--text-primary)', fontFamily: "'Poppins',sans-serif" }}>
             {sec.penName} <span style={{ color: 'var(--text-muted)', fontWeight: 500 }}>›</span> {sec.name}
           </div>
           <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-            {hasFlock ? (
-              <span>{flock.batchCode} · {fmt(flock.currentCount)} birds</span>
-            ) : (
-              <span style={{ color: '#f59e0b' }}>No active flock</span>
-            )}
-            <span style={{
-              padding: '1px 7px', borderRadius: 99,
-              background: `${opColor}15`, color: opColor,
-              fontWeight: 700, fontSize: 10, letterSpacing: '0.02em',
-            }}>
+            {hasFlock
+              ? <span>{flock.batchCode} · {fmt(flock.currentCount)} birds</span>
+              : <span style={{ color: '#f59e0b' }}>No active flock</span>
+            }
+            <span style={{ padding: '1px 7px', borderRadius: 99, background: `${opColor}15`, color: opColor, fontWeight: 700, fontSize: 10 }}>
               {isLayer ? 'Layer' : 'Broiler'}
             </span>
           </div>
         </div>
-
-        {/* Section progress pill */}
         <div style={{ flexShrink: 0, textAlign: 'right' }}>
           {sectionTotal > 0 ? (
             <>
-              <div style={{
-                fontSize: 13, fontWeight: 800,
-                color: allDone ? '#16a34a' : sectionPct > 0 ? 'var(--purple)' : 'var(--text-muted)',
-                fontFamily: "'Poppins',sans-serif",
-              }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: allDone ? '#16a34a' : sectionPct > 0 ? 'var(--purple)' : 'var(--text-muted)', fontFamily: "'Poppins',sans-serif" }}>
                 {sectionDone}/{sectionTotal}
               </div>
-              <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>tasks done</div>
+              <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>done</div>
             </>
           ) : (
             <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>No tasks</div>
@@ -700,161 +836,261 @@ function SectionTaskCard({ sec, sectionTasks, onComplete, saving, apiFetch, onLo
         </div>
       </div>
 
-      {/* ── Quick-log buttons — direct shortcuts to log forms without needing a task ── */}
-      <div style={{
-        padding: '8px 16px',
-        borderBottom: '1px solid var(--border-card)',
-        display: 'flex', gap: 6, flexWrap: 'wrap',
-      }}>
-        {isLayer && !isBroodingOrRearing && (
-          <button onClick={onLogEggs} title="Log egg collection"
-            style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px', borderRadius: 7, border: '1px solid #fde68a', background: '#fffbeb', color: '#d97706', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
-            🥚 Log Eggs
-          </button>
-        )}
-        {((secStage === 'REARING') || (!isLayer && secStage !== 'BROODING')) && hasFlock && (
-          <button onClick={onLogWeight} title="Log weekly weigh-in"
-            style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px', borderRadius: 7, border: '1px solid #ddd6fe', background: '#f5f3ff', color: '#6c63ff', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
-            ⚖️ Log Weight
-          </button>
-        )}
-        <button onClick={onLogFeed} title="Log feed distribution"
-          style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px', borderRadius: 7, border: '1px solid #bbf7d0', background: '#f0fdf4', color: '#16a34a', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
-          🍽️ Log Feed
-        </button>
-        <button onClick={onLogMortality} title="Log mortality"
-          style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px', borderRadius: 7, border: '1px solid #fecaca', background: '#fef2f2', color: '#dc2626', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
-          💀 Log Mortality
-        </button>
-        <button onClick={onLogWater} title="Log water meter reading"
-          style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px', borderRadius: 7, border: '1px solid #bfdbfe', background: '#eff6ff', color: '#2563eb', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
-          💧 Log Water
-        </button>
-      </div>
+      {/* ── Quick-log shortcut bar — mortality only ── */}
+      {/* Eggs, feed and water are logged via tasks to enforce compliance. */}
+      {/* Mortality stays as a quick-log because birds die unpredictably throughout the day. */}
+      {hasFlock && (
+        <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--border-card)', display: 'flex', gap: 6, alignItems: 'center' }}>
+          <button onClick={onLogMortality} style={qBtn('#dc2626','#fecaca','#fef2f2')}>💀 Log Mortality</button>
+          <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 2 }}>Log any bird deaths as they occur throughout the day</span>
+        </div>
+      )}
 
-      {/* ── Progress bar (only when tasks exist and not 100%) ── */}
+      {/* ── Progress bar ── */}
       {sectionTotal > 0 && !allDone && (
         <div style={{ height: 3, background: 'var(--bg-elevated)' }}>
-          <div style={{
-            height: '100%', width: `${sectionPct}%`,
-            background: 'linear-gradient(90deg,#6c63ff,#48c774)',
-            transition: 'width 0.5s ease',
-          }} />
+          <div style={{ height: '100%', width: `${sectionPct}%`, background: 'linear-gradient(90deg,#6c63ff,#48c774)', transition: 'width 0.5s ease' }} />
         </div>
       )}
 
-      {/* ── KPI chips (shown when flock is active) ── */}
+      {/* ── KPI chips ── */}
       {hasFlock && (
         <div style={{ padding: '12px 16px 0', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <KpiChip label="Live Birds"  value={fmt(flock.currentCount)}         color="var(--text-primary)" />
-          {isBroodingOrRearing && <KpiChip label="Feed/Day" value={metrics.avgDailyFeedKg!=null?`${metrics.avgDailyFeedKg}kg`:'—'} color="#6c63ff" />}
+          <KpiChip label="Live Birds"  value={fmt(flock.currentCount)} color="var(--text-primary)" />
+          {/* Live Birds → Feed Today → Eggs → Deaths */}
+          {metrics.todayFeedKg > 0
+            ? <KpiChip label="Feed Today" value={`${metrics.todayFeedKg} kg`} color="#16a34a" />
+            : (isBroodingOrRearing && metrics.avgDailyFeedKg != null)
+              ? <KpiChip label="Feed/Day" value={`${metrics.avgDailyFeedKg} kg`} color="#16a34a" />
+              : null
+          }
           {isBroodingOrRearing && secStage === 'REARING' && metrics.latestWeightG && <KpiChip label="Avg Weight" value={`${metrics.latestWeightG}g`} color="#6c63ff" />}
-          {!isBroodingOrRearing && isLayer && <KpiChip label="Today's Eggs"  value={fmt(metrics.todayEggs || 0)}       color="var(--amber)" />}
-          {!isBroodingOrRearing && isLayer && <KpiChip label="7d Lay Rate"   value={fmtPct(metrics.avgLayingRate)}     color="var(--amber)" />}
+          {!isBroodingOrRearing && isLayer && <KpiChip label="Eggs Today"  value={fmt(metrics.todayEggs || 0)} color="var(--amber)" />}
+          {!isBroodingOrRearing && isLayer && <KpiChip label="Lay Rate Today" value={metrics.todayLayingRate != null ? fmtPct(metrics.todayLayingRate) : '—'} color="var(--amber)" />}
           {!isLayer && metrics.latestWeight && <KpiChip label="Avg Weight" value={`${metrics.latestWeight.avgWeightG}g`} color="#3b82f6" />}
-          <KpiChip
-            label="Deaths Today"
-            value={metrics.todayMortality || 0}
-            color={(metrics.todayMortality || 0) > 5 ? 'var(--red)' : 'var(--text-muted)'}
-          />
+          <KpiChip label="Deaths Today" value={metrics.todayMortality || 0} color={(metrics.todayMortality || 0) > 5 ? 'var(--red)' : 'var(--text-muted)'} />
         </div>
       )}
 
-      {/* ── Task list ── */}
+      {/* ── Task area ── */}
       <div style={{ padding: '12px 16px' }}>
         {!hasFlock ? (
           <div style={{ padding: '14px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
             No active flock — tasks unavailable
           </div>
-        ) : sectionTasks.length === 0 ? (
+        ) : sectionTotal === 0 ? (
           <div style={{ padding: '14px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
-            <span style={{ marginRight: 6 }}>✅</span>No tasks assigned for this section today
+            ✅ No tasks assigned today
           </div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
-            {sectionTasks.map(task => {
-              const done    = task.status === 'COMPLETED';
-              const overdue = task.status === 'OVERDUE';
-              const inProg  = task.status === 'IN_PROGRESS';
-              const meta    = TYPE_META[task.taskType] || TYPE_META.OTHER;
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
 
-              // Status-driven border and background
-              let borderColor = 'var(--border)';
-              let bgColor     = '#fff';
-              if (done)    { borderColor = '#bbf7d0'; bgColor = '#f0fdf4'; }
-              else if (overdue) { borderColor = '#fecaca'; bgColor = '#fff5f5'; }
-              else if (inProg)  { borderColor = '#ddd6fe'; bgColor = '#f5f3ff'; }
+            {/* ── Overdue strip ── */}
+            {overdueAll.length > 0 && (
+              <div style={{ padding: '8px 12px', borderRadius: 9, background: '#fef2f2', border: '1px solid #fecaca', marginBottom: 2 }}>
+                <div style={{ fontSize: 10, fontWeight: 800, color: '#dc2626', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
+                  ⚠ {overdueAll.length} Overdue Task{overdueAll.length > 1 ? 's' : ''}
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {overdueAll.map(task => {
+                    const meta = TYPE_META[task.taskType] || TYPE_META.OTHER;
+                    return (
+                      <div key={task.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ fontSize: 13 }}>{meta.icon}</span>
+                        <span style={{ flex: 1, fontSize: 12, fontWeight: 600, color: '#dc2626' }}>{task.title}</span>
+                        <button onClick={() => onComplete(task)} disabled={saving}
+                          style={{ padding: '4px 10px', borderRadius: 6, border: 'none', background: '#dc2626', color: '#fff', fontSize: 11, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                          {meta.action}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* ── Shift blocks ── */}
+            {SHIFT_BLOCKS.map(block => {
+              const bt       = tasksByBlock[block.id];
+              if (bt.length === 0) return null;
+
+              const blockDone  = bt.filter(t => t.status === 'COMPLETED').length;
+              const allBlockDone = blockDone === bt.length;
+              const isOpen     = !!expanded[block.id];
 
               return (
-                <div key={task.id} style={{
-                  padding: '10px 12px',
+                <div key={block.id} style={{
                   borderRadius: 10,
-                  border: `1px solid ${borderColor}`,
-                  background: bgColor,
-                  display: 'flex', gap: 10, alignItems: 'center',
-                  opacity: done ? 0.72 : 1,
-                  transition: 'opacity 0.2s, background 0.2s',
+                  border: `1px solid ${allBlockDone ? '#bbf7d0' : block.border}`,
+                  overflow: 'hidden',
+                  background: allBlockDone ? '#f0fdf4' : block.bg,
                 }}>
-                  {/* Status / type icon */}
-                  <span style={{ fontSize: 15, lineHeight: 1, flexShrink: 0, width: 22, textAlign: 'center' }}>
-                    {done ? '✅' : overdue ? '🔴' : meta.icon}
-                  </span>
-
-                  {/* Task label + time */}
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{
-                      fontSize: 13, fontWeight: 700,
-                      color: done ? '#15803d' : overdue ? '#dc2626' : 'var(--text-primary)',
-                      textDecoration: done ? 'line-through' : 'none',
+                  {/* Block header — always visible, tap to toggle */}
+                  <button
+                    onClick={() => toggleBlock(block.id)}
+                    style={{
+                      width: '100%', padding: '9px 12px',
+                      display: 'flex', alignItems: 'center', gap: 8,
+                      background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left',
+                    }}
+                  >
+                    <span style={{ fontSize: 12, fontWeight: 800, color: allBlockDone ? '#16a34a' : block.color, flex: 1 }}>
+                      {allBlockDone ? '✅ ' : ''}{block.label}
+                    </span>
+                    <span style={{
+                      fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 99,
+                      background: allBlockDone ? '#bbf7d0' : `${block.color}20`,
+                      color: allBlockDone ? '#16a34a' : block.color,
                     }}>
-                      {task.title}
-                    </div>
-                    {task.dueDate && !done && (
-                      <div style={{ fontSize: 10, color: overdue ? '#dc2626' : 'var(--text-muted)', marginTop: 2 }}>
-                        {overdue ? '⚠ Overdue · ' : ''}Due {new Date(task.dueDate).toLocaleTimeString('en-NG', { hour: '2-digit', minute: '2-digit' })}
-                      </div>
-                    )}
-                  </div>
+                      {allBlockDone ? `${bt.length}/${bt.length} done` : `${blockDone}/${bt.length}`}
+                    </span>
+                    <span style={{
+                      fontSize: 14, color: block.color, lineHeight: 1, display: 'block',
+                      transform: isOpen ? 'rotate(0deg)' : 'rotate(-90deg)',
+                      transition: 'transform 0.2s',
+                    }}>▾</span>
+                  </button>
 
-                  {/* Action button */}
-                  {!done && (
-                    <button
-                      onClick={() => onComplete(task)}
-                      disabled={saving}
-                      style={{
-                        flexShrink: 0,
-                        padding: '5px 12px',
-                        borderRadius: 7,
-                        border: 'none',
-                        background: overdue ? '#dc2626' : meta.bg,
-                        color: overdue ? '#fff' : meta.color,
-                        fontSize: 11,
-                        fontWeight: 700,
-                        cursor: saving ? 'not-allowed' : 'pointer',
-                        whiteSpace: 'nowrap',
-                        outline: `1px solid ${overdue ? '#dc2626' : meta.color}30`,
-                      }}>
-                      {meta.action}
-                    </button>
+                  {/* Block task rows — shown when expanded */}
+                  {isOpen && (
+                    <div style={{ borderTop: `1px solid ${block.border}`, padding: '6px 10px 8px', display: 'flex', flexDirection: 'column', gap: 5 }}>
+                      {bt.map(task => {
+                        const done = task.status === 'COMPLETED';
+                        const over = task.status === 'OVERDUE';
+                        const meta = TYPE_META[task.taskType] || TYPE_META.OTHER;
+
+                        // Completed — compact struck-through line, no button
+                        if (done) return (
+                          <div key={task.id} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '5px 6px', borderRadius: 7, opacity: 0.6 }}>
+                            <span style={{ fontSize: 13 }}>✅</span>
+                            <span style={{ flex: 1, fontSize: 12, color: '#15803d', textDecoration: 'line-through', fontWeight: 600 }}>{task.title}</span>
+                            <span style={{ fontSize: 10, color: '#15803d' }}>Done</span>
+                          </div>
+                        );
+
+                        // Pending / overdue — full row with action button
+                        return (
+                          <div key={task.id} style={{
+                            display: 'flex', alignItems: 'center', gap: 8,
+                            padding: '8px 10px', borderRadius: 8,
+                            background: over ? '#fff5f5' : '#fff',
+                            border: `1px solid ${over ? '#fecaca' : 'var(--border-card)'}`,
+                          }}>
+                            <span style={{ fontSize: 14, flexShrink: 0 }}>{meta.icon}</span>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 12, fontWeight: 700, color: over ? '#dc2626' : 'var(--text-primary)' }}>
+                                {task.title}
+                              </div>
+                              {task.dueDate && (
+                                <div style={{ fontSize: 10, color: over ? '#dc2626' : 'var(--text-muted)', marginTop: 1 }}>
+                                  {over ? '⚠ Overdue · ' : ''}
+                                  {new Date(task.dueDate).toLocaleTimeString('en-NG', { hour: '2-digit', minute: '2-digit' })}
+                                </div>
+                              )}
+                            </div>
+                            <button
+                              onClick={() => onComplete(task)}
+                              disabled={saving}
+                              style={{
+                                flexShrink: 0, padding: '5px 11px', borderRadius: 7, border: 'none',
+                                background: over ? '#dc2626' : meta.bg,
+                                color: over ? '#fff' : meta.color,
+                                fontSize: 11, fontWeight: 700,
+                                cursor: saving ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap',
+                                outline: `1px solid ${over ? '#dc2626' : meta.color}25`,
+                              }}>
+                              {meta.action}
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
                   )}
                 </div>
               );
             })}
+
+            {/* ── Weekly tasks accordion ── */}
+            {weeklyTasks.length > 0 && (
+              <div style={{ borderRadius: 10, border: '1px solid #e2e8f0', overflow: 'hidden', background: '#f8fafc', marginTop: 2 }}>
+                <button
+                  onClick={() => setWeeklyOpen(o => !o)}
+                  style={{ width: '100%', padding: '9px 12px', display: 'flex', alignItems: 'center', gap: 8, background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left' }}
+                >
+                  <span style={{ fontSize: 12, fontWeight: 800, color: '#64748b', flex: 1 }}>📅 This Week's Tasks</span>
+                  <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 99, background: '#e2e8f0', color: '#64748b' }}>
+                    {weeklyTasks.filter(t => t.status === 'COMPLETED').length}/{weeklyTasks.length}
+                  </span>
+                  <span style={{ fontSize: 14, color: '#64748b', transform: weeklyOpen ? 'rotate(0deg)' : 'rotate(-90deg)', transition: 'transform 0.2s', lineHeight: 1 }}>▾</span>
+                </button>
+                {weeklyOpen && (
+                  <div style={{ borderTop: '1px solid #e2e8f0', padding: '6px 10px 8px', display: 'flex', flexDirection: 'column', gap: 5 }}>
+                    {weeklyTasks.map(task => {
+                      const done = task.status === 'COMPLETED';
+                      const over = task.status === 'OVERDUE';
+                      const meta = TYPE_META[task.taskType] || TYPE_META.OTHER;
+                      const due  = task.dueDate
+                        ? new Date(task.dueDate).toLocaleDateString('en-NG', { weekday: 'short', day: 'numeric', month: 'short' })
+                        : null;
+
+                      if (done) return (
+                        <div key={task.id} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '5px 6px', borderRadius: 7, opacity: 0.6 }}>
+                          <span style={{ fontSize: 13 }}>✅</span>
+                          <span style={{ flex: 1, fontSize: 12, color: '#15803d', textDecoration: 'line-through', fontWeight: 600 }}>{task.title}</span>
+                          {due && <span style={{ fontSize: 10, color: '#15803d' }}>{due}</span>}
+                        </div>
+                      );
+
+                      return (
+                        <div key={task.id} style={{
+                          display: 'flex', alignItems: 'center', gap: 8,
+                          padding: '8px 10px', borderRadius: 8,
+                          background: over ? '#fff5f5' : '#fff',
+                          border: `1px solid ${over ? '#fecaca' : '#e2e8f0'}`,
+                        }}>
+                          <span style={{ fontSize: 14, flexShrink: 0 }}>{meta.icon}</span>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 12, fontWeight: 700, color: over ? '#dc2626' : 'var(--text-primary)' }}>{task.title}</div>
+                            {due && <div style={{ fontSize: 10, color: over ? '#dc2626' : 'var(--text-muted)', marginTop: 1 }}>{over ? '⚠ ' : ''}{due}</div>}
+                          </div>
+                          <button
+                            onClick={() => onComplete(task)} disabled={saving}
+                            style={{
+                              flexShrink: 0, padding: '5px 11px', borderRadius: 7, border: 'none',
+                              background: over ? '#dc2626' : meta.bg, color: over ? '#fff' : meta.color,
+                              fontSize: 11, fontWeight: 700, cursor: saving ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap',
+                            }}>
+                            {meta.action}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>
 
-      {/* ── Daily Summary Card — sits at the bottom of every section ── */}
+      {/* ── View Day Summary link ── */}
       {hasFlock && (
-        <div style={{ padding: '0 16px 16px' }}>
-          <DailySummaryCard
-            penSectionId={sec.id}
-            isLayer={isLayer}
-            stage={secStage}
-            brooderTemp={sec.metrics?.latestBrooderTemp ?? null}
-            apiFetch={apiFetch}
-            refreshKey={refreshKey}
-          />
+        <div style={{ padding: '8px 16px 14px', borderTop: '1px solid var(--border-card)' }}>
+          <a
+            href="/worker/summary"
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '9px 14px', borderRadius: 9,
+              background: '#f8fafc', border: '1px solid var(--border-card)',
+              textDecoration: 'none', color: 'var(--text-secondary)',
+              fontSize: 12, fontWeight: 600,
+            }}
+          >
+            <span>📋 View Day Summary</span>
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+              {sectionDone}/{sectionTotal} tasks done →
+            </span>
+          </a>
         </div>
       )}
     </div>
@@ -896,6 +1132,7 @@ export default function WorkerPage() {
   const [toast,          setToast]          = useState(null);
   const [saving,         setSaving]         = useState(false);
   const [spotCheckTask,  setSpotCheckTask]  = useState(null);
+  const [obsModal,       setObsModal]       = useState(null);  // { task, section }
   const [taskLinkedModal,setTaskLinkedModal] = useState(null); // { task, type }
   const [saveCount,      setSaveCount]      = useState(0);    // bumped on every save to refresh DailySummaryCards
 
@@ -994,30 +1231,24 @@ export default function WorkerPage() {
         setTaskLinkedModal({ task, type: 'mortality' }); setMortModal(section); return;
       }
       if (task.taskType === 'INSPECTION') {
-        // BROODING sections: Inspect = temperature check; others: water meter
         const secStage = section?.metrics?.stage || section?.flock?.stage || 'PRODUCTION';
         if (secStage === 'BROODING') {
           setTaskLinkedModal({ task, type: 'temp' }); setTempModal(section); return;
         }
-        setTaskLinkedModal({ task, type: 'water' }); setWaterModal(section); return;
+        // Only the Arrival & Pre-shift Inspection includes the water meter reading.
+        // All other INSPECTION tasks (Water System Check, Nipple Drinker, Bird Health,
+        // End-of-Day) are physical checks with no meter data — observation modal only.
+        const isArrivalInspection = task.title?.includes('Arrival') || task.title?.includes('Pre-shift');
+        if (isArrivalInspection) { setTaskLinkedModal({ task, type: 'water' }); setWaterModal(section); return; }
+        setObsModal({ task, section }); return;
+      }
+      if (['CLEANING','BIOSECURITY','MAINTENANCE','STORE_COUNT'].includes(task.taskType)) {
+        setObsModal({ task, section }); return;
       }
     }
-    // REPORT_SUBMISSION task — submit the day's summary then mark task complete
-    if (task.taskType === 'REPORT_SUBMISSION' && section) {
-      setSaving(true);
-      try {
-        // Submit the daily summary first
-        await apiFetch('/api/daily-summary', {
-          method: 'POST',
-          body: JSON.stringify({ penSectionId: section.id }),
-        }).catch(() => {});
-        // Then mark the task complete
-        await apiFetch('/api/tasks?action=complete', {
-          method: 'POST',
-          body: JSON.stringify({ taskId: task.id, completionNotes: 'Daily summary submitted' }),
-        });
-        bumpSave(); load(); showToast('Daily summary submitted ✓');
-      } finally { setSaving(false); }
+    // REPORT_SUBMISSION — navigate to dedicated summary page
+    if (task.taskType === 'REPORT_SUBMISSION') {
+      router.push('/worker/summary');
       return;
     }
     // Generic / checklist tasks — mark complete immediately
@@ -1169,7 +1400,7 @@ export default function WorkerPage() {
 
       {/* ── Modals ── */}
       {eggModal && (
-        <LogEggModal section={eggModal} apiFetch={apiFetch}
+        <LogEggModal section={eggModal} task={taskLinkedModal?.task} apiFetch={apiFetch}
           onClose={() => { setEggModal(null); setTaskLinkedModal(null); }}
           onSave={() => {
             setEggModal(null); bumpSave(); load(); showToast('Egg collection recorded ✓');
@@ -1177,7 +1408,7 @@ export default function WorkerPage() {
           }} />
       )}
       {mortModal && (
-        <LogMortalityModal section={mortModal} apiFetch={apiFetch}
+        <LogMortalityModal section={mortModal} task={taskLinkedModal?.task} apiFetch={apiFetch}
           onClose={() => { setMortModal(null); setTaskLinkedModal(null); }}
           onSave={() => {
             setMortModal(null); bumpSave(); load(); showToast('Mortality recorded ✓');
@@ -1209,10 +1440,12 @@ export default function WorkerPage() {
         />
       )}
       {feedModal && (
-        <WorkerFeedModal section={feedModal} apiFetch={apiFetch}
+        <WorkerFeedModal section={feedModal} task={taskLinkedModal?.task} apiFetch={apiFetch}
           onClose={() => { setFeedModal(null); setTaskLinkedModal(null); }}
-          onSave={() => {
-            setFeedModal(null); bumpSave(); load(); showToast('Feed distribution logged ✓');
+          onSave={(record) => {
+            setFeedModal(null);
+            if (record) { bumpSave(); load(); showToast('Feed distribution logged ✓'); }
+            else { showToast('No feed added — task marked complete ✓'); }
             if (taskLinkedModal?.type === 'feed') completeLinkedTask(taskLinkedModal.task.id);
           }} />
       )}
@@ -1220,6 +1453,11 @@ export default function WorkerPage() {
         <EditRecordModal item={editRecord} sections={sections} apiFetch={apiFetch}
           onClose={() => setEditRecord(null)}
           onSave={() => { setEditRecord(null); load(); showToast('Record corrected and resubmitted for verification ✓'); }} />
+      )}
+      {obsModal && (
+        <ObservationModal task={obsModal.task} section={obsModal.section} apiFetch={apiFetch}
+          onClose={() => setObsModal(null)}
+          onSave={() => { setObsModal(null); load(); showToast('Task completed ✓'); }} />
       )}
       {spotCheckTask && (
         <SpotCheckCompleteModal task={spotCheckTask} apiFetch={apiFetch}

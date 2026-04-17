@@ -861,6 +861,8 @@ function WorkerDashboard({ sections, tasks, user, apiFetch, showYesterday }) {
   const fcrs     = sections.filter(s=>s.metrics.type==='BROILER'&&s.metrics.estimatedFCR);
   const avgFCR   = fcrs.length ? parseFloat((fcrs.reduce((s,sec)=>s+sec.metrics.estimatedFCR,0)/fcrs.length).toFixed(2)) : null;
   const overdue  = tasks.filter(t=>t.status==='OVERDUE').length;
+  // Today's total feed across all sections
+  const todayFeedKg = parseFloat(sections.reduce((a,s)=>a+(s.metrics?.todayFeedKg||0),0).toFixed(1));
   const h = new Date().getHours();
   const greet = h<12?'morning':h<17?'afternoon':'evening';
 
@@ -929,6 +931,12 @@ function WorkerDashboard({ sections, tasks, user, apiFetch, showYesterday }) {
     trend:totDead===0?'up':totDead>5?'down':'stable',
     status:mortCountStatus(totDead,5), icon:'💀', context:'Your sections',
   };
+  const feedCard = {
+    label:'Feed Used Today', value:todayFeedKg>0?`${todayFeedKg} kg`:'—',
+    sub:todayFeedKg>0&&totBirds>0?`${parseFloat((todayFeedKg*1000/totBirds).toFixed(0))} g/bird`:'Log feed via tasks',
+    delta:todayFeedKg>0?`${todayFeedKg} kg distributed`:'No feed logged yet',
+    trend:'stable', status:todayFeedKg>0?'good':'neutral', icon:'🌾', context:'Your sections',
+  };
 
   const workerKpis = isL && dominantStage==='BROODING' ? [
     { label:'Live Chicks', value:fmt(totBirds),
@@ -955,8 +963,9 @@ function WorkerDashboard({ sections, tasks, user, apiFetch, showYesterday }) {
     { label:'Live Birds', value:fmt(totBirds),
       sub:`${sections.length} section${sections.length!==1?'s':''}`,
       delta:'', trend:'stable', status:'neutral', icon:'🐦', context:'Your sections' },
-    { label:'Eggs Collected Today', value:fmt(todayEggs),
-      sub:`7d avg ${fmt(Math.round(sections.filter(s=>s.metrics?.type==='LAYER').reduce((a,s)=>a+(s.metrics?.weekEggs||0),0)/7))}`,
+    feedCard,
+    { label:'Eggs Today', value:fmt(todayEggs),
+      sub:`Lay rate ${avgRate>0?avgRate+'%':'—'}`,
       delta:todayEggs>0?`${fmt(todayEggs)} collected`:'None yet',
       trend:'stable', status:todayEggs>0?'good':'neutral', icon:'🥚', context:'Your sections' },
     mortCard, taskCard,
@@ -1057,7 +1066,7 @@ function WorkerDashboard({ sections, tasks, user, apiFetch, showYesterday }) {
       </div>
 
       {/* ── KPI row (4 cards) ── */}
-      <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:24}}>
+      <div style={{display:'grid',gridTemplateColumns:`repeat(${workerKpis.length},1fr)`,gap:14,marginBottom:24}}>
         {workerKpis.map(k=><KpiCard key={k.label} label={k.label} value={k.value} sub={k.sub} delta={k.delta} trend={k.trend} status={k.status} icon={k.icon} context={k.context} />)}
       </div>
 

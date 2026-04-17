@@ -143,7 +143,9 @@
         <li>Phase 8-Supplement <span class="tag tag-done">DONE</span> — Flock Lifecycle: /cull, /deplete, /lifecycle-summary routes deployed; store-mediated flow (TRANSFERRED_TO_STORE); CullModal + DepletionModal + LifecycleSummaryModal in app/farm/page.js</li>
         <li>Phase 8-Supp-Arch <span class="tag tag-done">DONE</span> — Navigation Architecture: AppShell 5-group sidebar (Production/Operations/Intelligence/Business/Processing); BusinessUnit design documented for Phase 10</li>
         <li>Phase 8E <span class="tag tag-done">DONE</span> — /production/broilers: harvest scheduler, Ross 308/Cobb 500 curves, FCR, batch profitability, 6-tab analytics</li>
-        <li>Phase 8F <span class="tag tag-next">NEXT SPRINT</span> — Worker PWA (manifest, service worker, offline queue, web push)</li>
+        <li>Phase 8G <span class="tag tag-active">PARTIAL</span> — Worker Task System: 12-task layer production schedule, shift-block UI, ObservationModal, task-aware feed/egg modals, conditional top-up No Feed Added path, quick-log bar reduced to mortality, KPI narrative chips. DB-backed templates + admin UI still planned.</li>
+        <li>Phase 8F <span class="tag tag-next">NEXT SPRINT</span> — Worker PWA (manifest, service worker, offline queue, web push). Deferred until task system stable.</li>
+        <li>Role profile corrections (PM, FM, IC, SM) — egg/feed process flow alignment — <span class="tag tag-next">NEXT CHAT</span></li>
       </ul>
     </div>
     <div class="ctx-block">
@@ -196,7 +198,43 @@
 
 <script>
 // ─────────────────────────────────────────────────────────────────────────────
-// WORKPLAN DATA — Rev 1.7 (April 2026)
+// WORKPLAN DATA — Rev 1.9 (April 2026)
+// Rev 1.9 changes vs Rev 1.7 (Worker Operations Sprint):
+//   • Phase 8G (Worker Task System) — major operational overhaul shipped:
+//     - Layer PRODUCTION daily tasks: 12-task shift schedule matching operational spreadsheet
+//       (06:00 Arrival → 06:30 Batch 1 Feed → 07:30 Batch 1 Eggs → 09:00 Water Check →
+//        09:30 Pen Sanitation → 10:30 Supplemental Top-up → 11:15 Bird Health →
+//        12:00 Midday Top-up → 14:30 Batch 2 Feed → 15:30 Batch 2 Eggs →
+//        17:00 End-of-Day → 18:30 Daily Report)
+//     - Layer PRODUCTION weekly: 7 day-specific tasks (Mon manure → Tue aisle → Wed feed rail →
+//        Thu weight sampling → Fri biosecurity → Sat equipment → Sun nipple drinker)
+//     - Worker page (/worker): shift-block layout — 4 collapsible time blocks (Morning 06-10,
+//       Mid-Morning 10-14, Afternoon 14-17, End of Day 17+) + weekly accordion
+//     - Overdue tasks float to red urgent strip above blocks; completed tasks compress to slim line
+//     - DailySummaryCard moved to dedicated /worker/summary page; slim link at bottom of each section
+//     - REPORT_SUBMISSION task routes to /worker/summary
+//     - ObservationModal (All Clear / Flag Issue) for INSPECTION, CLEANING, BIOSECURITY, MAINTENANCE tasks
+//     - INSPECTION routing: Arrival & Pre-shift → water meter; all others → ObservationModal
+//     - WorkerFeedModal rebuilt: feed type auto-filled from today's ISSUED requisition (not full inventory)
+//       session label auto-derived from task title; conditional top-ups (Supplemental, Midday) show
+//       "No Feed Added" button; saveNoFeed() calls onSave(null) — no consumption record created
+//     - LogEggModal: session auto-selected from task title (Batch 1 / Batch 2), shown read-only
+//     - LogMortalityModal: simplified back to record-only (no "No Deaths Today" — mortality is ad-hoc only)
+//     - Quick-log bar: reduced to 💀 Log Mortality only (eggs/feed/water are task-driven)
+//     - Worker KPI chips (SectionTaskCard): Live Birds → Feed Today → Eggs Today → Lay Rate Today → Deaths Today
+//       Feed Today uses metrics.todayFeedKg (actual today's kg, not 7d average)
+//       Lay Rate Today uses metrics.todayLayingRate (totalEggs/currentBirds×100)
+//   • Performance page (/performance): Feed Log tab added
+//     - Day-total header rows show: date, total bags, total kg, distribution count
+//     - Individual rows: date, time, section, feed type, bags used, remaining kg, total kg, g/bird, recorded by, status
+//     - g/bird flagged red >160, blue <80
+//     - Date filter pills moved to Production Records heading line (scope made explicit)
+//     - Log Collection button removed (feed/egg logging now task-driven)
+//   • Dashboard page (/dashboard): WorkerDashboard Layer PRODUCTION KPI cards updated
+//     - Now 5 cards: Live Birds → Feed Used Today → Eggs Today → Mortality Today → Task Completion
+//     - todayFeedKg summed across sections; sub shows g/bird when feed logged
+//     - Grid is dynamic repeat(workerKpis.length, 1fr) — handles 4 or 5 cards
+//   • Phase 8F (Worker PWA) — deferred, remains NEXT sprint
 // Rev 1.7 changes vs Rev 1.6:
 //   • Phase 8C — new "Dashboard & Performance Bug Fixes (Rev 1.6 Session)" group added
 //     - Farm Admin/Manager dashboard: section-level stage split for lay rate (excludes rearing/brooding birds)
@@ -563,14 +601,33 @@ const phases = [
     ]}
   ]},
 
-  // ── Rev 1.3 note: Phase 8G — code-based templates ARE done; DB model + admin UI still pending ──
-  // phaseStatus remains "active" — phase is partially shipped
+  // ── Rev 1.9: Phase 8G — Worker Operations Sprint completed (UI + modal layer). DB templates still pending. ──
   { id:"p8g", name:"Phase 8G · Worker Task Templates System", phaseStatus:"active", groups:[
-    { name:"Completed (Shipped in 8B)", tasks:[
+    { name:"Shipped in Rev 1.1–1.3 (code-based templates)", tasks:[
       { t:"Code-based daily/weekly task templates per operationType (hardcoded in task generate route)", s:"done"},
       { t:"Section-scoped generation, deduplication per section+title", s:"done"},
       { t:"Flock-dependent task filtering (FEEDING, EGG_COLLECTION, MORTALITY_CHECK skipped if no active flock)", s:"done"},
       { t:"isActive filter — consistent across dashboard (no filter), generate route (isActive:true), tasks route (isActive:true)", s:"done"}
+    ]},
+    { name:"Worker Operations Sprint (Rev 1.9) — Shipped", tasks:[
+      { t:"Layer PRODUCTION daily: 12-task schedule matching physical spreadsheet (06:00 Arrival → 18:30 Report)", s:"done"},
+      { t:"Layer PRODUCTION weekly: 7 day-specific tasks Mon–Sun (manure, aisle, feed rail, weight, biosecurity, equipment, nipple drinker)", s:"done"},
+      { t:"Worker page shift-block layout: 4 collapsible time blocks + weekly accordion; overdue float strip; completed tasks compress", s:"done"},
+      { t:"DailySummaryCard moved to /worker/summary dedicated page; slim link replaces inline card", s:"done"},
+      { t:"REPORT_SUBMISSION task routes to /worker/summary; auto-submission at cutoff unchanged (server-side)", s:"done"},
+      { t:"ObservationModal: All Clear (one-tap) + Flag Issue (notes required) for INSPECTION/CLEANING/BIOSECURITY/MAINTENANCE tasks", s:"done"},
+      { t:"INSPECTION routing: Arrival & Pre-shift → WaterMeterModal; Water System Check / Nipple Drinker / Bird Health / End-of-Day → ObservationModal", s:"done"},
+      { t:"WorkerFeedModal: feed type auto-filled from today's ISSUED requisition (falls back to last consumption record)", s:"done"},
+      { t:"WorkerFeedModal: session label auto-derived from task title (Morning Batch 1 / Afternoon Batch 2 / Midday Top-up / Supplemental)", s:"done"},
+      { t:"WorkerFeedModal: conditional top-ups show No Feed Added button — calls onSave(null), no consumption record created", s:"done"},
+      { t:"LogEggModal: session auto-selected from task title (Batch 1 = morning, Batch 2 = afternoon), shown read-only", s:"done"},
+      { t:"LogMortalityModal: record-only (no No Deaths button); mortality is ad-hoc quick-log only, not a scheduled task", s:"done"},
+      { t:"Quick-log bar: 💀 Log Mortality only — eggs/feed/water are task-driven for compliance", s:"done"},
+      { t:"Worker KPI chips: Live Birds → Feed Today (todayFeedKg) → Eggs Today → Lay Rate Today (todayLayingRate) → Deaths Today", s:"done"},
+      { t:"Performance page: 🌾 Feed Log tab — day-total headers, individual distribution rows, g/bird flagging red >160 / blue <80", s:"done"},
+      { t:"Performance page: date filter pills moved to Production Records heading; Log Collection button removed", s:"done"},
+      { t:"Dashboard page WorkerDashboard: 5 KPI cards for Layer PRODUCTION (Live Birds → Feed Used Today → Eggs Today → Mortality → Tasks)", s:"done"},
+      { t:"Dashboard page WorkerDashboard: grid dynamic repeat(workerKpis.length, 1fr); todayFeedKg summed from section metrics", s:"done"}
     ]},
     { name:"Remaining — DB-Backed Template System", tasks:[
       { t:"SQL migration: task_templates table — id, tenantId, penSectionId (nullable), operationType, taskType, title, scheduledTime, dataEntryType, isDefault, isActive, createdAt, updatedAt", s:"planned"},
@@ -584,12 +641,37 @@ const phases = [
     ]}
   ]},
 
+  // ── NEXT CHAT: Role Profile Corrections (PM / FM / IC / SM) ───────────────
+  { id:"p8-role-corrections", name:"Role Profile Corrections · PM / FM / IC / SM — Egg & Feed Process Flow", phaseStatus:"next", groups:[
+    { name:"Pen Manager (PM) corrections", tasks:[
+      { t:"PM verification queue: exclude No-Feed-Added top-up completions (no consumption record = nothing to verify)", s:"planned"},
+      { t:"PM egg verification: session-aware (Batch 1 / Batch 2 shown clearly in verification card)", s:"planned"},
+      { t:"PM dashboard: feed distribution visibility — see today's feed log per section (task-driven not free-form)", s:"planned"},
+      { t:"PM feed requisition view: DRAFT auto-created from worker consumption, PM submits to IC", s:"planned"}
+    ]},
+    { name:"Farm Manager (FM) corrections", tasks:[
+      { t:"FM dashboard: feed KPI uses todayFeedKg (same field as worker chips) not 7d average", s:"planned"},
+      { t:"FM feed requisition approval flow: review sectionBreakdown, approve qty to store", s:"planned"},
+      { t:"FM egg analytics: session-split view (Batch 1 vs Batch 2 production comparison)", s:"planned"}
+    ]},
+    { name:"Internal Control (IC) corrections", tasks:[
+      { t:"IC verification: feed consumption records from task-linked logs carry task context (session label visible)", s:"planned"},
+      { t:"IC feed requisition: sees SUBMITTED requisitions, approves/rejects before store issuance", s:"planned"},
+      { t:"IC zero-count mortality records: no longer created (No Deaths = no record = no IC queue item)", s:"planned"}
+    ]},
+    { name:"Store Manager (SM) corrections", tasks:[
+      { t:"SM feed issuance: issues against APPROVED requisition; feedInventoryId drives WorkerFeedModal auto-fill", s:"planned"},
+      { t:"SM: issued quantity visible to worker on their feed modal (from requisition)", s:"planned"},
+      { t:"SM feed log: see task-linked consumption vs requisition-issued quantity per section per day", s:"planned"}
+    ]}
+  ]},
+
   { id:"p8h", name:"Phase 8H · Feed Management Refactor", phaseStatus:"planned", groups:[
     { name:"Features", tasks:[
       { t:"Phase-tagged feed types: LAYER_STARTER, LAYER_GROWER, LAYER_LAYER, BROILER_STARTER, BROILER_FINISHER, BROODING_STARTER", s:"planned"},
       { t:"withdrawalDays column on FeedInventory (SQL migration)", s:"planned"},
       { t:"Feed inventory auto-filtered by active operation mode", s:"planned"},
-      { t:"Consumption logging pre-filled from task context (taskContext prop in WorkerFeedModal)", s:"planned"},
+      { t:"Consumption logging pre-filled from task context — feed type from requisition, session from task title (shipped in Rev 1.9 Worker Sprint)", s:"done"},
       { t:"Withdrawal period tracking for BROILER_FINISHER — highlight red if today >= stop-use date", s:"planned"}
     ]}
   ]},
