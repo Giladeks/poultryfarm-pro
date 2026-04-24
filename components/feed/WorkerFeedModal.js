@@ -73,6 +73,7 @@ export default function WorkerFeedModal({ section, task, apiFetch, onClose, onSa
   const [noFeed,    setNoFeed]    = useState(false); // conditional top-up: worker confirms no feed added
 
   const [prevRemainingKg, setPrevRemainingKg] = useState(0); // kg left in open bag from last session today
+  const [issuedQtyKg,    setIssuedQtyKg]    = useState(null); // issued qty from today's requisition sectionBreakdown
   const [form, setForm] = useState({
     recordedDate: today,
     emptyBags:    '',   // total fully emptied bags this session (incl. carry-over bag if emptied)
@@ -110,6 +111,13 @@ export default function WorkerFeedModal({ section, task, apiFetch, onClose, onSa
               currentStockKg: Number(todayReq.feedInventory.currentStockKg),
               costPerKg:      Number(todayReq.feedInventory.costPerKg || 0),
             });
+            // Extract this section's issued qty from sectionBreakdown for the info banner
+            if (todayReq.sectionBreakdown) {
+              const entry = todayReq.sectionBreakdown.find(s => s.penSectionId === section.id);
+              const issued = entry?.issuedQtyKg ?? entry?.calculatedQtyKg ?? null;
+              if (issued != null && Number(issued) > 0)
+                setIssuedQtyKg(parseFloat(Number(issued).toFixed(1)));
+            }
             return;
           }
         }
@@ -145,15 +153,15 @@ export default function WorkerFeedModal({ section, task, apiFetch, onClose, onSa
     // Fetch the most recent feed consumption record logged TODAY for this section.
     // Its remainingKg = kg left in the open bag at end of that session — becomes
     // the carry-over opening stock for this new session.
-    async function loadPrevSession() {
+    async function loadPrevSession(feedInventoryId) {
       try {
-        // Step 1: most recent FeedConsumption record for this section (any date).
-        // Its remainingKg = kg left in open bag — the carry-over into this session.
-        // Filter by feedInventoryId (loaded after feedItem resolves) to ensure
-        // we don't carry over from a different feed type (e.g. Starter → Grower).
-        const res = await apiFetch(
-          `/api/feed/consumption?penSectionId=${section.id}&limit=1`
-        );
+        // Filter by feedInventoryId (when known) to scope carry-over to the correct
+        // feed type. Called initially without feedInventoryId, then again once
+        // feedItem resolves with the correct ID.
+        const params = feedInventoryId
+          ? `penSectionId=${section.id}&feedInventoryId=${feedInventoryId}&limit=1`
+          : `penSectionId=${section.id}&limit=1`;
+        const res = await apiFetch(`/api/feed/consumption?${params}`);
         if (res.ok) {
           const { consumption } = await res.json();
           const last = consumption?.[0];
@@ -193,8 +201,29 @@ export default function WorkerFeedModal({ section, task, apiFetch, onClose, onSa
     }
 
     loadFeedItem();
-    loadPrevSession();
+    loadPrevSession(); // initial call without feedInventoryId — re-runs via watcher below
   }, [section.id]);
+
+  // Re-run loadPrevSession with feedInventoryId once feedItem loads, ensuring
+  // carry-over is scoped to the exact feed type (prevents cross-feed contamination).
+  useEffect(() => {
+    if (!feedItem?.id) return;
+    const fn = async () => {
+      try {
+        const res = await apiFetch(
+          `/api/feed/consumption?penSectionId=${section.id}&feedInventoryId=${feedItem.id}&limit=1`
+        );
+        if (!res.ok) return;
+        const { consumption } = await res.json();
+        const last = consumption?.[0];
+        if (last?.remainingKg != null && Number(last.remainingKg) > 0)
+          setPrevRemainingKg(parseFloat(Number(last.remainingKg).toFixed(2)));
+        else
+          setPrevRemainingKg(0);
+      } catch { /* non-fatal */ }
+    };
+    fn();
+  }, [feedItem?.id]);
 
   // ── Derived values ─────────────────────────────────────────────────────────
   const bagWt      = feedItem?.bagWeightKg || 25;
@@ -212,13 +241,36 @@ export default function WorkerFeedModal({ section, task, apiFetch, onClose, onSa
   // Day 2: prev=20, empty=8, rem=10 → 20 + 7×25 + (25-10) = 210 kg ✓
   // Empty bags = the bags the pen worker physically returns to the store.
   const fullNewBagsEmptied = prevRemainingKg > 0 ? Math.max(0, emptyBags - 1) : emptyBags;
-  const fromNewPartialBag  = remainingKg > 0 ? parseFloat((bagWt - remainingKg).toFixed(2)) : 0;
-  // Also active if a new bag was opened but not yet emptied (emptyBags=0, remainingKg>0, no carry-over)
-  const hasActivity        = emptyBags > 0 || (prevRemainingKg > 0 && remainingKg === 0) || (emptyBags === 0 && prevRemainingKg === 0 && remainingKg > 0);
-  const quantityKg         = hasActivity
-    ? Math.max(0, parseFloat((prevRemainingKg + (fullNewBagsEmptied * bagWt) + fromNewPartialBag).toFixed(2)))
+
+  // fromNewPartialBag ONLY applies when a new bag was opened (emptyBags > 0).
+  // When emptyBags = 0, the worker only used the carry-over bag — remainingKg is
+  // what's left of that carry-over, not of a new bag. No partial-bag deduction.
+  const fromNewPartialBag  = (emptyBags > 0 && remainingKg > 0)
+    ? parseFloat((bagWt - remainingKg).toFixed(2))
     : 0;
-  const openBagConsumed    = fromNewPartialBag;
+
+  // hasActivity — four valid scenarios:
+  //   A. bags were emptied (emptyBags > 0) — includes any remaining in a new bag
+  //   B. carry-over fully used (prev > 0, bags = 0, remaining = 0)
+  //   C. carry-over partially used (prev > 0, bags = 0, remaining > 0)
+  //      e.g. prev=17, bags=0, rem=6 → consumed = 17-6 = 11 kg ✓
+  //   D. first session, new partial bag only (prev = 0, bags = 0, remaining > 0)
+  const hasActivity = emptyBags > 0
+    || (prevRemainingKg > 0 && remainingKg === 0)
+    || (prevRemainingKg > 0 && remainingKg > 0 && emptyBags === 0)
+    || (prevRemainingKg === 0 && emptyBags === 0 && remainingKg > 0);
+
+  // Two-branch formula:
+  //   Branch A (emptyBags > 0): carry-over fully poured + new full bags + partial new bag
+  //   Branch B (emptyBags = 0): only carry-over bag was used → consumed = prev - remaining
+  const quantityKg = hasActivity
+    ? emptyBags > 0
+      ? Math.max(0, parseFloat((prevRemainingKg + (fullNewBagsEmptied * bagWt) + fromNewPartialBag).toFixed(2)))
+      : prevRemainingKg > 0
+        ? Math.max(0, parseFloat((prevRemainingKg - remainingKg).toFixed(2)))  // C/B: use carry-over
+        : Math.max(0, parseFloat((bagWt - remainingKg).toFixed(2)))            // D: first partial bag
+    : 0;
+  const openBagConsumed = fromNewPartialBag;
 
   const birdCount = flock?.currentCount || 0;
   const gpb       = (quantityKg > 0 && birdCount > 0)
@@ -231,16 +283,18 @@ export default function WorkerFeedModal({ section, task, apiFetch, onClose, onSa
     : null;
   const willOverdraw = stockAfter !== null && stockAfter < 0;
   const costPreview  = feedItem && quantityKg > 0 ? quantityKg * feedItem.costPerKg : null;
+  const bagsUsed     = fullNewBagsEmptied; // alias used in validation + preview display
 
   // ── Validation ─────────────────────────────────────────────────────────────
   function validate() {
     if (!flock)    return 'No active flock in this section';
     if (!feedItem) return 'Feed type not yet loaded';
-    if (bagsUsed <= 0 && remainingKg <= 0)
-      return 'Enter bags used (or at least a partial bag amount)';
-    // Remaining is always in the current open bag — cannot exceed bag weight
+    // Valid if: empty bags entered, OR carry-over bag just finished (prev>0, remaining=0),
+    // OR new bag partially opened (emptyBags=0, remaining>0, no carry-over)
+    if (!hasActivity)
+      return 'Enter empty bags and/or remaining kg in open bag';
     if (remainingKg >= bagWt)
-      return `Remaining kg (${remainingKg}) must be less than bag weight (${bagWt} kg) — a full bag left means bagsUsed should be one fewer`;
+      return `Remaining kg (${remainingKg}) must be less than one bag weight (${bagWt} kg)`;
     if (willOverdraw)
       return `Insufficient stock — only ${fmt(feedItem.currentStockKg, 1)} kg available`;
     return null;
@@ -259,9 +313,12 @@ export default function WorkerFeedModal({ section, task, apiFetch, onClose, onSa
           flockId:         flock.id,
           penSectionId:    section.id,
           recordedDate:    form.recordedDate,
-          bagsUsed:    emptyBags,  // empty bags = fully emptied bags this session
+          bagsUsed:    emptyBags,              // empty bags = fully emptied bags this session
           remainingKg,
-          notes:           form.notes.trim() || null,
+          feedTime:    new Date().toISOString(), // exact timestamp for Batch 1/2 partitioning
+          // Store the session label as a [Label] prefix in notes so LogEggModal
+          // can determine which store run this record belongs to, regardless of time.
+          notes:       `[${label}]${form.notes.trim() ? ' ' + form.notes.trim() : ''}`,
         }),
       });
       const d = await res.json();
@@ -366,6 +423,26 @@ export default function WorkerFeedModal({ section, task, apiFetch, onClose, onSa
               <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 3 }}>
                 Auto-filled from today's store issuance
               </div>
+            </div>
+          )}
+
+          {/* Issued quantity banner — from today's store issuance sectionBreakdown */}
+          {issuedQtyKg != null && feedItem && (
+            <div style={{ display:'flex', alignItems:'center', gap:10, padding:'9px 13px',
+              background:'#f0fdf4', border:'1px solid #bbf7d0', borderRadius:8, fontSize:12 }}>
+              <span style={{ fontSize:16 }}>📦</span>
+              <div>
+                <span style={{ fontWeight:700, color:'#15803d' }}>
+                  {issuedQtyKg} kg issued today
+                </span>
+                {feedItem.bagWeightKg > 0 && (
+                  <span style={{ color:'#15803d', marginLeft:6 }}>
+                    ({Math.floor(issuedQtyKg / feedItem.bagWeightKg)} bag{Math.floor(issuedQtyKg / feedItem.bagWeightKg) !== 1 ? 's' : ''}
+                    {(issuedQtyKg % feedItem.bagWeightKg) > 0.1 ? ` + ${(issuedQtyKg % feedItem.bagWeightKg).toFixed(1)} kg` : ''})
+                  </span>
+                )}
+              </div>
+              <span style={{ fontSize:10, color:'#15803d', marginLeft:'auto', fontWeight:600 }}>From store</span>
             </div>
           )}
 

@@ -8,6 +8,7 @@ import { useAuth } from '@/components/layout/AuthProvider';
 import WaterMeterModal from '@/components/water/WaterMeterModal';
 import WorkerFeedModal from '@/components/feed/WorkerFeedModal';
 import SpotCheckCompleteModal from '@/components/tasks/SpotCheckCompleteModal';
+import DailySummaryCard     from '@/components/daily/DailySummaryCard';
 
 const fmt    = n => Number(n || 0).toLocaleString('en-NG');
 const fmtPct = n => `${Number(n || 0).toFixed(1)}%`;
@@ -107,25 +108,37 @@ function LogEggModal({ section, task, apiFetch, onClose, onSave }) {
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
 
   // ── Fetch today's feed consumption to compute empty bags for this store trip ──
-  // Batch 1 run (with 07:30 eggs): empties from morning feed session only (before 07:30)
-  // Batch 2 run (with 15:30 eggs): empties from ALL sessions since the morning run (07:30+)
+  // Partition using the task session label stored as [Label] prefix in the notes field.
+  // WorkerFeedModal writes e.g. "[Morning (Batch 1)]" or "[Midday Top-up]" into notes.
+  // Batch 1 store run: records labelled "[Morning (Batch 1)]" only.
+  // Batch 2 store run: all other records (top-ups + afternoon feed).
+  // Time-independent — works correctly regardless of when the worker actually logs.
   useEffect(() => {
     (async () => {
       try {
-        const res = await apiFetch(
-          `/api/feed/consumption?penSectionId=${section.id}&from=${today}&to=${today}&limit=20`
-        );
-        if (!res.ok) { setEmptyBags(0); return; }
-        const { consumption } = await res.json();
-        if (!consumption?.length) { setEmptyBags(0); return; }
+        const feedRes = await apiFetch(`/api/feed/consumption?penSectionId=${section.id}&limit=50`);
+        if (!feedRes.ok) { setEmptyBags(0); return; }
+        const { consumption } = await feedRes.json();
 
-        const CUTOFF_MINS = 7 * 60 + 30; // 07:30 = when Batch 1 goes to store
+        // Filter to today using ISO date string (safe for Prisma Date objects)
+        const todayFeeds = (consumption || []).filter(r => {
+          if (!r.recordedDate) return false;
+          const iso = typeof r.recordedDate === 'string'
+            ? r.recordedDate
+            : new Date(r.recordedDate).toISOString();
+          return iso.slice(0, 10) === today;
+        });
+        if (!todayFeeds.length) { setEmptyBags(0); return; }
+
+        // Read the [Label] prefix stored by WorkerFeedModal in the notes field.
+        // Records with no label (pre-fix legacy records) default to Batch 1.
+        const isBatch1Record = (notes) =>
+          !notes || notes.startsWith('[Morning (Batch 1)]') || notes.startsWith('[Morning Feed');
+
         let bags = 0;
-        for (const rec of consumption) {
+        for (const rec of todayFeeds) {
           if (!rec.bagsUsed) continue;
-          const ft = new Date(rec.feedTime || rec.recordedDate);
-          const recMins = ft.getHours() * 60 + ft.getMinutes();
-          const isMorningFeed = recMins < CUTOFF_MINS;
+          const isMorningFeed = isBatch1Record(rec.notes);
           if (!isBatch2 && isMorningFeed)  bags += Number(rec.bagsUsed);
           if (isBatch2  && !isMorningFeed) bags += Number(rec.bagsUsed);
         }
@@ -884,7 +897,7 @@ function qBtn(color, border, bg) {
   };
 }
 
-function SectionTaskCard({ sec, sectionTasks, onComplete, saving, apiFetch, onLogEggs, onLogMortality, onLogWater, onLogFeed, onLogWeight, onLogTemp, refreshKey = 0 }) {
+function SectionTaskCard({ sec, sectionTasks, onComplete, onNoDeaths, saving, apiFetch, onLogEggs, onLogMortality, onLogWater, onLogFeed, onLogWeight, onLogTemp, refreshKey = 0 }) {
   const flock      = sec.flock || null;
   const isLayer    = sec.penOperationType === 'LAYER';
   const secStage   = sec.metrics?.stage || flock?.stage || 'PRODUCTION';
@@ -1063,10 +1076,23 @@ function SectionTaskCard({ sec, sectionTasks, onComplete, saving, apiFetch, onLo
                       <div key={task.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <span style={{ fontSize: 13 }}>{meta.icon}</span>
                         <span style={{ flex: 1, fontSize: 12, fontWeight: 600, color: '#dc2626' }}>{stripEmoji(task.title)}</span>
+                        {task.taskType === 'MORTALITY_CHECK' ? (
+                          <div style={{ display:'flex', gap:4, flexShrink:0 }}>
+                            <button onClick={() => onComplete(task)} disabled={saving}
+                              style={{ padding:'4px 10px', borderRadius:6, border:'none', background:'#dc2626', color:'#fff', fontSize:11, fontWeight:700, cursor:'pointer', whiteSpace:'nowrap' }}>
+                              💀 Log Deaths
+                            </button>
+                            <button onClick={() => onNoDeaths && onNoDeaths(task)} disabled={saving}
+                              style={{ padding:'4px 10px', borderRadius:6, border:'1px solid #bbf7d0', background:'#f0fdf4', color:'#16a34a', fontSize:10, fontWeight:700, cursor:'pointer', whiteSpace:'nowrap' }}>
+                              ✓ No Deaths
+                            </button>
+                          </div>
+                        ) : (
                         <button onClick={() => onComplete(task)} disabled={saving}
                           style={{ padding: '4px 10px', borderRadius: 6, border: 'none', background: '#dc2626', color: '#fff', fontSize: 11, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>
                           {meta.action}
                         </button>
+                        )}
                       </div>
                     );
                   })}
@@ -1153,6 +1179,27 @@ function SectionTaskCard({ sec, sectionTasks, onComplete, saving, apiFetch, onLo
                                 </div>
                               )}
                             </div>
+                            {task.taskType === 'MORTALITY_CHECK' ? (
+                              <div style={{ display:'flex', gap:4, flexDirection:'column', alignItems:'flex-end', flexShrink:0 }}>
+                                <button
+                                  onClick={() => onComplete(task)}
+                                  disabled={saving}
+                                  style={{ padding:'5px 11px', borderRadius:7, border:'none',
+                                    background: over ? '#dc2626' : meta.bg, color: over ? '#fff' : meta.color,
+                                    fontSize:11, fontWeight:700, cursor: saving ? 'not-allowed':'pointer', whiteSpace:'nowrap',
+                                    outline:`1px solid ${over ? '#dc2626' : meta.color}25` }}>
+                                  💀 Log Deaths
+                                </button>
+                                <button
+                                  onClick={() => onNoDeaths && onNoDeaths(task)}
+                                  disabled={saving}
+                                  style={{ padding:'4px 11px', borderRadius:7,
+                                    border:'1px solid #bbf7d0', background:'#f0fdf4', color:'#16a34a',
+                                    fontSize:10, fontWeight:700, cursor: saving ? 'not-allowed':'pointer', whiteSpace:'nowrap' }}>
+                                  ✓ No Deaths
+                                </button>
+                              </div>
+                            ) : (
                             <button
                               onClick={() => onComplete(task)}
                               disabled={saving || getTimeLock(task).locked}
@@ -1166,6 +1213,7 @@ function SectionTaskCard({ sec, sectionTasks, onComplete, saving, apiFetch, onLo
                               }}>
                               {meta.action}
                             </button>
+                            )}
                           </div>
                         );
                       })}
@@ -1218,6 +1266,24 @@ function SectionTaskCard({ sec, sectionTasks, onComplete, saving, apiFetch, onLo
                             <div style={{ fontSize: 12, fontWeight: 700, color: over ? '#dc2626' : 'var(--text-primary)' }}>{stripEmoji(task.title)}</div>
                             {due && <div style={{ fontSize: 10, color: over ? '#dc2626' : 'var(--text-muted)', marginTop: 1 }}>{over ? '⚠ ' : ''}{due}</div>}
                           </div>
+                          {task.taskType === 'MORTALITY_CHECK' ? (
+                            <div style={{ display:'flex', gap:4, flexDirection:'column', alignItems:'flex-end', flexShrink:0 }}>
+                              <button
+                                onClick={() => onComplete(task)} disabled={saving}
+                                style={{ padding:'5px 11px', borderRadius:7, border:'none',
+                                  background: over ? '#dc2626' : meta.bg, color: over ? '#fff' : meta.color,
+                                  fontSize:11, fontWeight:700, cursor: saving ? 'not-allowed':'pointer', whiteSpace:'nowrap' }}>
+                                💀 Log Deaths
+                              </button>
+                              <button
+                                onClick={() => onNoDeaths && onNoDeaths(task)} disabled={saving}
+                                style={{ padding:'4px 11px', borderRadius:7,
+                                  border:'1px solid #bbf7d0', background:'#f0fdf4', color:'#16a34a',
+                                  fontSize:10, fontWeight:700, cursor: saving ? 'not-allowed':'pointer', whiteSpace:'nowrap' }}>
+                                ✓ No Deaths
+                              </button>
+                            </div>
+                          ) : (
                           <button
                             onClick={() => onComplete(task)} disabled={saving}
                             style={{
@@ -1227,6 +1293,7 @@ function SectionTaskCard({ sec, sectionTasks, onComplete, saving, apiFetch, onLo
                             }}>
                             {meta.action}
                           </button>
+                          )}
                         </div>
                       );
                     })}
@@ -1300,6 +1367,7 @@ export default function WorkerPage() {
   const [obsModal,       setObsModal]       = useState(null);  // { task, section }
   const [taskLinkedModal,setTaskLinkedModal] = useState(null); // { task, type }
   const [saveCount,      setSaveCount]      = useState(0);    // bumped on every save to refresh DailySummaryCards
+  const [summaryModal,   setSummaryModal]   = useState(null); // { section, taskId }
 
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type });
@@ -1432,9 +1500,12 @@ export default function WorkerPage() {
         setObsModal({ task, section }); return;
       }
     }
-    // REPORT_SUBMISSION — navigate to dedicated summary page
+    // REPORT_SUBMISSION — open DailySummaryCard inline as a bottom-sheet modal.
+    // On submit, completeLinkedTask is called directly so the task turns green instantly.
     if (task.taskType === 'REPORT_SUBMISSION') {
-      router.push('/worker/summary');
+      const section = sections.find(s => s.id === task.penSectionId);
+      setTaskLinkedModal({ task, type: 'summary' });
+      setSummaryModal({ section: section || { id: task.penSectionId }, taskId: task.id });
       return;
     }
     // Generic / checklist tasks — mark complete immediately
@@ -1568,6 +1639,16 @@ export default function WorkerPage() {
                 sec={sec}
                 sectionTasks={tasksBySection[sec.id] || []}
                 onComplete={handleComplete}
+                onNoDeaths={async (task) => {
+                  try {
+                    await apiFetch('/api/tasks?action=complete', {
+                      method: 'POST',
+                      body: JSON.stringify({ taskId: task.id, completionNotes: 'No deaths recorded today' }),
+                    });
+                    load();
+                    showToast('No deaths recorded ✓');
+                  } catch { showToast('Failed to mark task complete', 'error'); }
+                }}
                 saving={saving}
                 apiFetch={apiFetch}
                 onLogEggs={() => setEggModal(sec)}
@@ -1659,6 +1740,40 @@ export default function WorkerPage() {
             else if (failCount > 0) showToast('Inspection submitted — IC notified of failures ⚠️', 'warn');
             else                    showToast('Spot check completed ✓');
           }} />
+      )}
+
+      {/* ── Daily Summary Modal (REPORT_SUBMISSION task) ── */}
+      {summaryModal && (
+        <div style={{ position:'fixed',inset:0,zIndex:1200,background:'rgba(0,0,0,0.5)',
+          display:'flex',alignItems:'flex-end',justifyContent:'center' }}
+          onClick={e => e.target===e.currentTarget && setSummaryModal(null)}>
+          <div style={{ background:'#fff',borderRadius:'16px 16px 0 0',width:'100%',maxWidth:560,
+            maxHeight:'90vh',overflowY:'auto',boxShadow:'0 -4px 30px rgba(0,0,0,0.2)' }}>
+            <div style={{ display:'flex',alignItems:'center',justifyContent:'space-between',
+              padding:'14px 18px 0',marginBottom:4 }}>
+              <div style={{ fontWeight:800,fontSize:15,color:'#1e293b',fontFamily:"'Poppins',sans-serif" }}>
+                📋 Daily Summary
+              </div>
+              <button onClick={() => setSummaryModal(null)}
+                style={{ background:'none',border:'none',fontSize:22,cursor:'pointer',color:'#94a3b8' }}>×</button>
+            </div>
+            <div style={{ padding:'0 14px 20px' }}>
+              <DailySummaryCard
+                penSectionId={summaryModal.section?.id}
+                apiFetch={apiFetch}
+                refreshKey={saveCount}
+                onSummarySubmitted={() => {
+                  if (taskLinkedModal?.type === 'summary')
+                    completeLinkedTask(taskLinkedModal.task.id);
+                  setSummaryModal(null);
+                  setTaskLinkedModal(null);
+                  load();
+                  showToast('Daily summary submitted — task complete ✓');
+                }}
+              />
+            </div>
+          </div>
+        </div>
       )}
     </AppShell>
   );

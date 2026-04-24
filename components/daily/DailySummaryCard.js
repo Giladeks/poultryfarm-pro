@@ -23,7 +23,7 @@ const STATUS_STYLES = {
   PENDING:   { label: 'In Progress',  bg: '#fffbeb', color: '#d97706', border: '#fde68a' },
   SUBMITTED: { label: 'Submitted',    bg: '#eff6ff', color: '#2563eb', border: '#bfdbfe' },
   REVIEWED:  { label: 'PM Reviewed',  bg: '#f0fdf4', color: '#16a34a', border: '#bbf7d0' },
-  FLAGGED:   { label: 'Flagged',      bg: '#fef2f2', color: '#dc2626', border: '#fecaca' },
+  FLAGGED:   { label: 'Submitted ⏳',  bg: '#fffbeb', color: '#d97706', border: '#fde68a' }, // submitted but has pending verifications
 };
 
 const CHECKLIST_LABELS = {
@@ -33,7 +33,7 @@ const CHECKLIST_LABELS = {
   cageDoorsInspected:  'Cage doors inspected',
 };
 
-export default function DailySummaryCard({ penSectionId, isLayer = true, stage = 'PRODUCTION', brooderTemp = null, apiFetch, refreshKey = 0 }) {
+export default function DailySummaryCard({ penSectionId, isLayer = true, stage = 'PRODUCTION', brooderTemp = null, apiFetch, refreshKey = 0, onSummarySubmitted }) {
   // stage: 'BROODING' | 'REARING' | 'PRODUCTION'
   // brooderTemp: latest reading from parent (already fetched by dashboard API)
   const isBrooding = stage === 'BROODING';
@@ -100,7 +100,8 @@ export default function DailySummaryCard({ penSectionId, isLayer = true, stage =
   }
 
   // ── Submit summary ───────────────────────────────────────────────────────
-  const [submitError, setSubmitError] = useState('');
+  const [submitError,  setSubmitError]  = useState('');
+  const [justSubmitted, setJustSubmitted] = useState(false);
   async function submitSummary() {
     if (!summary?.id || submitting) return;
     setSubmitting(true); setSubmitError('');
@@ -115,6 +116,9 @@ export default function DailySummaryCard({ penSectionId, isLayer = true, stage =
         return;
       }
       setSummary(d.summary);
+      setJustSubmitted(true);
+      // Notify parent (worker page) to complete the linked REPORT_SUBMISSION task
+      if (onSummarySubmitted) onSummarySubmitted();
     } catch { setSubmitError('Network error — please try again'); }
     finally { setSubmitting(false); }
   }
@@ -132,7 +136,7 @@ export default function DailySummaryCard({ penSectionId, isLayer = true, stage =
   }
 
   const st       = STATUS_STYLES[summary.status] || STATUS_STYLES.PENDING;
-  const isLocked = summary.status === 'REVIEWED' || summary.status === 'SUBMITTED';
+  const isLocked = ['REVIEWED', 'SUBMITTED', 'FLAGGED'].includes(summary.status);
   const canSubmit= summary.status === 'PENDING';
 
   const checklist  = Object.entries(CHECKLIST_LABELS);
@@ -282,25 +286,35 @@ export default function DailySummaryCard({ penSectionId, isLayer = true, stage =
           </div>
         )}
 
-        {/* Submit day button — shown when PENDING and checklist is complete */}
+        {/* Submit error */}
         {submitError && (
           <div style={{ marginBottom: 8, padding: '8px 12px', background: '#fef2f2',
             border: '1px solid #fecaca', borderRadius: 8, fontSize: 12, color: '#dc2626', fontWeight: 600 }}>
             ⚠ {submitError}
           </div>
         )}
-        {!canSubmit && summary.status === 'SUBMITTED' && (
-          <div style={{ padding: '8px 12px', background: '#eff6ff', border: '1px solid #bfdbfe',
-            borderRadius: 8, fontSize: 12, color: '#2563eb', textAlign: 'center', fontWeight: 600 }}>
-            ✓ Summary submitted — awaiting PM review
+
+        {/* Post-submit confirmation banners */}
+        {summary.status === 'SUBMITTED' && (
+          <div style={{ padding: '10px 14px', background: '#eff6ff', border: '1px solid #bfdbfe',
+            borderRadius: 8, fontSize: 12, color: '#1d4ed8', fontWeight: 600, textAlign: 'center' }}>
+            ✅ Day summary submitted — your work here is done!
           </div>
         )}
-        {!canSubmit && summary.status === 'FLAGGED' && (
-          <div style={{ padding: '8px 12px', background: '#fef2f2', border: '1px solid #fecaca',
-            borderRadius: 8, fontSize: 12, color: '#dc2626', textAlign: 'center', fontWeight: 600 }}>
-            ⚠ Summary submitted with pending verifications — PM will review
+        {summary.status === 'FLAGGED' && (
+          <div style={{ padding: '10px 14px', background: '#fffbeb', border: '1px solid #fde68a',
+            borderRadius: 8, fontSize: 12, color: '#92400e' }}>
+            <div style={{ fontWeight: 700, marginBottom: 3 }}>
+              ✅ Day summary submitted successfully
+            </div>
+            <div style={{ fontWeight: 400, fontSize: 11 }}>
+              Some of today's records are still awaiting PM verification. Your summary is complete —
+              the PM will review and verify the outstanding items.
+            </div>
           </div>
         )}
+
+        {/* Submit button — only shown when PENDING */}
         {canSubmit && allChecked && obs.trim() && (
           <button
             onClick={submitSummary}

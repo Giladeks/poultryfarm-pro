@@ -793,6 +793,8 @@ export default function FeedRequisitionsPage() {
   const [actionModal,setActionModal]= useState(null); // { req, action }
   const [bootstrapModal, setBootstrapModal] = useState(false);
   const [toast,      setToast]      = useState(null);
+  const [feedLog,    setFeedLog]    = useState([]);  // SM/IC/FM feed log rows
+  const [logDate,    setLogDate]    = useState(() => new Date().toISOString().slice(0, 10));
 
   const showToast = (msg, type='success') => {
     setToast({ msg, type });
@@ -802,20 +804,66 @@ export default function FeedRequisitionsPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams();
-      // Tab-specific filter
-      if (activeTab === 'approve') params.set('status', 'SUBMITTED');
-      if (activeTab === 'issue')   params.set('status', 'APPROVED');
-      if (activeTab === 'history') params.set('limit', '100');
+      if (activeTab === 'feedlog') {
+        // Feed Log tab: join consumption records with issued quantities from requisitions
+        const [consRes, reqRes] = await Promise.all([
+          apiFetch(`/api/feed/consumption?from=${logDate}&to=${logDate}&limit=200`),
+          apiFetch(`/api/feed/requisitions?limit=50`),
+        ]);
+        const consData = consRes.ok ? await consRes.json() : { consumption: [] };
+        const reqData  = reqRes.ok  ? await reqRes.json()  : { requisitions: [] };
 
-      const res = await apiFetch(`/api/feed/requisitions?${params.toString()}`);
-      if (!res.ok) return;
-      const d = await res.json();
-      setReqs(d.requisitions || []);
-      setSummary(d.summary || {});
+        // Group consumption by penSection
+        const grouped = {};
+        for (const c of (consData.consumption || [])) {
+          const key = c.penSectionId;
+          if (!grouped[key]) {
+            grouped[key] = {
+              sectionId:       c.penSectionId,
+              sectionName:     c.penSection?.name || '—',
+              penName:         c.penSection?.pen?.name || '—',
+              feedType:        c.feedInventory?.feedType || '—',
+              bagWeightKg:     Number(c.feedInventory?.bagWeightKg || 25),
+              batchCode:       c.flock?.batchCode || '—',
+              birdCount:       c.flock?.currentCount || 0,
+              sessions:        [],
+              totalConsumedKg: 0,
+              issuedQtyKg:     null,
+            };
+          }
+          grouped[key].sessions.push(c);
+          grouped[key].totalConsumedKg += Number(c.quantityKg || 0);
+        }
+
+        // Match issued qty from requisitions for this date
+        for (const req of (reqData.requisitions || [])) {
+          if (!req.sectionBreakdown) continue;
+          const reqDate = req.feedForDate?.slice(0, 10);
+          if (reqDate !== logDate) continue;
+          for (const entry of req.sectionBreakdown) {
+            const row = grouped[entry.penSectionId];
+            if (row) {
+              const qty = Number(entry.issuedQtyKg || entry.calculatedQtyKg || 0);
+              row.issuedQtyKg = (row.issuedQtyKg || 0) + qty;
+            }
+          }
+        }
+
+        setFeedLog(Object.values(grouped));
+      } else {
+        const params = new URLSearchParams();
+        if (activeTab === 'approve') params.set('status', 'SUBMITTED');
+        if (activeTab === 'issue')   params.set('status', 'APPROVED');
+        if (activeTab === 'history') params.set('limit', '100');
+        const res = await apiFetch(`/api/feed/requisitions?${params.toString()}`);
+        if (!res.ok) return;
+        const d = await res.json();
+        setReqs(d.requisitions || []);
+        setSummary(d.summary || {});
+      }
     } catch { /* silent */ }
     finally  { setLoading(false); }
-  }, [apiFetch, activeTab]);
+  }, [apiFetch, activeTab, logDate]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -837,6 +885,8 @@ export default function FeedRequisitionsPage() {
       badge: summary.SUBMITTED || null },
     { key:'issue',   label:'Ready to Issue',     roles:['STORE_MANAGER','STORE_CLERK','FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN'],
       badge: (summary.APPROVED||0)+(summary.ISSUED_PARTIAL||0) || null },
+    { key:'feedlog', label:'🌾 Feed Log',         roles:['STORE_MANAGER','STORE_CLERK','INTERNAL_CONTROL','FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN'],
+      badge: null },
     { key:'history', label:'History',            roles:['PEN_MANAGER','STORE_MANAGER','STORE_CLERK','INTERNAL_CONTROL','FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN'],
       badge: null },
   ].filter(t => t.roles.includes(role));
@@ -933,6 +983,116 @@ export default function FeedRequisitionsPage() {
       {loading ? (
         <div style={{display:'flex',flexDirection:'column',gap:10}}>
           {[1,2,3].map(i=><Skel key={i} h={88}/>)}
+        </div>
+      ) : activeTab === 'feedlog' ? (
+        /* ── Feed Log tab ──────────────────────────────────────────────────── */
+        <div>
+          {/* Date picker */}
+          <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:16}}>
+            <label style={{fontSize:12,fontWeight:700,color:'var(--text-secondary)'}}>Date</label>
+            <input type="date" value={logDate} max={new Date().toISOString().slice(0,10)}
+              onChange={e => setLogDate(e.target.value)}
+              style={{padding:'7px 12px',borderRadius:8,border:'1px solid var(--border-card)',
+                fontSize:12,fontFamily:'inherit',outline:'none'}} />
+            <span style={{fontSize:11,color:'var(--text-muted)'}}>
+              {feedLog.length > 0
+                ? `${feedLog.length} section${feedLog.length!==1?'s':''} logged feed`
+                : 'No feed records for this date'}
+            </span>
+          </div>
+
+          {feedLog.length === 0 ? (
+            <div style={{background:'#fff',borderRadius:14,border:'1px solid var(--border-card)',padding:'40px 24px',textAlign:'center'}}>
+              <div style={{fontSize:32,marginBottom:8}}>🌾</div>
+              <div style={{fontSize:14,fontWeight:700,color:'var(--text-primary)',marginBottom:4}}>No feed logs for {logDate}</div>
+              <div style={{fontSize:12,color:'var(--text-muted)'}}>Feed consumption records appear here once workers log their sessions.</div>
+            </div>
+          ) : (
+            <div style={{display:'flex',flexDirection:'column',gap:10}}>
+              {feedLog.map(row => {
+                const variance = row.issuedQtyKg != null
+                  ? parseFloat((row.totalConsumedKg - row.issuedQtyKg).toFixed(1))
+                  : null;
+                const varColor = variance == null ? '#94a3b8'
+                  : Math.abs(variance) <= 1 ? '#16a34a'
+                  : variance < 0 ? '#d97706' : '#dc2626';
+
+                return (
+                  <div key={row.sectionId} style={{background:'#fff',borderRadius:12,border:'1px solid var(--border-card)',overflow:'hidden',boxShadow:'0 1px 4px rgba(0,0,0,0.04)'}}>
+                    {/* Section header */}
+                    <div style={{padding:'12px 16px',display:'flex',alignItems:'center',gap:12,borderBottom:'1px solid var(--border-card)',background:'var(--bg-elevated)'}}>
+                      <div style={{flex:1}}>
+                        <div style={{fontSize:13,fontWeight:800,color:'var(--text-primary)'}}>{row.penName} — {row.sectionName}</div>
+                        <div style={{fontSize:11,color:'var(--text-muted)',marginTop:1}}>
+                          {row.feedType} · Flock {row.batchCode} · {row.sessions.length} session{row.sessions.length!==1?'s':''}
+                        </div>
+                      </div>
+                      {/* KPI chips */}
+                      <div style={{display:'flex',gap:8,flexWrap:'wrap',justifyContent:'flex-end'}}>
+                        <div style={{textAlign:'center',padding:'5px 10px',borderRadius:8,background:'#f5f3ff',border:'1px solid #d4d8ff'}}>
+                          <div style={{fontSize:14,fontWeight:800,color:'var(--purple)'}}>{row.totalConsumedKg.toFixed(1)} kg</div>
+                          <div style={{fontSize:9,color:'#6c63ff',fontWeight:600,textTransform:'uppercase'}}>Consumed</div>
+                        </div>
+                        {row.issuedQtyKg != null && (
+                          <div style={{textAlign:'center',padding:'5px 10px',borderRadius:8,background:'#f0fdf4',border:'1px solid #bbf7d0'}}>
+                            <div style={{fontSize:14,fontWeight:800,color:'#16a34a'}}>{row.issuedQtyKg.toFixed(1)} kg</div>
+                            <div style={{fontSize:9,color:'#16a34a',fontWeight:600,textTransform:'uppercase'}}>Issued</div>
+                          </div>
+                        )}
+                        {variance != null && (
+                          <div style={{textAlign:'center',padding:'5px 10px',borderRadius:8,
+                            background:Math.abs(variance)<=1?'#f0fdf4':variance<0?'#fffbeb':'#fef2f2',
+                            border:`1px solid ${Math.abs(variance)<=1?'#bbf7d0':variance<0?'#fde68a':'#fecaca'}`}}>
+                            <div style={{fontSize:14,fontWeight:800,color:varColor}}>{variance>0?'+':''}{variance.toFixed(1)} kg</div>
+                            <div style={{fontSize:9,color:varColor,fontWeight:600,textTransform:'uppercase'}}>Variance</div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Session rows */}
+                    <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                      <thead>
+                        <tr style={{background:'#f8fafc'}}>
+                          {['Time','Session','Consumed','Remaining','g/bird','Logged by'].map(h => (
+                            <th key={h} style={{padding:'5px 12px',textAlign:h==='Consumed'||h==='Remaining'||h==='g/bird'?'right':'left',
+                              color:'var(--text-muted)',fontWeight:700,fontSize:10,textTransform:'uppercase',letterSpacing:'0.04em'}}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {row.sessions.map((s, i) => {
+                          const gpb = row.birdCount > 0
+                            ? Math.round((Number(s.quantityKg) * 1000) / row.birdCount) : null;
+                          const gpbColor = gpb == null ? 'var(--text-muted)'
+                            : gpb > 160 ? '#dc2626' : gpb < 80 ? '#2563eb' : 'var(--text-primary)';
+                          const feedTime = s.feedTime
+                            ? new Date(s.feedTime).toLocaleTimeString('en-NG',{hour:'2-digit',minute:'2-digit'}) : '—';
+                          const sessionLabel = s.session || (i===0?'Batch 1':i===1?'Batch 2':`Session ${i+1}`);
+                          return (
+                            <tr key={s.id} style={{borderTop:'1px solid var(--border-card)'}}>
+                              <td style={{padding:'8px 12px',color:'var(--text-muted)'}}>{feedTime}</td>
+                              <td style={{padding:'8px 12px',fontWeight:600}}>{sessionLabel}</td>
+                              <td style={{padding:'8px 12px',textAlign:'right',fontWeight:700,color:'var(--purple)'}}>{Number(s.quantityKg).toFixed(1)} kg</td>
+                              <td style={{padding:'8px 12px',textAlign:'right',color:'var(--text-muted)'}}>
+                                {s.remainingKg != null ? `${Number(s.remainingKg).toFixed(1)} kg` : '—'}
+                              </td>
+                              <td style={{padding:'8px 12px',textAlign:'right',fontWeight:700,color:gpbColor}}>
+                                {gpb != null ? gpb : '—'}
+                              </td>
+                              <td style={{padding:'8px 12px',color:'var(--text-muted)',fontSize:11}}>
+                                {s.recordedBy ? `${s.recordedBy.firstName} ${s.recordedBy.lastName}` : '—'}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       ) : displayed.length === 0 ? (
         <div style={{background:'#fff',borderRadius:14,border:'1px solid var(--border-card)'}}>

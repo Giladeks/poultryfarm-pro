@@ -77,7 +77,7 @@ export async function GET(request) {
         feedInventory: { select: { id: true, feedType: true, costPerKg: true, bagWeightKg: true, currency: true } },
         recordedBy:    { select: { id: true, firstName: true, lastName: true, role: true } },
       },
-      orderBy: { recordedDate: 'desc' },
+      orderBy: [{ recordedDate: 'desc' }, { feedTime: 'desc' }],
       take: limit,
     });
 
@@ -208,16 +208,36 @@ export async function POST(request) {
       const fullNewBagsEmptied = prevRemainingKg > 0
         ? Math.max(0, data.bagsUsed - 1)
         : data.bagsUsed;
-      const fromNewPartialBag = currentRemainingKg > 0
+
+      // fromNewPartialBag ONLY when a new bag was opened (bagsUsed > 0).
+      // When bagsUsed=0, remainingKg is what's left of the carry-over bag — not a new bag.
+      const fromNewPartialBag = (data.bagsUsed > 0 && currentRemainingKg > 0)
         ? parseFloat((bagWeightKg - currentRemainingKg).toFixed(2))
         : 0;
-      // Also active if worker opened a first bag but hasn't emptied it yet
-      const hasActivity = data.bagsUsed > 0 || (prevRemainingKg > 0 && currentRemainingKg === 0) || (data.bagsUsed === 0 && prevRemainingKg === 0 && currentRemainingKg > 0);
 
+      // hasActivity — four valid cases:
+      //   A. bags emptied (bagsUsed > 0)
+      //   B. carry-over fully used (prev > 0, bags = 0, remaining = 0)
+      //   C. carry-over partially used (prev > 0, bags = 0, remaining > 0)
+      //      e.g. prev=17, bags=0, rem=6 → consumed = 17-6 = 11 kg ✓
+      //   D. first partial bag, no carry-over (prev = 0, bags = 0, remaining > 0)
+      const hasActivity = data.bagsUsed > 0
+        || (prevRemainingKg > 0 && currentRemainingKg === 0)
+        || (prevRemainingKg > 0 && currentRemainingKg > 0 && data.bagsUsed === 0)
+        || (prevRemainingKg === 0 && data.bagsUsed === 0 && currentRemainingKg > 0);
+
+      // Three-branch formula:
+      //   Branch A (bagsUsed > 0): prev + fullNewBags×bagWt + (bagWt-remaining)
+      //   Branch B/C (bagsUsed=0, prev>0): prev - remaining
+      //   Branch D (bagsUsed=0, prev=0): bagWt - remaining
       quantityKg = hasActivity
-        ? Math.max(0, parseFloat(
-            (prevRemainingKg + (fullNewBagsEmptied * bagWeightKg) + fromNewPartialBag).toFixed(2)
-          ))
+        ? data.bagsUsed > 0
+          ? Math.max(0, parseFloat(
+              (prevRemainingKg + (fullNewBagsEmptied * bagWeightKg) + fromNewPartialBag).toFixed(2)
+            ))
+          : prevRemainingKg > 0
+            ? Math.max(0, parseFloat((prevRemainingKg - currentRemainingKg).toFixed(2)))
+            : Math.max(0, parseFloat((bagWeightKg - currentRemainingKg).toFixed(2)))
         : 0;
 
       if (quantityKg <= 0)
