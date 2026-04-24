@@ -107,8 +107,20 @@ export async function POST(request) {
     if (!ALLOWED_ROLES.includes(user.role)) return NextResponse.json({ error: 'Forbidden' },    { status: 403 });
 
     const body = await request.json();
-    const { flockId, penSectionId, sampleDate, sampleCount, meanWeightG,
-            minWeightG, maxWeightG, uniformityPct, notes } = body;
+    const { flockId, penSectionId, sampleDate, notes } = body;
+    let { sampleCount, meanWeightG, minWeightG, maxWeightG, uniformityPct, individualWeights } = body;
+
+    // If individual weights array provided, compute all stats server-side
+    if (Array.isArray(individualWeights) && individualWeights.length > 0) {
+      const ws = individualWeights.map(Number).filter(w => w > 0);
+      sampleCount    = ws.length;
+      meanWeightG    = parseFloat((ws.reduce((s, w) => s + w, 0) / ws.length).toFixed(1));
+      minWeightG     = Math.min(...ws);
+      maxWeightG     = Math.max(...ws);
+      const band     = meanWeightG * 0.1;
+      const inBand   = ws.filter(w => w >= meanWeightG - band && w <= meanWeightG + band).length;
+      uniformityPct  = parseFloat(((inBand / ws.length) * 100).toFixed(1));
+    }
 
     if (!flockId)                        return NextResponse.json({ error: 'flockId required' },               { status: 400 });
     if (!sampleDate)                     return NextResponse.json({ error: 'sampleDate required' },            { status: 400 });
@@ -141,12 +153,13 @@ export async function POST(request) {
         recordDate:    new Date(sampleDate),
         ageInDays,
         sampleSize:    sampleCount,
-        avgWeightG:    meanWeightG,
-        minWeightG:    minWeightG  || null,
-        maxWeightG:    maxWeightG  || null,
-        uniformityPct: uniformityPct || null,
-        notes:         notes || null,
-        recordedById:  user.sub,
+        avgWeightG:       meanWeightG,
+        minWeightG:       minWeightG  || null,
+        maxWeightG:       maxWeightG  || null,
+        uniformityPct:    uniformityPct || null,
+        notes:            notes || null,
+        recordedById:     user.sub,
+        ...(individualWeights?.length ? { individualWeights } : {}),
       },
       include: {
         flock:      { select: { batchCode: true } },

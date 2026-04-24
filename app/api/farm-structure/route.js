@@ -284,9 +284,9 @@ export async function GET(request) {
                     : 0
                 ))
               : 0,
-            latestWeightG:    isBroiler ? (idx.latestWeight[sec.id]?.avgWeightG
+            latestWeightG:    (isBroiler || isLayer) ? (idx.latestWeight[sec.id]?.avgWeightG
               ? parseFloat(Number(idx.latestWeight[sec.id].avgWeightG).toFixed(0)) : null) : null,
-            uniformityPct:    isBroiler ? (idx.latestWeight[sec.id]?.uniformityPct
+            uniformityPct:    (isBroiler || isLayer) ? (idx.latestWeight[sec.id]?.uniformityPct
               ? parseFloat(Number(idx.latestWeight[sec.id].uniformityPct).toFixed(1)) : null) : null,
             estimatedFCR:     null, // computed separately if needed
             daysToHarvest,
@@ -335,7 +335,7 @@ export async function GET(request) {
                   return birds > 0 ? parseFloat((eggs / birds * 100).toFixed(1)) : null;
                 })()
               : null,
-            latestWeightG:  isBroiler ? (sections.map(s => s.metrics?.latestWeightG).find(Boolean) || null) : null,
+            latestWeightG:  (isBroiler || isLayer) ? (sections.map(s => s.metrics?.latestWeightG).find(Boolean) || null) : null,
           },
         };
       });

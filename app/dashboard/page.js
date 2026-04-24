@@ -458,9 +458,14 @@ function WorkerSectionGridCard({ sec, highlighted = false }) {
               <MiniStat label="Deaths Today" value={fmt(mx.todayMortality||0)} color={mx.todayMortality>5?'#ef4444':'var(--text-secondary)'} />
               <MiniStat label="7d Mortality" value={fmt(mx.weekMortality||0)} color="var(--text-secondary)" />
             </>) : isL ? (<>
-              {/* LAYER PRODUCTION — eggs & lay rate */}
+              {/* LAYER PRODUCTION — eggs, lay rate, weight (if recorded) */}
               <MiniStat label="Eggs Today"   value={fmt(mx.todayEggs||0)} color="#f59e0b" />
               <MiniStat label="Lay Rate"     value={layRate!=null?`${layRate}%`:'—'} color={rateColor} />
+              {mx.latestWeightG && (
+                <MiniStat label="Avg Weight"
+                  value={`${Math.round(mx.latestWeightG)}g`}
+                  color={mx.latestWeightG<1700||mx.latestWeightG>2200?'#ef4444':mx.latestWeightG<1800||mx.latestWeightG>2000?'#d97706':'#16a34a'} />
+              )}
               <MiniStat label="Deaths Today" value={fmt(mx.todayMortality||0)} color={mx.todayMortality>5?'#ef4444':'var(--text-secondary)'} />
               <MiniStat label="7d Mortality" value={fmt(mx.weekMortality||0)} color="var(--text-secondary)" />
             </>) : (<>
@@ -1495,8 +1500,8 @@ function PenManagerDashboard({ pens, tasks, user, apiFetch, showYesterday }) {
             Pending Verifications
           </span>
           {!verifLoading && pendingVerifs.length > 0 && (
-            <span style={{fontSize:10,fontWeight:800,background:'#fef2f2',color:'#ef4444',border:'1px solid #fecaca',borderRadius:99,padding:'2px 9px'}}>
-              {pendingVerifs.length}
+            <span style={{fontSize:10,fontWeight:800,background:'#fffbeb',color:'#d97706',border:'1px solid #fde68a',borderRadius:99,padding:'2px 9px',animation:'pulse 2s infinite'}}>
+              ⏳ {pendingVerifs.length}
             </span>
           )}
           <a href="/verification" style={{fontSize:11,fontWeight:700,color:'var(--purple)',textDecoration:'none',marginLeft:8}}>
@@ -1526,6 +1531,12 @@ function PenManagerDashboard({ pens, tasks, user, apiFetch, showYesterday }) {
                   ? new Date(item.date).toLocaleDateString('en-NG',{day:'numeric',month:'short'})
                   : '—';
                 const isBlocked = item.coiBlocked;
+                // Session label: eggs → Batch 1/2, feed → task session
+                const sessionChip = item.referenceType === 'EggProduction' && item.collectionSession != null
+                  ? (Number(item.collectionSession) === 1 ? '🌅 Batch 1' : '🌇 Batch 2')
+                  : item.referenceType === 'FeedConsumption' && item.sessionLabel
+                    ? `🌾 ${item.sessionLabel}`
+                    : null;
 
                 return (
                   <div key={item.id || idx} style={{
@@ -1557,6 +1568,13 @@ function PenManagerDashboard({ pens, tasks, user, apiFetch, showYesterday }) {
                     <div style={{fontSize:10,color:'var(--text-muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
                       {penCtx}
                     </div>
+
+                    {/* Session chip */}
+                    {sessionChip && (
+                      <div style={{display:'inline-block',fontSize:9,fontWeight:700,color:'#6c63ff',background:'#f5f3ff',border:'1px solid #ddd6fe',borderRadius:5,padding:'2px 6px',alignSelf:'flex-start'}}>
+                        {sessionChip}
+                      </div>
+                    )}
 
                     {/* COI block reason */}
                     {isBlocked && (
@@ -1601,6 +1619,65 @@ function PenManagerDashboard({ pens, tasks, user, apiFetch, showYesterday }) {
           </div>
         )}
       </div>
+
+      {/* ── Today's Feed Log per Section ── */}
+      {(() => {
+        // Collect all sections that have feed logged today (task-driven)
+        const feedSecs = pens.flatMap(p =>
+          (p.sections || [])
+            .filter(s => (s.metrics?.todayFeedKg || 0) > 0)
+            .map(s => ({
+              penName:     p.name,
+              sectionName: s.name,
+              feedKg:      parseFloat((s.metrics.todayFeedKg || 0).toFixed(1)),
+              birds:       s.currentBirds || 0,
+              gPerBird:    s.currentBirds > 0
+                ? parseFloat(((s.metrics.todayFeedKg||0)*1000/s.currentBirds).toFixed(0))
+                : null,
+            }))
+        );
+        return (
+          <div style={{marginBottom:20,background:'#fff',borderRadius:14,border:'1px solid var(--border-card)',overflow:'hidden'}}>
+            <div style={{display:'flex',alignItems:'center',gap:8,padding:'12px 16px',borderBottom:'1px solid var(--border-card)',background:'var(--bg-elevated)'}}>
+              <span style={{fontSize:14}}>🌾</span>
+              <span style={{fontFamily:"'Poppins',sans-serif",fontSize:13,fontWeight:700,color:'var(--text-primary)',flex:1}}>
+                Today's Feed Log
+              </span>
+              <span style={{fontSize:11,color:'var(--text-muted)'}}>Task-driven · per section</span>
+              <a href="/feed-requisitions" style={{fontSize:11,fontWeight:700,color:'var(--purple)',textDecoration:'none',marginLeft:8}}>
+                Requisitions →
+              </a>
+            </div>
+            {feedSecs.length === 0 ? (
+              <div style={{padding:'14px 16px',display:'flex',alignItems:'center',gap:8}}>
+                <span>⏳</span>
+                <span style={{fontSize:12,color:'var(--text-muted)'}}>No feed logged yet today — workers log via feed tasks</span>
+              </div>
+            ) : (
+              <div style={{padding:'8px 12px',display:'flex',flexDirection:'column',gap:6}}>
+                {feedSecs.map((s, i) => (
+                  <div key={i} style={{display:'flex',alignItems:'center',gap:8,padding:'7px 10px',background:'#fafafa',borderRadius:8,border:'1px solid #f1f5f9'}}>
+                    <span style={{fontSize:11,fontWeight:700,color:'var(--text-primary)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                      {s.penName} › {s.sectionName}
+                    </span>
+                    <span style={{fontSize:12,fontWeight:800,color:'#6c63ff',flexShrink:0}}>{s.feedKg} kg</span>
+                    {s.gPerBird != null && (
+                      <span style={{
+                        fontSize:10,fontWeight:700,flexShrink:0,padding:'2px 7px',borderRadius:5,
+                        background: s.gPerBird > 160 ? '#fef2f2' : s.gPerBird < 80 ? '#eff6ff' : '#f0fdf4',
+                        color:      s.gPerBird > 160 ? '#dc2626' : s.gPerBird < 80 ? '#3b82f6' : '#16a34a',
+                        border:     `1px solid ${s.gPerBird > 160 ? '#fecaca' : s.gPerBird < 80 ? '#bfdbfe' : '#bbf7d0'}`,
+                      }}>
+                        {s.gPerBird} g/bird
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* ── Reject modal ── */}
       {rejectItem && (
@@ -2028,6 +2105,9 @@ function ManagerDashboard({ pens, orgTotals, user, apiFetch , showYesterday }) {
   const lAvgAge     = prodLayerSecs.length ? Math.round(prodLayerSecs.reduce((s,sec)=>s+(sec.ageInDays||180),0)/prodLayerSecs.length) : 180;
   const lWaterBench = layerWaterBenchmark(lAvgAge);
 
+  // Feed today — section-level (same field as worker chips; not 7d average)
+  const lFeedToday  = parseFloat(allLayerSecs.reduce((s,sec)=>s+(sec.metrics?.todayFeedKg||0),0).toFixed(1));
+
   // Rearing/brooding aggregate for compact awareness strip
   const rearBirds    = nonProdLayerSecs.reduce((s,sec)=>s+(sec.currentBirds||0),0);
   const rearDead7    = nonProdLayerSecs.reduce((s,sec)=>s+(sec.metrics?.weekMortality||0),0);
@@ -2087,6 +2167,7 @@ function ManagerDashboard({ pens, orgTotals, user, apiFetch , showYesterday }) {
   const layerCards = lPens.length ? [
     { label:'Total Birds',    value: fmt(lBirds),                              sub: lProdPens.length + ' production pen' + (lProdPens.length!==1?'s':'') + (nonProdLayerSecs.length>0?' · excl. brooding/rearing':''),  delta:'',  trend:'stable', status:'neutral', icon:'🐦', context:'Layer flock' },
     { label:'Lay Rate',       value: lAvgRateCalc>0 ? lAvgRateCalc+'%' : '—', sub: lEggs>0?'Today vs target 82%':'7d avg vs target 82%',                   delta:lAvgRateCalc>0?(lAvgRateCalc>=82?'+'+((lAvgRateCalc-82).toFixed(1))+'% above target':((lAvgRateCalc-82).toFixed(1))+'% below target'):'No data yet', trend:lAvgRateCalc>=82?'up':lAvgRateCalc>0?'down':'stable', status:lAvgRateCalc>0?layRateStatus(lAvgRateCalc):'neutral', icon:'📊', context:'Performance' },
+    { label:'Feed Used Today', value: lFeedToday>0?`${lFeedToday} kg`:'—',    sub: lFeedToday>0&&lBirds>0?`${parseFloat((lFeedToday*1000/lBirds).toFixed(0))} g/bird`:'Task-driven logging', delta:lFeedToday>0?`${lFeedToday} kg distributed`:'No feed logged yet', trend:'stable', status:lFeedToday>0?'good':'neutral', icon:'🌾', context:'All layer pens' },
     { label:eggsLabel,        value: fmt(lEggs),                               sub: '7d total ' + fmt(lWeekEggs),                                            delta:lEggs>0?fmt(lEggs)+' collected':'None recorded yet', trend:'stable', status:lEggs>0?'good':lWeekEggs>0?'warn':'neutral', icon:'🥚', context:'Output' },
     { label:'Grade A Rate',   value: lGradeA ? lGradeA+'%' : '—',             sub: 'Target ≥85%',                                                           delta:lGradeA?(lGradeA>=85?'+'+((lGradeA-85).toFixed(1))+'% above target':((lGradeA-85).toFixed(1))+'% below target'):'No data yet', trend:lGradeA>=85?'up':'down', status:gradeAStatus(lGradeA), icon:'⭐', context:'Quality' },
     { label:'Water Intake',   value: lAvgWater ? lAvgWater+' L/bird' : '—',   sub: 'Benchmark '+lWaterBench+' L/bird · age '+lAvgAge+'d',                   delta:waterDelta(lAvgWater, lWaterBench), trend:lAvgWater?(lAvgWater>=lWaterBench*0.85?'up':'down'):'stable', status:lAvgWater?waterStatus(lAvgWater,lWaterBench):'neutral', icon:'💧', context:'Health signal' },

@@ -38,18 +38,42 @@ const CLOSE_ROLES   = ['INTERNAL_CONTROL', 'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRP
 const VIEW_ROLES    = ['PEN_MANAGER', 'STORE_MANAGER', 'STORE_CLERK', 'INTERNAL_CONTROL',
                        'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
 
-const INCLUDE = {
-  penSection:    { select: { id: true, name: true, pen: { select: { name: true } } } },
-  flock:         { select: { id: true, batchCode: true, currentCount: true } },
-  feedInventory: { select: { id: true, feedType: true, currentStockKg: true, bagWeightKg: true, costPerKg: true } },
-  store:         { select: { id: true, name: true } },
-  submittedBy:   { select: { id: true, firstName: true, lastName: true } },
-  approvedBy:    { select: { id: true, firstName: true, lastName: true } },
-  rejectedBy:    { select: { id: true, firstName: true, lastName: true } },
-  issuedBy:      { select: { id: true, firstName: true, lastName: true } },
-  acknowledgedBy:{ select: { id: true, firstName: true, lastName: true } },
-  closedBy:      { select: { id: true, firstName: true, lastName: true } },
-};
+// FeedRequisition has no relations in the stale Prisma client — enrich manually.
+async function enrichRequisition(raw) {
+  if (!raw) return null;
+  const ids = [...new Set([
+    raw.submittedById, raw.approvedById, raw.rejectedById,
+    raw.issuedById, raw.acknowledgedById, raw.closedById,
+  ].filter(Boolean))];
+  const [inv, store, users] = await Promise.all([
+    raw.feedInventoryId ? prisma.feedInventory.findUnique({
+      where:  { id: raw.feedInventoryId },
+      select: { id: true, feedType: true, currentStockKg: true, bagWeightKg: true, costPerKg: true, storeId: true },
+    }) : Promise.resolve(null),
+    raw.storeId ? prisma.store.findUnique({
+      where:  { id: raw.storeId },
+      select: { id: true, name: true },
+    }) : Promise.resolve(null),
+    ids.length ? prisma.user.findMany({
+      where:  { id: { in: ids } },
+      select: { id: true, firstName: true, lastName: true },
+    }) : Promise.resolve([]),
+  ]);
+  const um = Object.fromEntries(users.map(u => [u.id, u]));
+  return {
+    ...raw,
+    feedInventory:  inv   ?? null,
+    store:          store ?? null,
+    penSection:     null,
+    flock:          null,
+    submittedBy:    um[raw.submittedById]    ?? null,
+    approvedBy:     um[raw.approvedById]     ?? null,
+    rejectedBy:     um[raw.rejectedById]     ?? null,
+    issuedBy:       um[raw.issuedById]       ?? null,
+    acknowledgedBy: um[raw.acknowledgedById] ?? null,
+    closedBy:       um[raw.closedById]       ?? null,
+  };
+}
 
 // ─── GET /api/feed/requisitions/[id] ─────────────────────────────────────────
 export async function GET(request, { params: rawParams }) {
@@ -60,12 +84,12 @@ export async function GET(request, { params: rawParams }) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
   try {
-    const requisition = await prisma.feedRequisition.findFirst({
-      where:   { id: params.id, tenantId: user.tenantId },
-      include: INCLUDE,
+    const rawReq = await prisma.feedRequisition.findFirst({
+      where: { id: params.id, tenantId: user.tenantId },
     });
-    if (!requisition)
+    if (!rawReq)
       return NextResponse.json({ error: 'Requisition not found' }, { status: 404 });
+    const requisition = await enrichRequisition(rawReq);
 
     return NextResponse.json({ requisition });
   } catch (err) {
@@ -86,11 +110,11 @@ export async function PATCH(request, { params: rawParams }) {
 
     if (!action) return NextResponse.json({ error: 'action is required' }, { status: 400 });
 
-    const req = await prisma.feedRequisition.findFirst({
-      where:   { id: params.id, tenantId: user.tenantId },
-      include: { feedInventory: true, penSection: { include: { pen: true } } },
+    let req = await prisma.feedRequisition.findFirst({
+      where: { id: params.id, tenantId: user.tenantId },
     });
     if (!req) return NextResponse.json({ error: 'Requisition not found' }, { status: 404 });
+    req = await enrichRequisition(req);
 
     const now = new Date();
 
@@ -108,9 +132,22 @@ export async function PATCH(request, { params: rawParams }) {
 
       // Verify PM owns this section
       if (user.role === 'PEN_MANAGER') {
-        const assigned = await prisma.penWorkerAssignment.findFirst({
-          where: { userId: user.sub, penSectionId: req.penSectionId },
-        });
+        // penSectionId is null on pen-level requisitions (stored on penId instead).
+        // Check section assignment directly if available, otherwise find any
+        // assignment within that pen.
+        let assigned;
+        if (req.penSectionId) {
+          assigned = await prisma.penWorkerAssignment.findFirst({
+            where: { userId: user.sub, penSectionId: req.penSectionId },
+          });
+        } else if (req.penId) {
+          assigned = await prisma.penWorkerAssignment.findFirst({
+            where: {
+              userId:     user.sub,
+              penSection: { penId: req.penId },
+            },
+          });
+        }
         if (!assigned)
           return NextResponse.json({ error: 'You are not assigned to this section' }, { status: 403 });
       }
@@ -131,8 +168,7 @@ export async function PATCH(request, { params: rawParams }) {
           rejectedById:    null,
           rejectedAt:      null,
         },
-        include: INCLUDE,
-      });
+        });
 
       // Notify IC team
       await notifyRoles(user.tenantId, IC_ROLES, {
@@ -146,7 +182,8 @@ export async function PATCH(request, { params: rawParams }) {
       });
 
       await logAudit(user, 'APPROVE', 'FeedRequisition', params.id, { action: 'SUBMITTED', requestedQtyKg: data.requestedQtyKg, deviationPct });
-      return NextResponse.json({ requisition: updated });
+      const updatedE3 = await enrichRequisition(updated);
+      return NextResponse.json({ requisition: updatedE3 });
     }
 
     // ── APPROVE ─────────────────────────────────────────────────────────────
@@ -175,8 +212,7 @@ export async function PATCH(request, { params: rawParams }) {
           approvedAt:    now,
           status:        'APPROVED',
         },
-        include: INCLUDE,
-      });
+        });
 
       // Notify Store Manager
       await notifyRoles(user.tenantId, ['STORE_MANAGER'], {
@@ -200,7 +236,8 @@ export async function PATCH(request, { params: rawParams }) {
       }
 
       await logAudit(user, 'APPROVE', 'FeedRequisition', params.id, { action: 'APPROVED', approvedQtyKg: data.approvedQtyKg, deviationFromRequest });
-      return NextResponse.json({ requisition: updated });
+      const updatedE2 = await enrichRequisition(updated);
+      return NextResponse.json({ requisition: updatedE2 });
     }
 
     // ── REJECT ───────────────────────────────────────────────────────────────
@@ -222,8 +259,7 @@ export async function PATCH(request, { params: rawParams }) {
           rejectedAt:      now,
           status:          'REJECTED',
         },
-        include: INCLUDE,
-      });
+        });
 
       // Notify PM
       if (req.submittedById) {
@@ -237,7 +273,8 @@ export async function PATCH(request, { params: rawParams }) {
       }
 
       await logAudit(user, 'REJECT', 'FeedRequisition', params.id, { action: 'REJECTED', reason: data.rejectionReason });
-      return NextResponse.json({ requisition: updated });
+      const updatedE1 = await enrichRequisition(updated);
+      return NextResponse.json({ requisition: updatedE1 });
     }
 
     // ── ISSUE ────────────────────────────────────────────────────────────────
@@ -329,8 +366,7 @@ export async function PATCH(request, { params: rawParams }) {
           status:           newStatus,
           ...(updatedBreakdown && { sectionBreakdown: updatedBreakdown }),
         },
-        include: INCLUDE,
-      });
+        });
 
       // Notify PM to acknowledge receipt
       if (req.submittedById) {
@@ -361,7 +397,8 @@ export async function PATCH(request, { params: rawParams }) {
       await logAudit(user, 'APPROVE', 'FeedRequisition', params.id, {
         action: newStatus, issuedQtyKg: actualIssue, isPartial, storeIssuanceId: issuance.id,
       });
-      return NextResponse.json({ requisition: updated, issuance, isPartial, actualIssue });
+      const updatedEnriched = await enrichRequisition(updated);
+      return NextResponse.json({ requisition: updatedEnriched, issuance, isPartial, actualIssue });
     }
 
     // ── ACKNOWLEDGE ──────────────────────────────────────────────────────────
@@ -405,6 +442,43 @@ export async function PATCH(request, { params: rawParams }) {
         }));
       }
 
+      // ── Compute and store carryOverKg per section ───────────────────────────
+      // carryOverKg = acknowledgedQtyKg for this section
+      //               - total feed consumed in the section on feedForDate
+      // This becomes openingStockKg for the next day's requisition formula.
+      if (updatedBreakdown) {
+        const feedForDateStart = new Date(req.feedForDate);
+        const feedForDateEnd   = new Date(req.feedForDate);
+        feedForDateEnd.setUTCDate(feedForDateEnd.getUTCDate() + 1);
+
+        // Fetch today's consumption per section in parallel
+        const sectionIds = updatedBreakdown.map(s => s.penSectionId).filter(Boolean);
+        const consumptionRows = sectionIds.length > 0
+          ? await prisma.feedConsumption.findMany({
+              where: {
+                penSectionId:   { in: sectionIds },
+                feedInventoryId: req.feedInventoryId,
+                recordedDate:   { gte: feedForDateStart, lt: feedForDateEnd },
+              },
+              select: { penSectionId: true, quantityKg: true },
+            })
+          : [];
+
+        // Sum consumed kg per section
+        const consumedMap = {};
+        consumptionRows.forEach(r => {
+          consumedMap[r.penSectionId] = (consumedMap[r.penSectionId] || 0) + Number(r.quantityKg || 0);
+        });
+
+        // Write carryOverKg onto each breakdown entry
+        updatedBreakdown = updatedBreakdown.map(s => {
+          const ackKg      = Number(s.acknowledgedQtyKg ?? 0);
+          const consumedKg = consumedMap[s.penSectionId] ?? 0;
+          const carryOverKg = Math.max(0, parseFloat((ackKg - consumedKg).toFixed(2)));
+          return { ...s, carryOverKg };
+        });
+      }
+
       const updated = await prisma.feedRequisition.update({
         where: { id: params.id },
         data: {
@@ -416,8 +490,7 @@ export async function PATCH(request, { params: rawParams }) {
           status:               newStatus,
           ...(updatedBreakdown && { sectionBreakdown: updatedBreakdown }),
         },
-        include: INCLUDE,
-      });
+        });
 
       if (hasDiscrepancy) {
         // Auto-flag discrepancy to IC
@@ -446,7 +519,8 @@ export async function PATCH(request, { params: rawParams }) {
       await logAudit(user, 'APPROVE', 'FeedRequisition', params.id, {
         action: newStatus, acknowledgedQtyKg: data.acknowledgedQtyKg, discrepancyQtyKg: discrepancyQty,
       });
-      return NextResponse.json({ requisition: updated, hasDiscrepancy, discrepancyQtyKg: discrepancyQty });
+      const updatedEnriched = await enrichRequisition(updated);
+      return NextResponse.json({ requisition: updatedEnriched, hasDiscrepancy, discrepancyQtyKg: discrepancyQty });
     }
 
     // ── CLOSE ────────────────────────────────────────────────────────────────
@@ -470,11 +544,11 @@ export async function PATCH(request, { params: rawParams }) {
           closeNotes: data.closeNotes,
           status:     'CLOSED',
         },
-        include: INCLUDE,
-      });
+        });
 
       await logAudit(user, 'APPROVE', 'FeedRequisition', params.id, { action: 'CLOSED', notes: data.closeNotes });
-      return NextResponse.json({ requisition: updated });
+      const updatedE0 = await enrichRequisition(updated);
+      return NextResponse.json({ requisition: updatedE0 });
     }
 
     return NextResponse.json({ error: `Unknown action: ${action}` }, { status: 400 });

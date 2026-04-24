@@ -1,6 +1,6 @@
 'use client';
 // app/broiler-performance/page.js — Broiler Performance (formerly Weight Tracking)
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import AppShell from '@/components/layout/AppShell';
 import { useAuth } from '@/components/layout/AuthProvider';
 import PortalModal from '@/components/ui/Modal';
@@ -104,104 +104,199 @@ function ChartTooltip({ active, payload, label }) {
 
 // ── Log Weight Modal ──────────────────────────────────────────────────────────
 function LogWeightModal({ flocks, onClose, onSave, apiFetch }) {
-  const [form, setForm] = useState({
-    flockId: '', penSectionId: '', sampleDate: new Date().toISOString().split('T')[0],
-    sampleCount: '', meanWeightG: '', minWeightG: '', maxWeightG: '', uniformityPct: '',
-  });
-  const [saving, setSaving] = useState(false);
-  const [error,  setError]  = useState('');
-  const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
+  // The broiler performance page passes a list of flocks; the worker selects
+  // which flock/section they're weighing, then uses bucket entry.
+  const [selectedFlockId, setSelectedFlockId] = useState(flocks.length === 1 ? flocks[0].id : '');
+  const [weights,  setWeights]  = useState([]);
+  const [input,    setInput]    = useState('');
+  const [date,     setDate]     = useState(() => new Date().toISOString().split('T')[0]);
+  const [notes,    setNotes]    = useState('');
+  const [saving,   setSaving]   = useState(false);
+  const [error,    setError]    = useState('');
+  const inputRef = useRef(null);
 
-  const selectedFlock = flocks.find(f => f.id === form.flockId);
-  const standard = selectedFlock?.ageInDays ? getStandardWeight(selectedFlock.ageInDays) : null;
-  const meanG    = Number(form.meanWeightG) || 0;
-  const vsStd    = standard && meanG ? ((meanG / standard - 1) * 100).toFixed(1) : null;
+  const selectedFlock  = flocks.find(f => f.id === selectedFlockId);
+  const standard       = selectedFlock?.ageInDays ? getStandardWeight(selectedFlock.ageInDays) : null;
+  const TARGET         = 50;
+
+  // Live stats
+  const stats = (() => {
+    if (!weights.length) return { avg: null, min: null, max: null, uniformity: null };
+    const avg  = parseFloat((weights.reduce((s, w) => s + w, 0) / weights.length).toFixed(1));
+    const min  = Math.min(...weights);
+    const max  = Math.max(...weights);
+    const band = avg * 0.1;
+    const uniformity = parseFloat(((weights.filter(w => w >= avg - band && w <= avg + band).length / weights.length) * 100).toFixed(1));
+    return { avg, min, max, uniformity };
+  })();
+
+  const count    = weights.length;
+  const complete = count >= TARGET;
+  const vsStd    = standard && stats.avg ? ((stats.avg / standard - 1) * 100).toFixed(1) : null;
+
+  const addWeight = () => {
+    const val = parseFloat(input);
+    if (!val || val <= 0 || val > 9999) { setError('Enter a valid weight (1–9999 g)'); return; }
+    setWeights(prev => [...prev, val]);
+    setInput(''); setError('');
+    inputRef.current?.focus();
+  };
+
+  const handleKeyDown = e => { if (e.key === 'Enter') { e.preventDefault(); addWeight(); } };
 
   async function save() {
-    if (!form.flockId)    return setError('Select a flock');
-    if (!form.sampleCount || Number(form.sampleCount) < 1) return setError('Enter sample count');
-    if (!form.meanWeightG || meanG <= 0) return setError('Enter mean weight');
+    if (!selectedFlockId) return setError('Select a flock');
+    if (count < 1)        return setError('Enter at least one weight before saving');
+    if (count < TARGET) {
+      if (!window.confirm(`Only ${count} of ${TARGET} birds weighed. Save with incomplete sample?`)) return;
+    }
     setSaving(true); setError('');
     try {
       const payload = {
-        flockId:       form.flockId,
-        penSectionId:  form.penSectionId,
-        sampleDate:    form.sampleDate,
-        sampleCount:   Number(form.sampleCount),
-        meanWeightG:   meanG,
-        ...(form.minWeightG   && { minWeightG:   Number(form.minWeightG) }),
-        ...(form.maxWeightG   && { maxWeightG:   Number(form.maxWeightG) }),
-        ...(form.uniformityPct && { uniformityPct: Number(form.uniformityPct) }),
+        flockId:           selectedFlockId,
+        penSectionId:      selectedFlock?.penSectionId || selectedFlock?.penSection?.id || null,
+        sampleDate:        date,
+        sampleCount:       count,
+        meanWeightG:       stats.avg,
+        minWeightG:        stats.min,
+        maxWeightG:        stats.max,
+        uniformityPct:     stats.uniformity,
+        individualWeights: weights,
+        notes:             notes.trim() || null,
       };
-      const res = await apiFetch('/api/weight-records', { method: 'POST', body: JSON.stringify(payload) });
-      const d   = await res.json();
-      if (!res.ok) return setError(d.error || 'Failed to save');
+      const [recRes] = await Promise.all([
+        apiFetch('/api/weight-records', { method: 'POST', body: JSON.stringify(payload) }),
+        apiFetch('/api/weight-samples', { method: 'POST', body: JSON.stringify(payload) }).catch(() => null),
+      ]);
+      const d = await recRes.json().catch(() => ({}));
+      if (!recRes.ok) { setError(d.error || 'Failed to save weight record'); return; }
       onSave();
-    } finally { setSaving(false); }
+    } catch { setError('Network error — please try again'); }
+    finally   { setSaving(false); }
   }
 
   return (
-    <PortalModal title="⚖️ Log Weight Sample" width={480} onClose={onClose}
-      footer={<><button className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save Record'}</button></>}>
+    <PortalModal title="⚖️ Log Broiler Weigh-In" width={480} onClose={onClose}
+      footer={<>
+        <button className="btn btn-ghost" onClick={onClose} disabled={saving}>Cancel</button>
+        <button className="btn btn-primary" onClick={save} disabled={saving || count < 1}>
+          {saving ? 'Saving…' : `Save ${count} Bird${count !== 1 ? 's' : ''}`}
+        </button>
+      </>}>
+
       {error && <div className="alert alert-red" style={{ marginBottom: 12 }}>⚠ {error}</div>}
+
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-        <div>
-          <label className="label">Broiler Flock *</label>
-          <select className="input" value={form.flockId} onChange={e => {
-            const f = flocks.find(x => x.id === e.target.value);
-            set('flockId', e.target.value);
-            set('penSectionId', f?.penSectionId || '');
-          }}>
-            <option value="">— Select flock —</option>
-            {flocks.map(f => (
-              <option key={f.id} value={f.id}>
-                {f.batchCode} · {f.penSection?.pen?.name} › {f.penSection?.name} · {fmt(f.currentCount)} birds · age {f.ageInDays}d
-              </option>
-            ))}
-          </select>
-        </div>
+
+        {/* Flock selector — only shown when multiple flocks */}
+        {flocks.length > 1 && (
+          <div>
+            <label className="label">Broiler Flock *</label>
+            <select className="input" value={selectedFlockId}
+              onChange={e => { setSelectedFlockId(e.target.value); setWeights([]); }}>
+              <option value="">— Select flock —</option>
+              {flocks.map(f => (
+                <option key={f.id} value={f.id}>
+                  {f.batchCode} · {f.penSection?.pen?.name} › {f.penSection?.name} · {fmt(f.currentCount)} birds · age {f.ageInDays}d
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {/* Date */}
         <div>
           <label className="label">Sample Date *</label>
-          <input type="date" className="input" value={form.sampleDate} onChange={e => set('sampleDate', e.target.value)} max={new Date().toISOString().split('T')[0]} />
+          <input type="date" className="input" value={date} max={new Date().toISOString().split('T')[0]}
+            onChange={e => setDate(e.target.value)} />
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-          <div>
-            <label className="label">Birds Sampled *</label>
-            <input type="number" className="input" min="1" value={form.sampleCount} onChange={e => set('sampleCount', e.target.value)} placeholder="e.g. 50" />
+
+        {/* Progress */}
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: complete ? 'var(--green)' : 'var(--text-secondary)' }}>
+              {complete ? `✓ ${count} birds weighed` : `${count} / ${TARGET} birds`}
+            </span>
+            {count > 0 && (
+              <button onClick={() => setWeights(p => p.slice(0, -1))}
+                style={{ fontSize: 11, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>
+                ← Remove last
+              </button>
+            )}
           </div>
-          <div>
-            <label className="label">Mean Weight (g) *</label>
-            <input type="number" className="input" min="1" value={form.meanWeightG} onChange={e => set('meanWeightG', e.target.value)} placeholder="e.g. 1850" />
+          <div style={{ height: 6, background: 'var(--bg-elevated)', borderRadius: 99, overflow: 'hidden' }}>
+            <div style={{ height: '100%', width: `${Math.min(100, count / TARGET * 100)}%`, background: complete ? 'var(--green)' : 'var(--purple)', borderRadius: 99, transition: 'width 0.2s' }} />
+          </div>
+        </div>
+
+        {/* Weight entry */}
+        <div>
+          <label className="label">Bird Weight (g) *</label>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input ref={inputRef} type="number" min="1" max="9999" step="1"
+              className="input" value={input} style={{ flex: 1, fontSize: 15 }}
+              onChange={e => { setInput(e.target.value); setError(''); }}
+              onKeyDown={handleKeyDown}
+              placeholder="e.g. 1850" disabled={saving || !selectedFlockId}
+              autoFocus={!!selectedFlockId} />
+            <button onClick={addWeight} disabled={!input || !selectedFlockId || saving}
+              className="btn btn-primary" style={{ whiteSpace: 'nowrap', padding: '0 20px' }}>
+              + Add
+            </button>
+          </div>
+          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 3 }}>Press Enter or tap Add after each bird</div>
+        </div>
+
+        {/* Live stats */}
+        {count > 0 && (
+          <div style={{ background: 'var(--bg-elevated)', borderRadius: 10, padding: '12px 14px', border: '1px solid var(--border-card)' }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 8 }}>Live Statistics</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 8, marginBottom: 8 }}>
+              {[
+                { label: 'Average',    value: stats.avg  ? `${stats.avg}g` : '—' },
+                { label: 'Uniformity', value: stats.uniformity != null ? `${stats.uniformity}%` : '—' },
+                { label: 'Min',        value: stats.min  ? `${stats.min}g`  : '—' },
+                { label: 'Max',        value: stats.max  ? `${stats.max}g`  : '—' },
+              ].map(s => (
+                <div key={s.label}>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{s.label}</div>
+                  <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text-primary)' }}>{s.value}</div>
+                </div>
+              ))}
+            </div>
             {vsStd != null && (
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-                vs Ross 308 standard ({fmt(standard)}g): <strong style={{ color: Number(vsStd) >= 0 ? 'var(--green)' : 'var(--red)' }}>{vsStd > 0 ? '+' : ''}{vsStd}%</strong>
+              <div style={{ padding: '7px 10px', borderRadius: 8, background: 'var(--purple-light)', border: '1px solid #d4d8ff', fontSize: 12 }}>
+                <span style={{ fontWeight: 700, color: 'var(--purple)' }}>Est. Live Weight: {fmtWt(stats.avg)}</span>
+                {standard && <span style={{ color: 'var(--text-muted)', marginLeft: 8 }}>
+                  Ross 308 target: {fmtWt(standard)} <strong style={{ color: Number(vsStd) >= 0 ? 'var(--green)' : 'var(--red)' }}>({vsStd > 0 ? '+' : ''}{vsStd}%)</strong>
+                </span>}
+              </div>
+            )}
+            {stats.uniformity != null && (
+              <div style={{ marginTop: 8, fontSize: 11, fontWeight: 600, color: stats.uniformity >= 80 ? 'var(--green)' : stats.uniformity >= 70 ? '#d97706' : 'var(--red)' }}>
+                {stats.uniformity >= 80 ? '✓ Good uniformity (≥80%)' : stats.uniformity >= 70 ? '⚠ Moderate uniformity (70–79%)' : '⚠ Poor uniformity (<70%)'}
+              </div>
+            )}
+            {count > 1 && (
+              <div style={{ marginTop: 8 }}>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 4 }}>Last entries:</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                  {[...weights].slice(-6).reverse().map((w, i) => (
+                    <span key={i} style={{ fontSize: 11, padding: '2px 6px', borderRadius: 5, background: '#fff', border: '1px solid var(--border-card)', color: 'var(--text-secondary)' }}>{w}g</span>
+                  ))}
+                  {count > 6 && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>+{count - 6} more</span>}
+                </div>
               </div>
             )}
           </div>
-        </div>
-        <div>
-          <label className="label">Weight Range <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(optional)</span></label>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <div>
-              <div style={{ fontSize: 10, fontWeight: 700, color: '#6b7280', marginBottom: 4 }}>Min (g)</div>
-              <input type="number" className="input" min="0" value={form.minWeightG} onChange={e => set('minWeightG', e.target.value)} placeholder="0" style={{ padding: '7px 10px' }} />
-            </div>
-            <div>
-              <div style={{ fontSize: 10, fontWeight: 700, color: '#6b7280', marginBottom: 4 }}>Max (g)</div>
-              <input type="number" className="input" min="0" value={form.maxWeightG} onChange={e => set('maxWeightG', e.target.value)} placeholder="0" style={{ padding: '7px 10px' }} />
-            </div>
-          </div>
-        </div>
-        <div>
-          <label className="label">Uniformity % <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(optional — birds within ±10% of mean)</span></label>
-          <input type="number" className="input" min="0" max="100" value={form.uniformityPct} onChange={e => set('uniformityPct', e.target.value)} placeholder="e.g. 85" />
-        </div>
-        {meanG > 0 && (
-          <div style={{ padding: '10px 14px', background: 'var(--purple-light)', borderRadius: 9, border: '1px solid #d4d8ff', fontSize: 12 }}>
-            <div style={{ fontWeight: 700, color: 'var(--purple)', marginBottom: 2 }}>Est. Live Weight: {fmtWt(meanG)}</div>
-            {standard && <div style={{ color: 'var(--text-muted)' }}>Ross 308 target at this age: {fmtWt(standard)}</div>}
-          </div>
         )}
+
+        {/* Notes */}
+        <div>
+          <label className="label">Notes <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(optional)</span></label>
+          <textarea className="input" rows={2} value={notes} onChange={e => setNotes(e.target.value)}
+            placeholder="Body condition, outliers, sampling notes…" />
+        </div>
       </div>
     </PortalModal>
   );

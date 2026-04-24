@@ -804,13 +804,6 @@ export default function RearingPage() {
   const [advanceForm,    setAdvanceForm]    = useState({
     pointOfLayDate: '',
     notes: '',
-    // First egg collection (required)
-    cratesCollected: '',
-    looseEggs: '0',
-    crackedCount: '0',
-    gradeBCrates: '0',
-    gradeBLoose: '0',
-    collectionSession: '1', // 1=Morning, 2=Afternoon
   });
   const [advSubmitting,  setAdvSubmitting]  = useState(false);
 
@@ -963,58 +956,20 @@ export default function RearingPage() {
 
   // ── Advance to production ───────────────────────────────────────────────────
   async function handleAdvanceSubmit(e) {
-    e.preventDefault();
+    e?.preventDefault();
     if (!advanceForm.pointOfLayDate) return showToast('Enter Point-of-Lay date','error');
-
-    // Validate egg collection fields
-    const cratesCollected = parseInt(advanceForm.cratesCollected||'0', 10);
-    const looseEggs       = parseInt(advanceForm.looseEggs||'0', 10);
-    const totalEggs       = cratesCollected * 30 + looseEggs;
-    const gradeBCrates    = parseInt(advanceForm.gradeBCrates||'0', 10);
-    const gradeBLoose     = parseInt(advanceForm.gradeBLoose||'0', 10);
-    const gradeBCount     = gradeBCrates * 30 + gradeBLoose;
-    const crackedCount    = parseInt(advanceForm.crackedCount||'0', 10);
-    const gradeACount     = Math.max(0, totalEggs - gradeBCount - crackedCount); // auto-calc
-
-    if (totalEggs <= 0)
-      return showToast('Enter at least 1 crate or loose eggs collected', 'error');
-    if (gradeBCount + crackedCount > totalEggs)
-      return showToast('Grade B + Cracked counts exceed total eggs', 'error');
-
-    const birdCount  = advanceFlock.currentCount || 0;
-    const layingRate = birdCount > 0 ? parseFloat(((totalEggs / birdCount) * 100).toFixed(2)) : 0;
-    const gradeAPct  = totalEggs > 0 ? parseFloat(((gradeACount / totalEggs) * 100).toFixed(2)) : 0;
-
     setAdvSubmitting(true);
     try {
       const res = await apiFetch(`/api/rearing/${advanceFlock.id}/advance`, {
-        method:'POST',
+        method: 'POST',
         body: JSON.stringify({
           pointOfLayDate: advanceForm.pointOfLayDate,
           notes:          advanceForm.notes || null,
-          // First egg collection — required
-          firstEggCollection: {
-            flockId:           advanceFlock.id,
-            penSectionId:      advanceFlock.penSectionId,
-            collectionDate:    advanceForm.pointOfLayDate,
-            collectionSession: parseInt(advanceForm.collectionSession, 10),
-            cratesCollected,
-            looseEggs,
-            totalEggs,
-            layingRatePct:     layingRate,
-            gradeACount:       gradeACount,          // auto-calculated
-            gradeBCrates:      gradeBCrates || null,
-            gradeBLoose:       gradeBLoose  || null,
-            gradeBCount:       gradeBCount  || null,
-            crackedCount:      crackedCount || null,
-            gradeAPct:         gradeAPct    || null,
-            // submissionStatus set to APPROVED by server (PM-logged record)
-          },
         }),
       });
       const d = await res.json();
       if (!res.ok) return showToast(d.error || 'Failed', 'error');
-      showToast(`Flock advanced to Production. First collection logged. ${d.notified} worker(s) notified.`);
+      showToast(`Flock advanced to Production. ${d.tasksCreated} task(s) added. ${d.notified} worker(s) notified to log first egg collection.`);
       setAdvanceFlock(null);
       load();
     } catch { showToast('Network error', 'error'); }
@@ -1111,12 +1066,6 @@ export default function RearingPage() {
                   setAdvanceForm({
                     pointOfLayDate: new Date().toISOString().slice(0,10),
                     notes: '',
-                    cratesCollected: '',
-                    looseEggs: '0',
-                    crackedCount: '0',
-                    gradeBCrates: '0',
-    gradeBLoose: '0',
-                    collectionSession: '1',
                   });
                 }}
               />
@@ -1352,135 +1301,57 @@ export default function RearingPage() {
       )}
 
       {/* ══ Advance to Production Modal ══════════════════════════════════════ */}
-      {advanceFlock && (() => {
-        const birdCount   = advanceFlock.currentCount || 0;
-        const totalEggs   = (parseInt(advanceForm.cratesCollected||0,10)*30)
-                          + parseInt(advanceForm.looseEggs||0,10);
-        const layingRate  = birdCount > 0 ? parseFloat(((totalEggs/birdCount)*100).toFixed(1)) : 0;
-        const gradeBCount = (parseInt(advanceForm.gradeBCrates||0,10)*30)
-                          + parseInt(advanceForm.gradeBLoose||0,10);
-        const cracked     = parseInt(advanceForm.crackedCount||0,10);
-        const gradeACount = Math.max(0, totalEggs - gradeBCount - cracked); // auto-calculated
-        const gradeAPct   = totalEggs > 0 ? parseFloat(((gradeACount/totalEggs)*100).toFixed(1)) : 0;
-        return (
-          <Modal title={`🥚 Advance to Production — ${advanceFlock.batchCode}`}
-            onClose={()=>setAdvanceFlock(null)}>
-            {/* Context banner */}
-            <div style={{ background:'#f0fdf4',border:'1px solid #bbf7d0',borderRadius:8,
-              padding:'10px 14px',marginBottom:16,fontSize:13,color:'#166534' }}>
-              Stage changes from <strong>Rearing → Production</strong>. The egg collection you log here
-              becomes the first official record for this flock. Laying rate is auto-calculated.
+      {advanceFlock && (
+        <Modal title={`🥚 Advance to Production — ${advanceFlock.batchCode}`}
+          onClose={()=>setAdvanceFlock(null)}>
+
+          <div style={{ background:'#f0fdf4',border:'1px solid #bbf7d0',borderRadius:8,
+            padding:'10px 14px',marginBottom:16,fontSize:13,color:'#166534' }}>
+            Stage changes from <strong>Rearing → Production</strong>. After advancing,
+            today&#39;s egg collection tasks will appear in the worker&#39;s task list immediately.
+            The worker logs the first egg collection through the normal task flow —
+            subject to the standard verification process.
+          </div>
+
+          <form onSubmit={handleAdvanceSubmit}>
+            <Field label="Point-of-Lay Date" required>
+              <input type="date" value={advanceForm.pointOfLayDate} required style={inputSt}
+                max={new Date().toISOString().slice(0,10)}
+                onChange={e=>setAdvanceForm(f=>({...f,pointOfLayDate:e.target.value}))}/>
+            </Field>
+
+            <Field label="Notes (optional)">
+              <textarea value={advanceForm.notes} rows={2}
+                style={{...inputSt,resize:'vertical'}}
+                placeholder="Observations on flock condition at point of lay…"
+                onChange={e=>setAdvanceForm(f=>({...f,notes:e.target.value}))}/>
+            </Field>
+
+            <div style={{ background:'#fffbeb',border:'1px solid #fde68a',borderRadius:8,
+              padding:'10px 14px',marginBottom:14,fontSize:12,color:'#713f12' }}>
+              <strong>This action is permanent.</strong> The flock moves to Production stage,
+              rearing tasks for today are cancelled, and production tasks (including egg collection)
+              are created immediately for the assigned worker. All supervisors will be notified.
             </div>
-            <form onSubmit={handleAdvanceSubmit}>
-              {/* Point of Lay date */}
-              <Field label="Point-of-Lay Date" required>
-                <input type="date" value={advanceForm.pointOfLayDate} required style={inputSt}
-                  onChange={e=>setAdvanceForm(f=>({...f,pointOfLayDate:e.target.value}))}/>
-              </Field>
 
-              {/* Divider */}
-              <div style={{ borderTop:'1px solid var(--border)',margin:'14px 0 14px',paddingTop:14 }}>
-                <div style={{ fontSize:11,fontWeight:700,color:'var(--text-muted)',
-                  textTransform:'uppercase',letterSpacing:'.06em',marginBottom:12 }}>
-                  First Egg Collection · {fmt(birdCount)} birds
-                </div>
-              </div>
+            <div style={{ display:'flex',gap:10 }}>
+              <button type="button" onClick={()=>setAdvanceFlock(null)}
+                style={{ flex:1,padding:'9px',borderRadius:8,border:'1.5px solid #e2e8f0',
+                  background:'#fff',fontWeight:600,fontSize:13,cursor:'pointer',color:'#475569' }}>
+                Cancel
+              </button>
+              <button type="submit" disabled={advSubmitting}
+                style={{ flex:2,padding:'9px',borderRadius:8,border:'none',
+                  background:advSubmitting?'#e2e8f0':'#22c55e',color:'#fff',
+                  fontWeight:700,fontSize:13,cursor:advSubmitting?'default':'pointer' }}>
+                {advSubmitting?'Advancing…':'Confirm Point-of-Lay → Production'}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
 
-              {/* Collection session */}
-              <Field label="Collection Session" required>
-                <select value={advanceForm.collectionSession} style={inputSt}
-                  onChange={e=>setAdvanceForm(f=>({...f,collectionSession:e.target.value}))}>
-                  <option value="1">Morning (Session 1)</option>
-                  <option value="2">Afternoon (Session 2)</option>
-                </select>
-              </Field>
-
-              {/* Crates + loose */}
-              <div style={{ display:'grid',gridTemplateColumns:'1fr 1fr',gap:12 }}>
-                <Field label="Crates Collected (30 eggs/crate)" required>
-                  <input type="number" min="0" value={advanceForm.cratesCollected} required style={inputSt}
-                    placeholder="0"
-                    onChange={e=>setAdvanceForm(f=>({...f,cratesCollected:e.target.value}))}/>
-                </Field>
-                <Field label="Loose Eggs">
-                  <input type="number" min="0" max="29" value={advanceForm.looseEggs} style={inputSt}
-                    placeholder="0"
-                    onChange={e=>setAdvanceForm(f=>({...f,looseEggs:e.target.value}))}/>
-                </Field>
-              </div>
-
-              {/* Live totals */}
-              {totalEggs > 0 && (
-                <div style={{ background:'#f8fafc',borderRadius:8,padding:'10px 14px',
-                  marginBottom:12,display:'flex',gap:20,fontSize:13 }}>
-                  <div><span style={{ color:'var(--text-muted)' }}>Total Eggs: </span>
-                    <strong>{fmt(totalEggs)}</strong></div>
-                  <div><span style={{ color:'var(--text-muted)' }}>Laying Rate: </span>
-                    <strong style={{ color:layingRate>=5?'#16a34a':'#d97706' }}>{layingRate}%</strong></div>
-                </div>
-              )}
-
-              {/* Grading — Grade A is auto-calculated */}
-              <div style={{ display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12 }}>
-                <Field label="Grade B Crates">
-                  <input type="number" min="0" value={advanceForm.gradeBCrates} style={inputSt}
-                    placeholder="0"
-                    onChange={e=>setAdvanceForm(f=>({...f,gradeBCrates:e.target.value}))}/>
-                </Field>
-                <Field label="Grade B Loose">
-                  <input type="number" min="0" max="29" value={advanceForm.gradeBLoose} style={inputSt}
-                    placeholder="0"
-                    onChange={e=>setAdvanceForm(f=>({...f,gradeBLoose:e.target.value}))}/>
-                </Field>
-                <Field label="Cracked">
-                  <input type="number" min="0" value={advanceForm.crackedCount} style={inputSt}
-                    placeholder="0"
-                    onChange={e=>setAdvanceForm(f=>({...f,crackedCount:e.target.value}))}/>
-                </Field>
-              </div>
-              {/* Auto-calculated Grade A */}
-              {totalEggs > 0 && (
-                <div style={{ background:'#f0fdf4',border:'1px solid #bbf7d0',borderRadius:8,
-                  padding:'10px 14px',marginBottom:12,fontSize:12,color:'#166534' }}>
-                  <strong>Grade A (auto): {fmt(gradeACount)}</strong> eggs
-                  {gradeACount > 0 && ` — ${gradeAPct}% of total`}
-                  <span style={{ color:'#6b7280',marginLeft:8 }}>
-                    = Total ({fmt(totalEggs)}) − Grade B ({fmt(gradeBCount)}) − Cracked ({fmt(cracked)})
-                  </span>
-                </div>
-              )}
-
-              <Field label="Notes">
-                <textarea value={advanceForm.notes} rows={2}
-                  style={{...inputSt,resize:'vertical'}}
-                  placeholder="Observations on flock condition at point of lay…"
-                  onChange={e=>setAdvanceForm(f=>({...f,notes:e.target.value}))}/>
-              </Field>
-
-              <div style={{ background:'#fef9c3',border:'1px solid #fde68a',borderRadius:8,
-                padding:'10px 14px',marginBottom:14,fontSize:12,color:'#713f12' }}>
-                This action is permanent. All workers on this section will be notified.
-              </div>
-
-              <div style={{ display:'flex',gap:10 }}>
-                <button type="button" onClick={()=>setAdvanceFlock(null)}
-                  style={{ flex:1,padding:'9px',borderRadius:8,border:'1.5px solid #e2e8f0',
-                    background:'#fff',fontWeight:600,fontSize:13,cursor:'pointer',color:'#475569' }}>
-                  Cancel
-                </button>
-                <button type="submit" disabled={advSubmitting}
-                  style={{ flex:2,padding:'9px',borderRadius:8,border:'none',
-                    background:advSubmitting?'#e2e8f0':'#22c55e',color:'#fff',
-                    fontWeight:700,fontSize:13,cursor:advSubmitting?'default':'pointer' }}>
-                  {advSubmitting?'Advancing…':'Confirm Point-of-Lay & Log First Collection'}
-                </button>
-              </div>
-            </form>
-          </Modal>
-        );
-      })()}
-
-      <Toast msg={toast.msg} type={toast.type} />
+            <Toast msg={toast.msg} type={toast.type} />
     </AppShell>
   );
 }

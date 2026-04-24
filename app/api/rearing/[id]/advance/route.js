@@ -1,6 +1,9 @@
 // app/api/rearing/[id]/advance/route.js
 // POST — Advance a flock from REARING → PRODUCTION stage.
-// Requires first egg collection record — logged as part of the advance action.
+// The PM logs Point-of-Lay date only. First egg collection is logged by the
+// assigned worker through the normal task flow — no COI bypass needed.
+// After advancing, daily PRODUCTION tasks are generated immediately for the
+// section's worker so they appear the same day without waiting for next login.
 import { NextResponse } from 'next/server';
 import { prisma }       from '@/lib/db/prisma';
 import { verifyToken }  from '@/lib/middleware/auth';
@@ -10,29 +13,37 @@ const ALLOWED_ROLES = [
   'PEN_MANAGER', 'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN',
 ];
 
-const eggSchema = z.object({
-  flockId:           z.string().min(1),
-  penSectionId:      z.string().min(1),
-  collectionDate:    z.string().min(1),
-  collectionSession: z.number().int().min(1).max(2).default(1),
-  cratesCollected:   z.number().int().min(0),
-  looseEggs:         z.number().int().min(0).default(0),
-  totalEggs:         z.number().int().min(1),
-  layingRatePct:     z.number().min(0).max(100),
-  gradeACount:       z.number().int().min(0).nullable().optional(),  // auto-calculated by client
-  gradeBCrates:      z.number().int().min(0).nullable().optional(),
-  gradeBLoose:       z.number().int().min(0).nullable().optional(),
-  gradeBCount:       z.number().int().min(0).nullable().optional(),
-  crackedCount:      z.number().int().min(0).nullable().optional(),
-  gradeAPct:         z.number().min(0).max(100).nullable().optional(),
-  submissionStatus:  z.string().default('PENDING'),
+const schema = z.object({
+  pointOfLayDate: z.string().min(1),
+  notes:          z.string().max(1000).optional().nullable(),
 });
 
-const schema = z.object({
-  pointOfLayDate:     z.string().min(1),
-  notes:              z.string().max(1000).optional().nullable(),
-  firstEggCollection: eggSchema,
-});
+// ── Minimal daily production templates for same-day task generation ───────────
+// Mirrors the subset from app/api/tasks/generate/route.js dailyTemplatesLayerProduction()
+// Only the tasks that make sense for the same day as the advance action.
+function dueAt(baseDate, hhMM) {
+  const [h, m] = hhMM.split(':').map(Number);
+  const d = new Date(baseDate);
+  d.setHours(h, m, 0, 0);
+  return d;
+}
+
+function todayProductionTemplates(date) {
+  return [
+    { taskType: 'INSPECTION',      title: '🔍 Arrival & Pre-shift Inspection',         dueTime: '06:00', priority: 'HIGH'   },
+    { taskType: 'FEEDING',         title: '🍽️ Morning Feed Distribution (Batch 1)',    dueTime: '06:30', priority: 'NORMAL' },
+    { taskType: 'EGG_COLLECTION',  title: '🥚 First Egg Collection (Batch 1)',          dueTime: '07:30', priority: 'HIGH'   },
+    { taskType: 'INSPECTION',      title: '💧 Water System Check',                      dueTime: '09:00', priority: 'NORMAL' },
+    { taskType: 'CLEANING',        title: '🧹 Pen Sanitation',                          dueTime: '09:30', priority: 'NORMAL' },
+    { taskType: 'FEEDING',         title: '🍽️ Supplemental Feed Top-up (Morning)',     dueTime: '10:30', priority: 'NORMAL' },
+    { taskType: 'INSPECTION',      title: '🐔 Bird Health Check & Ventilation',         dueTime: '11:15', priority: 'NORMAL' },
+    { taskType: 'FEEDING',         title: '🍽️ Midday Feed Top-up',                     dueTime: '12:00', priority: 'NORMAL' },
+    { taskType: 'FEEDING',         title: '🍽️ Final Feed Distribution (Batch 2)',      dueTime: '14:30', priority: 'NORMAL' },
+    { taskType: 'EGG_COLLECTION',  title: '🥚 Second Egg Collection (Batch 2)',         dueTime: '15:30', priority: 'HIGH'   },
+    { taskType: 'INSPECTION',      title: '🌇 End-of-Day Inspection',                   dueTime: '17:00', priority: 'NORMAL' },
+    { taskType: 'REPORT_SUBMISSION', title: '📋 Daily Production Report',              dueTime: '18:30', priority: 'NORMAL' },
+  ].map(t => ({ ...t, dueDate: dueAt(date, t.dueTime) }));
+}
 
 export async function POST(request, { params: rawParams }) {
   const params = await rawParams;
@@ -47,7 +58,7 @@ export async function POST(request, { params: rawParams }) {
     if (!parsed.success)
       return NextResponse.json({ error: 'Validation failed', details: parsed.error.errors }, { status: 422 });
 
-    const { pointOfLayDate, notes, firstEggCollection } = parsed.data;
+    const { pointOfLayDate, notes } = parsed.data;
 
     const flock = await prisma.flock.findFirst({
       where: { id: params.id, tenantId: user.tenantId },
@@ -58,7 +69,7 @@ export async function POST(request, { params: rawParams }) {
             pen: { select: { name: true } },
             workerAssignments: {
               where:  { isActive: true },
-              select: { user: { select: { id: true, firstName: true } } },
+              select: { userId: true, user: { select: { id: true, firstName: true, role: true } } },
             },
           },
         },
@@ -74,49 +85,82 @@ export async function POST(request, { params: rawParams }) {
     const [yr, mo, dy] = pointOfLayDate.split('-').map(Number);
     const polDateUTC   = new Date(Date.UTC(yr, mo - 1, dy));
 
-    const [eyrC, emoC, edyC] = firstEggCollection.collectionDate.split('-').map(Number);
-    const eggDateUTC = new Date(Date.UTC(eyrC, emoC - 1, edyC));
+    // ── Advance flock to PRODUCTION ───────────────────────────────────────────
+    const updated = await prisma.flock.update({
+      where: { id: flock.id },
+      data: {
+        stage:          'PRODUCTION',
+        stageUpdatedAt: new Date(),
+        pointOfLayDate: polDateUTC,
+        ...(notes && { notes }),
+      },
+    });
 
-    // Create egg record and advance flock in a transaction
-    const [updated, eggRecord] = await prisma.$transaction([
-      // 1. Advance flock to PRODUCTION
-      prisma.flock.update({
-        where: { id: flock.id },
-        data: {
-          stage:          'PRODUCTION',
-          stageUpdatedAt: new Date(),
-          pointOfLayDate: polDateUTC,
-        },
-      }),
-      // 2. Create first egg collection record — auto-approved since PM is the source
-      prisma.eggProduction.create({
-        data: {
-          flockId:           firstEggCollection.flockId,
-          penSectionId:      firstEggCollection.penSectionId,
-          collectionDate:    eggDateUTC,
-          collectionSession: firstEggCollection.collectionSession,
-          cratesCollected:   firstEggCollection.cratesCollected,
-          looseEggs:         firstEggCollection.looseEggs,
-          totalEggs:         firstEggCollection.totalEggs,
-          layingRatePct:     firstEggCollection.layingRatePct,
-		  birdsAtCollection:  flock.currentCount,   // ← snapshot at advance time
-          gradeACount:       firstEggCollection.gradeACount ?? null,
-          gradeBCrates:      firstEggCollection.gradeBCrates ?? null,
-          gradeBLoose:       firstEggCollection.gradeBLoose  ?? null,
-          gradeBCount:       firstEggCollection.gradeBCount  ?? null,
-          crackedCount:      firstEggCollection.crackedCount ?? null,
-          gradeAPct:         firstEggCollection.gradeAPct    ?? null,
-          submissionStatus:  'APPROVED',   // PM-logged → auto-approved
-          recordedById:      user.sub,
-          approvedById:      user.sub,     // PM is also the approver
-          approvedAt:        new Date(),
-        },
-      }),
-    ]);
+    // ── Generate today's PRODUCTION tasks for the section immediately ─────────
+    // This ensures the worker sees egg collection tasks the same day the PM advances,
+    // without waiting for tomorrow's login-triggered generation.
+    const section  = flock.penSection;
+    const today    = new Date(); today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1);
 
-    // Notify workers on the current section
-    const workers = flock.penSection?.workerAssignments?.map(a => a.user) ?? [];
-    const penName = `${flock.penSection?.pen?.name} · ${flock.penSection?.name}`;
+    // Find primary worker (PEN_WORKER role first, fall back to any active assignment)
+    const workerAssignment =
+      section.workerAssignments.find(a => a.user.role === 'PEN_WORKER') ||
+      section.workerAssignments[0];
+
+    let tasksCreated = 0;
+    if (workerAssignment) {
+      // Check which tasks already exist today to avoid duplicates
+      const existingToday = await prisma.task.findMany({
+        where: {
+          penSectionId:   section.id,
+          dueDate:        { gte: today, lt: tomorrow },
+          isRecurring:    true,
+          recurrenceRule: 'DAILY',
+          status:         { not: 'CANCELLED' },
+        },
+        select: { title: true },
+      });
+      const existingTitles = new Set(existingToday.map(t => t.title));
+
+      // Cancel any rearing tasks that are still pending for today
+      await prisma.task.updateMany({
+        where: {
+          penSectionId:   section.id,
+          dueDate:        { gte: today, lt: tomorrow },
+          isRecurring:    true,
+          recurrenceRule: 'DAILY',
+          status:         'PENDING',
+        },
+        data: { status: 'CANCELLED' },
+      });
+
+      // Create production tasks for today
+      const templates = todayProductionTemplates(today);
+      for (const tmpl of templates) {
+        if (existingTitles.has(tmpl.title)) continue;
+        await prisma.task.create({
+          data: {
+            tenantId:       user.tenantId,
+            penSectionId:   section.id,
+            assignedToId:   workerAssignment.userId,
+            createdById:    user.sub,
+            taskType:       tmpl.taskType,
+            title:          tmpl.title,
+            dueDate:        tmpl.dueDate,
+            priority:       tmpl.priority,
+            status:         'PENDING',
+            isRecurring:    true,
+            recurrenceRule: 'DAILY',
+          },
+        });
+        tasksCreated++;
+      }
+    }
+
+    // ── Notify workers ────────────────────────────────────────────────────────
+    const workers = section.workerAssignments.map(a => a.user);
+    const penName = `${section.pen?.name} · ${section.name}`;
 
     for (const worker of workers) {
       await prisma.notification.create({
@@ -125,31 +169,20 @@ export async function POST(request, { params: rawParams }) {
           recipientId: worker.id,
           senderId:    user.sub,
           type:        'SYSTEM',
-          title:       `Flock Advanced to Production — ${flock.batchCode}`,
-          message:     `${flock.batchCode} in ${penName} has reached Point-of-Lay. `
-                     + `Stage is now Production. Egg collection tasks begin from tomorrow. `
-                     + `First collection: ${firstEggCollection.totalEggs.toLocaleString()} eggs `
-                     + `(${firstEggCollection.layingRatePct}% laying rate).`,
+          title:       `🥚 Flock Advanced to Production — ${flock.batchCode}`,
+          message:     `${flock.batchCode} in ${penName} has reached Point-of-Lay and is now in Production stage. `
+                     + `Egg collection tasks have been added to your task list for today. `
+                     + `Please log the first egg collection using your task card.`,
           channel:     'IN_APP',
-          data: {
-            flockId:      flock.id,
-            batchCode:    flock.batchCode,
-            fromStage:    'REARING',
-            toStage:      'PRODUCTION',
-            penSectionId: flock.penSectionId,
-            eggRecordId:  eggRecord.id,
-          },
+          data: { flockId: flock.id, batchCode: flock.batchCode, fromStage: 'REARING', toStage: 'PRODUCTION', penSectionId: flock.penSectionId },
         },
       }).catch(() => {});
     }
 
-    // Notify IC and FM+ about the auto-approved first collection record
+    // ── Notify supervisors ────────────────────────────────────────────────────
     const supervisors = await prisma.user.findMany({
-      where: {
-        tenantId: user.tenantId,
-        isActive: true,
-        role: { in: ['FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN', 'INTERNAL_CONTROL'] },
-      },
+      where: { tenantId: user.tenantId, isActive: true,
+               role: { in: ['FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN', 'INTERNAL_CONTROL'] } },
       select: { id: true },
     });
 
@@ -160,94 +193,24 @@ export async function POST(request, { params: rawParams }) {
           recipientId: supervisor.id,
           senderId:    user.sub,
           type:        'REPORT_SUBMITTED',
-          title:       `📋 First Egg Collection Logged — ${flock.batchCode}`,
-          message:     `${flock.batchCode} (${penName}) has advanced to Production. `
-                     + `First egg collection: ${firstEggCollection.totalEggs.toLocaleString()} eggs, `
-                     + `${firstEggCollection.layingRatePct}% laying rate`
-                     + (firstEggCollection.gradeACount != null
-                       ? `, ${firstEggCollection.gradeAPct?.toFixed(1)}% Grade A` : '')
-                     + `. Record auto-approved (logged by Pen Manager).`,
+          title:       `📋 Flock Advanced to Production — ${flock.batchCode}`,
+          message:     `${flock.batchCode} (${penName}) has advanced to Production stage. `
+                     + `Point-of-Lay date: ${pointOfLayDate}. Workers have been notified to log the first egg collection today.`,
           channel:     'IN_APP',
-          data: {
-            flockId:      flock.id,
-            batchCode:    flock.batchCode,
-            penSectionId: flock.penSectionId,
-            eggRecordId:  eggRecord.id,
-            autoApproved: true,
-          },
+          data: { flockId: flock.id, batchCode: flock.batchCode, penSectionId: flock.penSectionId },
         },
       }).catch(() => {});
     }
 
-    // Auto-create egg_store_receipt for the first egg collection so the
-    // Store Manager sees it in the Awaiting Receipt queue immediately.
-    // Non-fatal — advance already succeeded if this fails.
-    try {
-      const penIdRows = await prisma.$queryRawUnsafe(
-        `SELECT "penId" FROM pen_sections WHERE id = $1 LIMIT 1`,
-        flock.penSectionId
-      );
-      const penId = penIdRows[0]?.penId ?? null;
-
-      if (penId) {
-        const gradeACount  = firstEggCollection.gradeACount  ?? 0;
-        const gradeBCount  = firstEggCollection.gradeBCount  ?? 0;
-        const crackedCount = firstEggCollection.crackedCount ?? 0;
-        const gradeACrates = Math.floor(gradeACount / 30);
-        const gradeALoose  = gradeACount % 30;
-        const gradeBCrates = Math.floor(gradeBCount / 30);
-        const gradeBLoose  = gradeBCount % 30;
-        const totalEggs    = gradeACount + gradeBCount + crackedCount;
-
-        const workerAssignment = await prisma.penWorkerAssignment.findFirst({
-          where:   { penSectionId: flock.penSectionId, isActive: true },
-          select:  { userId: true },
-          orderBy: { assignedAt: 'desc' },
-        });
-
-        await prisma.$queryRawUnsafe(`
-          INSERT INTO egg_store_receipts (
-            "tenantId", "eggProductionId", "penSectionId", "penId",
-            "collectionDate", "collectionSession", "flockId", "batchCode",
-            "gradedGradeACrates", "gradedGradeALoose", "gradedGradeACount",
-            "gradedGradeBCrates", "gradedGradeBLoose", "gradedGradeBCount",
-            "gradedCrackedCount", "gradedTotalEggs",
-            "deliveredById", "status"
-          ) VALUES (
-            $1, $2, $3, $4, $5, $6, $7, $8,
-            $9, $10, $11, $12, $13, $14, $15, $16,
-            $17, 'PENDING'
-          )
-          ON CONFLICT ("eggProductionId") DO NOTHING
-        `,
-          user.tenantId,
-          eggRecord.id,
-          flock.penSectionId,
-          penId,
-          eggRecord.collectionDate,
-          eggRecord.collectionSession,
-          flock.id,
-          flock.batchCode,
-          gradeACrates, gradeALoose, gradeACount,
-          gradeBCrates, gradeBLoose, gradeBCount,
-          crackedCount, totalEggs,
-          workerAssignment?.userId || null,
-        );
-      }
-    } catch (receiptErr) {
-      console.error('[advance] autoCreateStoreReceipt failed:', receiptErr?.message);
-    }
-
     return NextResponse.json({
-      flock:          updated,
-      eggRecord:      eggRecord,
-      fromStage:      'REARING',
-      toStage:        'PRODUCTION',
-      notified:       workers.length,
+      flock:               updated,
+      fromStage:           'REARING',
+      toStage:             'PRODUCTION',
+      tasksCreated,
+      notified:            workers.length,
       supervisorsNotified: supervisors.length,
-      message:        `Flock advanced to Production. First egg collection auto-approved `
-                    + `(${firstEggCollection.totalEggs} eggs, ${firstEggCollection.layingRatePct}% lay rate). `
-                    + `${workers.length} worker(s) and ${supervisors.length} supervisor(s) notified.`,
+      message: `Flock advanced to Production. ${tasksCreated} task(s) created for today. `
+             + `${workers.length} worker(s) notified to log first egg collection.`,
     });
   } catch (err) {
     console.error('POST /api/rearing/[id]/advance error:', err);

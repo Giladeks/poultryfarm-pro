@@ -22,7 +22,7 @@ const MANAGEMENT_OVERRIDE = ['FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER
 const RECORD_TYPE_VERIFIERS = {
   EggProduction:   [...new Set(['PEN_MANAGER',                    ...MANAGEMENT_OVERRIDE])],
   MortalityRecord: [...new Set(['PEN_MANAGER',                    ...MANAGEMENT_OVERRIDE])],
-  FeedConsumption: [...new Set(['STORE_MANAGER', 'STORE_CLERK',   ...MANAGEMENT_OVERRIDE])],
+  FeedConsumption: [...new Set(['PEN_MANAGER', 'STORE_MANAGER', 'STORE_CLERK',   ...MANAGEMENT_OVERRIDE])],
   StoreReceipt:    [...new Set(['STORE_MANAGER',                  ...MANAGEMENT_OVERRIDE])],
   DailyReport:     [...new Set(['PEN_MANAGER',                    ...MANAGEMENT_OVERRIDE])],
 };
@@ -338,6 +338,11 @@ async function rejectSourceRecord(referenceType, referenceId, reason) {
       return prisma.eggProduction.update({ where: { id: referenceId }, data: rejectionData });
     case 'MortalityRecord':
       return prisma.mortalityRecord.update({ where: { id: referenceId }, data: rejectionData });
+    case 'FeedConsumption':
+      // Mark rejected — excluded from all aggregations by callers filtering rejectionReason: null
+      // The physical feed was already issued; restoring inventory would require reversing the
+      // StoreIssuance, which is a separate FM action. The record is flagged for worker correction.
+      return prisma.feedConsumption.update({ where: { id: referenceId }, data: rejectionData });
     case 'DailyReport':
       return prisma.dailyReport.update({
         where: { id: referenceId },

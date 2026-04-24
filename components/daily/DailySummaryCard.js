@@ -99,20 +99,23 @@ export default function DailySummaryCard({ penSectionId, isLayer = true, stage =
     finally { setSaving(false); }
   }
 
-  // ── Submit summary (PM action) ────────────────────────────────────────────
+  // ── Submit summary ───────────────────────────────────────────────────────
+  const [submitError, setSubmitError] = useState('');
   async function submitSummary() {
     if (!summary?.id || submitting) return;
-    setSubmitting(true);
+    setSubmitting(true); setSubmitError('');
     try {
       const res = await apiFetch('/api/daily-summary', {
         method: 'POST',
         body: JSON.stringify({ penSectionId }),
       });
-      if (res.ok) {
-        const d = await res.json();
-        setSummary(d.summary);
+      const d = await res.json();
+      if (!res.ok) {
+        setSubmitError(d.error || 'Failed to submit — please try again');
+        return;
       }
-    } catch { /* non-fatal */ }
+      setSummary(d.summary);
+    } catch { setSubmitError('Network error — please try again'); }
     finally { setSubmitting(false); }
   }
 
@@ -280,6 +283,24 @@ export default function DailySummaryCard({ penSectionId, isLayer = true, stage =
         )}
 
         {/* Submit day button — shown when PENDING and checklist is complete */}
+        {submitError && (
+          <div style={{ marginBottom: 8, padding: '8px 12px', background: '#fef2f2',
+            border: '1px solid #fecaca', borderRadius: 8, fontSize: 12, color: '#dc2626', fontWeight: 600 }}>
+            ⚠ {submitError}
+          </div>
+        )}
+        {!canSubmit && summary.status === 'SUBMITTED' && (
+          <div style={{ padding: '8px 12px', background: '#eff6ff', border: '1px solid #bfdbfe',
+            borderRadius: 8, fontSize: 12, color: '#2563eb', textAlign: 'center', fontWeight: 600 }}>
+            ✓ Summary submitted — awaiting PM review
+          </div>
+        )}
+        {!canSubmit && summary.status === 'FLAGGED' && (
+          <div style={{ padding: '8px 12px', background: '#fef2f2', border: '1px solid #fecaca',
+            borderRadius: 8, fontSize: 12, color: '#dc2626', textAlign: 'center', fontWeight: 600 }}>
+            ⚠ Summary submitted with pending verifications — PM will review
+          </div>
+        )}
         {canSubmit && allChecked && obs.trim() && (
           <button
             onClick={submitSummary}

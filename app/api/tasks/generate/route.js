@@ -423,7 +423,7 @@ function weeklyTemplatesLayerProduction(weekStart) {
     {
       taskType: 'WEIGHT_RECORDING',
       title:    '⚖️ Weekly Hen Weight Sampling',
-      description: 'Remove 30–50 birds from different cage tiers and positions across the section. Weigh individually and record average, minimum, and maximum weights. Compare to the breed standard curve (Hy-Line W-36, Lohmann Brown, or applicable chart). Flag any section more than 10% below target weight to Pen Manager. Note: birds in the top tier are often heavier due to heat differentials and feed access — sample from all tiers.',
+      description: 'Weigh a random sample of 50 birds from different cage tiers and positions across the section. Enter each bird\'s weight individually — the system calculates the average, min, max, and uniformity automatically. Target range: 1,800–2,000g for ISA Brown production hens. Weights below 1,700g (underweight) or above 2,200g (obese) are flagged automatically. Note: sample from all tiers — top-tier birds are often heavier due to heat and feed access differentials.',
       dueDate:  dueAt(thu, '10:00'),
       priority: 'HIGH',
     },
@@ -522,6 +522,50 @@ export async function POST(request) {
     baseDate.setHours(0, 0, 0, 0);
 
     const weekStart = getWeekStart(baseDate);
+
+    // ── Early-exit guard — prevent duplicates from concurrent requests ────────
+    // Multiple workers loading the page simultaneously each fire POST /generate.
+    // The per-section dedup (existingTitles set) has a TOCTOU race: two concurrent
+    // requests both read an empty set before either has committed any rows.
+    // Counting existing tasks at route entry and bailing out early eliminates this.
+    if (frequency === 'daily') {
+      const alreadyExists = await prisma.task.count({
+        where: {
+          tenantId:       user.tenantId,
+          dueDate:        { gte: baseDate, lt: new Date(baseDate.getTime() + 86400000) },
+          isRecurring:    true,
+          recurrenceRule: 'DAILY',
+          status:         { not: 'CANCELLED' },
+        },
+      });
+      if (alreadyExists > 0) {
+        return NextResponse.json({
+          created: 0, skipped: alreadyExists, frequency,
+          alreadyGenerated: true,
+          message: `Daily tasks already exist for today (${alreadyExists} tasks). No duplicates created.`,
+        }, { status: 200 });
+      }
+    }
+
+    if (frequency === 'weekly') {
+      const weekEnd = new Date(weekStart); weekEnd.setDate(weekEnd.getDate() + 7);
+      const alreadyExists = await prisma.task.count({
+        where: {
+          tenantId:       user.tenantId,
+          dueDate:        { gte: weekStart, lt: weekEnd },
+          isRecurring:    true,
+          recurrenceRule: 'WEEKLY',
+          status:         { not: 'CANCELLED' },
+        },
+      });
+      if (alreadyExists > 0) {
+        return NextResponse.json({
+          created: 0, skipped: alreadyExists, frequency,
+          alreadyGenerated: true,
+          message: `Weekly tasks already exist for this week (${alreadyExists} tasks). No duplicates created.`,
+        }, { status: 200 });
+      }
+    }
 
     // Find all active sections with worker assignments on this tenant
     const sections = await prisma.penSection.findMany({

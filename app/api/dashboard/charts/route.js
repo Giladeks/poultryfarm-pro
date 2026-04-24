@@ -127,6 +127,12 @@ export async function GET(request) {
     });
     const mortIdx = Object.fromEntries(Object.entries(mortDayMap).map(([dk, c]) => [dk, { count: c }]));
     // Aggregate feed per day — sum all distributions (multiple per day)
+    const rearingFlock = await prisma.flock.findFirst({
+      where:  { penSectionId: sectionId, status: 'ACTIVE' },
+      select: { currentCount: true },
+    });
+    const sectionBirds = rearingFlock?.currentCount || 0;
+
     const feedDayMap = {};
     feed.forEach(r => {
       const dk = toDateKey(r.recordedDate);
@@ -361,6 +367,12 @@ export async function GET(request) {
     });
     const mortIdx = Object.fromEntries(Object.entries(mortDayMap).map(([dk, c]) => [dk, { count: c }]));
     // Aggregate feed per day — sum all distributions
+    const broilerFlock = await prisma.flock.findFirst({
+      where:  { penSectionId: sectionId, status: 'ACTIVE' },
+      select: { currentCount: true },
+    });
+    const sectionBirds = broilerFlock?.currentCount || 0;
+
     const feedDayMapB = {};
     feed.forEach(r => {
       const dk = toDateKey(r.recordedDate);

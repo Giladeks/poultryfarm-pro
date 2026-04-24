@@ -94,6 +94,12 @@ export async function POST(request) {
     const body = await request.json();
     const data = createMortalitySchema.parse(body);
 
+    // Zero-count quick-log: worker tapped Log Mortality but recorded 0 deaths.
+    // No Deaths = no record. Return 204 so the client dismisses the modal cleanly.
+    if (data.count === 0) {
+      return NextResponse.json({ skipped: true, reason: 'zero_count' }, { status: 200 });
+    }
+
     const flock = await prisma.flock.findFirst({
       where: {
         id: data.flockId,

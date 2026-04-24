@@ -418,7 +418,7 @@ function SwimLane({ lane, items, userRole, onAction, collapsed, onToggle }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <span style={{ fontSize: 18 }}>{lane.icon}</span>
           <span style={{ fontFamily: "'Poppins',sans-serif", fontSize: 14, fontWeight: 800, color: hasItems ? lane.color : 'var(--text-muted)' }}>{lane.label}</span>
-          <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 24, height: 24, padding: '0 8px', borderRadius: 99, fontSize: 12, fontWeight: 800, background: hasItems ? lane.badgeBg : '#e2e8f0', color: hasItems ? '#fff' : '#94a3b8' }}>{count}</span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 24, height: 24, padding: '0 8px', borderRadius: 99, fontSize: 12, fontWeight: 800, background: hasItems ? lane.badgeBg : '#e2e8f0', color: hasItems ? '#fff' : '#94a3b8', animation: hasItems ? 'pulse 2s infinite' : 'none' }}>{count}</span>
           {hasItems && lane.type === 'MORTALITY_REPORT' && <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 99, background: '#dc262620', color: '#dc2626' }}>Highest priority</span>}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -746,6 +746,21 @@ export default function VerificationPage() {
   };
 
   const handleVerificationAction = async (v, action, { notes, escalatedToId } = {}) => {
+    // 'reject' on an existing verification record — send reject flag, not status: 'RESOLVED'
+    if (action === 'reject') {
+      const res = await apiFetch(`/api/verification/${v.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ reject: true, rejectReason: notes }),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || 'Failed to reject');
+      showToast('Record rejected — worker notified to resubmit');
+      setActionModal(null);
+      await fetchPending();
+      fetchVerifications('DISCREPANCY_FOUND,ESCALATED,RESOLVED');
+      return;
+    }
+
     const newStatus = action === 'escalate' ? 'ESCALATED' : 'RESOLVED';
     const res = await apiFetch(`/api/verification/${v.id}`, {
       method: 'PATCH',
@@ -888,7 +903,24 @@ export default function VerificationPage() {
         </div>
 
         {/* ── PENDING TAB ── */}
-        {activeTab === 'pending' && (
+        {activeTab === 'pending' && pendingQueue.length > 0 && (
+        <div style={{ marginBottom: 16, padding: '11px 16px', background: '#fffbeb', border: '1.5px solid #fde68a', borderRadius: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ fontSize: 18 }}>⏳</span>
+          <div>
+            <span style={{ fontWeight: 800, fontSize: 13, color: '#92400e' }}>
+              {pendingQueue.length} record{pendingQueue.length !== 1 ? 's' : ''} awaiting verification
+            </span>
+            <span style={{ fontSize: 11, color: '#b45309', display: 'block', marginTop: 1 }}>
+              Unverified records are included in current KPI calculations — verify or reject to finalise them.
+            </span>
+          </div>
+          <a href="/verification" style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, color: '#d97706', textDecoration: 'none', whiteSpace: 'nowrap' }}>
+            Go to full queue →
+          </a>
+        </div>
+      )}
+
+      {activeTab === 'pending' && (
           <div style={{ padding: 16 }}>
             {loading ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>

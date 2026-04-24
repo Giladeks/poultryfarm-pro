@@ -12,6 +12,19 @@ import SpotCheckCompleteModal from '@/components/tasks/SpotCheckCompleteModal';
 const fmt    = n => Number(n || 0).toLocaleString('en-NG');
 const fmtPct = n => `${Number(n || 0).toFixed(1)}%`;
 
+// Strip leading emoji from task titles — titles include emoji prefixes (e.g. "🔍 Arrival…")
+// but the SectionTaskCard already renders meta.icon separately, causing double icons.
+const stripEmoji = str => (str || '').replace(/^[\p{Emoji_Presentation}\p{Extended_Pictographic}]\s*/u, '');
+
+// Module-level so both SectionTaskCard and WorkerPage can use it.
+// FEEDING/EGG_COLLECTION tasks locked >2h before schedule, soft warning 30-120min early.
+function getTimeLock(task) {
+  if (!['FEEDING', 'EGG_COLLECTION'].includes(task?.taskType)) return { locked: false, soft: false };
+  if (!task.dueDate || task.status === 'OVERDUE') return { locked: false, soft: false };
+  const diffMins = (new Date(task.dueDate) - new Date()) / 60000;
+  return { locked: diffMins > 120, soft: diffMins > 30 && diffMins <= 120 };
+}
+
 const CAUSE_OPTIONS = [
   { value: 'UNKNOWN',     label: 'Unknown' },
   { value: 'DISEASE',     label: 'Disease' },
@@ -76,24 +89,52 @@ function LogEggModal({ section, task, apiFetch, onClose, onSave }) {
   const flock = section.flock || null;
   const today = new Date().toISOString().split('T')[0];
 
-  // Derive session from exact task title (matches app/api/tasks/generate/route.js)
+  // Derive session from task title
   const sessionFromTask = (() => {
     const t = task?.title || '';
-    // Batch 2 / Second collection = afternoon session
     if (t.includes('Batch 2') || t.includes('Second Egg')) return '2';
-    // Batch 1 / First collection = morning session (default)
     return '1';
   })();
+  const isBatch2 = sessionFromTask === '2';
 
   const [form, setForm] = useState({
     collectionDate: today, collectionSession: sessionFromTask,
     cratesCollected: '', looseEggs: '', crackedCount: '',
   });
-  const [saving, setSaving] = useState(false);
-  const [error,  setError]  = useState('');
+  const [saving,    setSaving]    = useState(false);
+  const [error,     setError]     = useState('');
+  const [emptyBags, setEmptyBags] = useState(null); // null = loading
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
 
-  const sessionLabel = form.collectionSession === '2' ? 'Afternoon (Batch 2)' : 'Morning (Batch 1)';
+  // ── Fetch today's feed consumption to compute empty bags for this store trip ──
+  // Batch 1 run (with 07:30 eggs): empties from morning feed session only (before 07:30)
+  // Batch 2 run (with 15:30 eggs): empties from ALL sessions since the morning run (07:30+)
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await apiFetch(
+          `/api/feed/consumption?penSectionId=${section.id}&from=${today}&to=${today}&limit=20`
+        );
+        if (!res.ok) { setEmptyBags(0); return; }
+        const { consumption } = await res.json();
+        if (!consumption?.length) { setEmptyBags(0); return; }
+
+        const CUTOFF_MINS = 7 * 60 + 30; // 07:30 = when Batch 1 goes to store
+        let bags = 0;
+        for (const rec of consumption) {
+          if (!rec.bagsUsed) continue;
+          const ft = new Date(rec.feedTime || rec.recordedDate);
+          const recMins = ft.getHours() * 60 + ft.getMinutes();
+          const isMorningFeed = recMins < CUTOFF_MINS;
+          if (!isBatch2 && isMorningFeed)  bags += Number(rec.bagsUsed);
+          if (isBatch2  && !isMorningFeed) bags += Number(rec.bagsUsed);
+        }
+        setEmptyBags(bags);
+      } catch { setEmptyBags(0); }
+    })();
+  }, [section.id, today, isBatch2]);
+
+  const sessionLabel = isBatch2 ? 'Afternoon (Batch 2)' : 'Morning (Batch 1)';
 
   const crates  = Math.max(0, Number(form.cratesCollected) || 0);
   const loose   = Math.max(0, Number(form.looseEggs)       || 0);
@@ -127,10 +168,37 @@ function LogEggModal({ section, task, apiFetch, onClose, onSave }) {
       footer={<><button className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save Record'}</button></>}>
       {error && <div className="alert alert-red" style={{ marginBottom: 12 }}>⚠ {error}</div>}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+
+        {/* Section context */}
         <div style={{ padding: '10px 14px', background: 'var(--bg-elevated)', borderRadius: 9, fontSize: 13 }}>
           <strong>{section.penName} › {section.name}</strong>
           {flock && <span style={{ color: 'var(--text-muted)', marginLeft: 8 }}>· {flock.batchCode} · {fmt(flock.currentCount)} birds</span>}
         </div>
+
+        {/* Empty bags to return this store run */}
+        {emptyBags !== null && (
+          <div style={{
+            padding: '12px 14px', borderRadius: 9, display: 'flex', alignItems: 'center', gap: 12,
+            background: emptyBags > 0 ? '#fffbeb' : '#f8fafc',
+            border: `1px solid ${emptyBags > 0 ? '#fde68a' : '#e2e8f0'}`,
+          }}>
+            <span style={{ fontSize: 22, flexShrink: 0 }}>🛍️</span>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 800, color: emptyBags > 0 ? '#92400e' : '#64748b' }}>
+                {emptyBags > 0
+                  ? `Return ${emptyBags} empty bag${emptyBags !== 1 ? 's' : ''} to the store`
+                  : 'No empty bags to return this trip'}
+              </div>
+              <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>
+                {isBatch2
+                  ? 'All empty bags since the morning run (top-ups + afternoon feed)'
+                  : 'Empty bags from morning feed distribution only'}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Date + session */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <div>
             <label className="label">Collection Date *</label>
@@ -144,6 +212,8 @@ function LogEggModal({ section, task, apiFetch, onClose, onSave }) {
             <div style={{ fontSize:10, color:'var(--text-muted)', marginTop:3 }}>Auto-selected from task</div>
           </div>
         </div>
+
+        {/* Egg counts */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10 }}>
           <div>
             <label className="label">Full Crates *</label>
@@ -161,6 +231,8 @@ function LogEggModal({ section, task, apiFetch, onClose, onSave }) {
             <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 3 }}>Reduced price</div>
           </div>
         </div>
+
+        {/* Totals */}
         <div style={{ padding: '12px 14px', background: 'var(--purple-light)', borderRadius: 9, border: '1px solid #d4d8ff' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ fontSize: 12, color: 'var(--purple)', fontWeight: 700 }}>Total: {fmt(total)} eggs</span>
@@ -542,84 +614,172 @@ function LogTempModal({ section, apiFetch, onClose, onSave }) {
 }
 
 // ── Log Weight Modal (Rearing + Broiler workers) ─────────────────────────────
+// ── Layer weight thresholds ───────────────────────────────────────────────────
+function layerWeightStatus(g) {
+  if (!g) return null;
+  if (g < 1700) return { label:'Critical — underweight', color:'#dc2626', bg:'#fef2f2' };
+  if (g < 1800) return { label:'Low',                    color:'#d97706', bg:'#fffbeb' };
+  if (g <= 2000) return { label:'Healthy',               color:'#16a34a', bg:'#f0fdf4' };
+  if (g <= 2200) return { label:'High',                  color:'#d97706', bg:'#fffbeb' };
+  return               { label:'Obese — overfed',        color:'#dc2626', bg:'#fef2f2' };
+}
+
 function LogWeightModal({ section, apiFetch, onClose, onSave }) {
-  const flock = section.flock;
-  const today = new Date().toISOString().split('T')[0];
-  const [form, setForm] = useState({
-    sampleDate: today, sampleCount:'30', meanWeightG:'',
-    minWeightG:'', maxWeightG:'', uniformityPct:'', notes:'',
-  });
-  const [saving, setSaving] = useState(false);
-  const [error,  setError]  = useState('');
-  const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
+  const flock   = section.flock ?? section.activeFlock ?? null;
+  const opType  = section?.pen?.operationType || 'LAYER';
+  const today   = new Date().toISOString().split('T')[0];
+
+  const [sampleDate, setSampleDate] = useState(today);
+  const [notes,      setNotes]      = useState('');
+  const [input,      setInput]      = useState('');   // current text field value
+  const [weights,    setWeights]    = useState([]);   // individual bird weights (g)
+  const [saving,     setSaving]     = useState(false);
+  const [error,      setError]      = useState('');
+
+  // ── Live stats ────────────────────────────────────────────────────────────
+  const count = weights.length;
+  const mean  = count > 0 ? Math.round(weights.reduce((s,w)=>s+w,0)/count) : null;
+  const min   = count > 0 ? Math.min(...weights) : null;
+  const max   = count > 0 ? Math.max(...weights) : null;
+  const uniformityPct = (count > 1 && mean)
+    ? parseFloat((weights.filter(w => Math.abs(w - mean) <= mean * 0.1).length / count * 100).toFixed(1))
+    : null;
+  const statusLayer = opType === 'LAYER' && mean ? layerWeightStatus(mean) : null;
+
+  function addWeight() {
+    const g = parseFloat(input);
+    if (!g || g <= 0 || g > 9000) { setError('Enter a valid weight in grams (1–9000)'); return; }
+    setWeights(w => [...w, g]);
+    setInput('');
+    setError('');
+  }
+
+  function removeWeight(i) { setWeights(w => w.filter((_,idx)=>idx!==i)); }
+
+  function handleKeyDown(e) { if (e.key === 'Enter') { e.preventDefault(); addWeight(); } }
 
   async function save() {
-    if (!form.meanWeightG||Number(form.meanWeightG)<=0) return setError('Average weight is required');
-    if (!form.sampleCount||Number(form.sampleCount)<1)  return setError('Sample count must be at least 1');
+    if (count < 1) return setError('Enter at least one bird weight');
     setSaving(true); setError('');
     try {
       const res = await apiFetch('/api/weight-samples', {
-        method:'POST',
+        method: 'POST',
         body: JSON.stringify({
-          flockId:       flock?.id,
-          penSectionId:  section.id,
-          sampleDate:    form.sampleDate||today,
-          sampleCount:   parseInt(form.sampleCount,10),
-          meanWeightG:   parseFloat(form.meanWeightG),
-          minWeightG:    form.minWeightG    ? parseFloat(form.minWeightG)    : null,
-          maxWeightG:    form.maxWeightG    ? parseFloat(form.maxWeightG)    : null,
-          uniformityPct: form.uniformityPct ? parseFloat(form.uniformityPct) : null,
-          notes:         form.notes||null,
+          flockId:          flock?.id,
+          penSectionId:     section.id,
+          sampleDate,
+          sampleCount:      count,
+          meanWeightG:      mean,
+          minWeightG:       min,
+          maxWeightG:       max,
+          uniformityPct,
+          individualWeights: weights,
+          notes:            notes || null,
         }),
       });
       const d = await res.json();
-      if (!res.ok) return setError(d.error||'Failed to save');
+      if (!res.ok) { setError(d.error || 'Failed to save'); setSaving(false); return; }
       onSave();
-    } catch { setError('Network error'); }
-    setSaving(false);
+    } catch { setError('Network error'); setSaving(false); }
   }
 
   return (
-    <ModalShell title="⚖️ Log Weekly Weigh-In" onClose={onClose}
+    <ModalShell title="⚖️ Weekly Weigh-In" onClose={onClose}
       footer={<>
-        <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-        <button className="btn btn-primary" onClick={save} disabled={saving}>
-          {saving?'Saving…':'Save Weight Record'}
+        <button className="btn btn-ghost" onClick={onClose} disabled={saving}>Cancel</button>
+        <button className="btn btn-primary" onClick={save} disabled={saving || count < 1}>
+          {saving ? 'Saving…' : `Save ${count} Bird${count !== 1 ? 's' : ''}`}
         </button>
       </>}>
-      {error&&<div className="alert alert-red" style={{marginBottom:12}}>⚠ {error}</div>}
-      <div style={{marginBottom:12,fontSize:12,color:'var(--text-muted)'}}>
-        {flock?.batchCode} · {section.penName} › {section.name} ·
-        Weigh a random sample of at least 30 birds
+      <div style={{marginBottom:12,padding:'9px 12px',background:'var(--bg-elevated)',borderRadius:8,fontSize:12,color:'var(--text-secondary)'}}>
+        <strong>{section.penName || section?.pen?.name} › {section.name}</strong>
+        {flock && <span style={{color:'var(--text-muted)',marginLeft:8}}>· {flock.batchCode}</span>}
+        <span style={{color:'var(--text-muted)',marginLeft:8}}>· Weigh a sample of at least 30 birds</span>
       </div>
-      <div style={{display:'flex',flexDirection:'column',gap:12}}>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
-          <div><label className="label">Date</label>
-            <input type="date" className="input" value={form.sampleDate}
-              onChange={e=>set('sampleDate',e.target.value)}/></div>
-          <div><label className="label">Sample Size (birds)</label>
-            <input type="number" className="input" min="1" value={form.sampleCount}
-              onChange={e=>set('sampleCount',e.target.value)}/></div>
+
+      {error && <div className="alert alert-red" style={{marginBottom:12}}>⚠ {error}</div>}
+
+      {/* Date */}
+      <div style={{marginBottom:14}}>
+        <label className="label">Sample Date</label>
+        <input type="date" className="input" value={sampleDate} max={today}
+          onChange={e=>setSampleDate(e.target.value)} />
+      </div>
+
+      {/* Entry row */}
+      <div style={{marginBottom:8}}>
+        <label className="label">Bird Weight (g) — press Enter after each bird</label>
+        <div style={{display:'flex',gap:8}}>
+          <input type="number" className="input" min="1" max="9000" step="1"
+            value={input} autoFocus
+            onChange={e=>{setInput(e.target.value);setError('');}}
+            onKeyDown={handleKeyDown}
+            placeholder="e.g. 1850" style={{flex:1}} />
+          <button onClick={addWeight}
+            style={{padding:'9px 14px',borderRadius:8,border:'none',background:'var(--purple,#6c63ff)',
+              color:'#fff',fontSize:12,fontWeight:700,cursor:'pointer',whiteSpace:'nowrap',fontFamily:'inherit'}}>
+            Add ＋
+          </button>
         </div>
-        <div><label className="label">Avg Weight (g) *</label>
-          <input type="number" className="input" min="1" value={form.meanWeightG}
-            placeholder="e.g. 850" onChange={e=>set('meanWeightG',e.target.value)}/></div>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12}}>
-          <div><label className="label">Min (g)</label>
-            <input type="number" className="input" min="1" value={form.minWeightG}
-              placeholder="Optional" onChange={e=>set('minWeightG',e.target.value)}/></div>
-          <div><label className="label">Max (g)</label>
-            <input type="number" className="input" min="1" value={form.maxWeightG}
-              placeholder="Optional" onChange={e=>set('maxWeightG',e.target.value)}/></div>
-          <div><label className="label">Uniformity (%)</label>
-            <input type="number" className="input" min="0" max="100" step="0.1"
-              value={form.uniformityPct} placeholder="e.g. 82"
-              onChange={e=>set('uniformityPct',e.target.value)}/></div>
+        <div style={{fontSize:10,color:'var(--text-muted)',marginTop:3}}>
+          Press Enter or click Add after each bird
         </div>
-        <div><label className="label">Notes</label>
-          <textarea className="input" rows={2} value={form.notes}
-            placeholder="Body condition observations…"
-            onChange={e=>set('notes',e.target.value)}/></div>
+      </div>
+
+      {/* Live stats */}
+      {count > 0 && (
+        <div style={{marginBottom:12,padding:'10px 14px',borderRadius:9,border:'1px solid #e2e8f0',background:'#f8fafc'}}>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:8,marginBottom:statusLayer?8:0}}>
+            {[
+              {label:'Birds',       value: count},
+              {label:'Avg (g)',     value: mean},
+              {label:'Min (g)',     value: min},
+              {label:'Max (g)',     value: max},
+            ].map(({label,value})=>(
+              <div key={label} style={{textAlign:'center'}}>
+                <div style={{fontSize:16,fontWeight:800,color:'var(--purple,#6c63ff)'}}>{value ?? '—'}</div>
+                <div style={{fontSize:10,color:'var(--text-muted)'}}>{label}</div>
+              </div>
+            ))}
+          </div>
+          {uniformityPct != null && (
+            <div style={{fontSize:11,color:'#475569',textAlign:'center',marginTop:4}}>
+              Uniformity: <strong>{uniformityPct}%</strong>
+              <span style={{color:'#94a3b8',marginLeft:6}}>(±10% of mean)</span>
+            </div>
+          )}
+          {statusLayer && (
+            <div style={{marginTop:8,padding:'5px 10px',borderRadius:7,
+              background:statusLayer.bg,fontSize:11,fontWeight:700,
+              color:statusLayer.color,textAlign:'center'}}>
+              {statusLayer.label}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Entered weights list */}
+      {count > 0 && (
+        <div style={{marginBottom:14,maxHeight:140,overflowY:'auto',display:'flex',flexWrap:'wrap',gap:6}}>
+          {weights.map((w,i)=>(
+            <span key={i}
+              onClick={()=>removeWeight(i)}
+              title="Click to remove"
+              style={{padding:'3px 8px',borderRadius:6,background:'var(--purple-light,#f5f3ff)',
+                border:'1px solid #d4d8ff',color:'var(--purple,#6c63ff)',fontSize:12,
+                fontWeight:600,cursor:'pointer'}}>
+              {w}g ×
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Notes */}
+      <div>
+        <label className="label">Notes <span style={{fontWeight:400,color:'var(--text-muted)'}}>(optional)</span></label>
+        <textarea className="input" rows={2} value={notes}
+          onChange={e=>setNotes(e.target.value)}
+          placeholder="Body condition, any abnormalities…" style={{resize:'vertical'}} />
       </div>
     </ModalShell>
   );
@@ -657,7 +817,7 @@ function ObservationModal({ task, section, apiFetch, onClose, onSave }) {
   }
 
   return (
-    <ModalShell title={`${meta.icon} ${task?.title || 'Complete Task'}`} onClose={onClose}
+    <ModalShell title={`${meta.icon} ${stripEmoji(task?.title) || 'Complete Task'}`} onClose={onClose}
       footer={<>
         <button className='btn btn-ghost' onClick={onClose} disabled={saving}>Cancel</button>
         {flagging
@@ -686,15 +846,20 @@ function ObservationModal({ task, section, apiFetch, onClose, onSave }) {
             {task.description}
           </div>
         )}
+        {/* Two equal-weight paths — All Clear hint + prominent Flag button */}
         {!flagging && (
           <div style={{ padding:'9px 13px', background:'#f0fdf4', border:'1px solid #bbf7d0', borderRadius:8, fontSize:12, color:'#15803d' }}>
             Tap <strong>All Clear</strong> if no issues were found.
           </div>
         )}
         <button onClick={() => setFlagging(f => !f)}
-          style={{ display:'flex', alignItems:'center', gap:6, padding:'7px 12px', borderRadius:8, border:'1px solid var(--border-card)', background: flagging?'#fef2f2':'#fff', color: flagging?'#dc2626':'var(--text-muted)', fontSize:12, fontWeight:600, cursor:'pointer', fontFamily:'inherit' }}>
-          <span>{flagging ? '▾' : '▸'}</span>
-          <span>{flagging ? 'Hide issue report' : '⚑ Flag an issue instead'}</span>
+          style={{ display:'flex', alignItems:'center', justifyContent:'center', gap:8, padding:'10px 14px', borderRadius:9,
+            border: `2px solid ${flagging ? '#fecaca' : '#fde68a'}`,
+            background: flagging ? '#fef2f2' : '#fffbeb',
+            color: flagging ? '#dc2626' : '#92400e',
+            fontSize:13, fontWeight:700, cursor:'pointer', fontFamily:'inherit' }}>
+          <span>⚑</span>
+          <span>{flagging ? 'Hide issue report' : 'Flag an Issue Instead'}</span>
         </button>
         {flagging && (
           <div>
@@ -897,7 +1062,7 @@ function SectionTaskCard({ sec, sectionTasks, onComplete, saving, apiFetch, onLo
                     return (
                       <div key={task.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <span style={{ fontSize: 13 }}>{meta.icon}</span>
-                        <span style={{ flex: 1, fontSize: 12, fontWeight: 600, color: '#dc2626' }}>{task.title}</span>
+                        <span style={{ flex: 1, fontSize: 12, fontWeight: 600, color: '#dc2626' }}>{stripEmoji(task.title)}</span>
                         <button onClick={() => onComplete(task)} disabled={saving}
                           style={{ padding: '4px 10px', borderRadius: 6, border: 'none', background: '#dc2626', color: '#fff', fontSize: 11, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>
                           {meta.action}
@@ -963,7 +1128,7 @@ function SectionTaskCard({ sec, sectionTasks, onComplete, saving, apiFetch, onLo
                         if (done) return (
                           <div key={task.id} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '5px 6px', borderRadius: 7, opacity: 0.6 }}>
                             <span style={{ fontSize: 13 }}>✅</span>
-                            <span style={{ flex: 1, fontSize: 12, color: '#15803d', textDecoration: 'line-through', fontWeight: 600 }}>{task.title}</span>
+                            <span style={{ flex: 1, fontSize: 12, color: '#15803d', textDecoration: 'line-through', fontWeight: 600 }}>{stripEmoji(task.title)}</span>
                             <span style={{ fontSize: 10, color: '#15803d' }}>Done</span>
                           </div>
                         );
@@ -978,26 +1143,26 @@ function SectionTaskCard({ sec, sectionTasks, onComplete, saving, apiFetch, onLo
                           }}>
                             <span style={{ fontSize: 14, flexShrink: 0 }}>{meta.icon}</span>
                             <div style={{ flex: 1, minWidth: 0 }}>
-                              <div style={{ fontSize: 12, fontWeight: 700, color: over ? '#dc2626' : 'var(--text-primary)' }}>
-                                {task.title}
+                              <div style={{ fontSize: 12, fontWeight: 700, color: over ? '#dc2626' : 'var(--text-primary)', opacity: getTimeLock(task).locked ? 0.45 : 1 }}>
+                                {getTimeLock(task).locked && '🔒 '}{stripEmoji(task.title)}
                               </div>
                               {task.dueDate && (
-                                <div style={{ fontSize: 10, color: over ? '#dc2626' : 'var(--text-muted)', marginTop: 1 }}>
-                                  {over ? '⚠ Overdue · ' : ''}
+                                <div style={{ fontSize: 10, color: over ? '#dc2626' : getTimeLock(task).locked ? '#94a3b8' : 'var(--text-muted)', marginTop: 1 }}>
+                                  {over ? '⚠ Overdue · ' : getTimeLock(task).locked ? 'Opens at ' : getTimeLock(task).soft ? '⚠ Early · ' : ''}
                                   {new Date(task.dueDate).toLocaleTimeString('en-NG', { hour: '2-digit', minute: '2-digit' })}
                                 </div>
                               )}
                             </div>
                             <button
                               onClick={() => onComplete(task)}
-                              disabled={saving}
+                              disabled={saving || getTimeLock(task).locked}
                               style={{
                                 flexShrink: 0, padding: '5px 11px', borderRadius: 7, border: 'none',
-                                background: over ? '#dc2626' : meta.bg,
-                                color: over ? '#fff' : meta.color,
+                                background: getTimeLock(task).locked ? '#f1f5f9' : over ? '#dc2626' : meta.bg,
+                                color: getTimeLock(task).locked ? '#94a3b8' : over ? '#fff' : meta.color,
                                 fontSize: 11, fontWeight: 700,
-                                cursor: saving ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap',
-                                outline: `1px solid ${over ? '#dc2626' : meta.color}25`,
+                                cursor: (saving || getTimeLock(task).locked) ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap',
+                                outline: `1px solid ${getTimeLock(task).locked ? '#e2e8f0' : over ? '#dc2626' : meta.color}25`,
                               }}>
                               {meta.action}
                             </button>
@@ -1036,7 +1201,7 @@ function SectionTaskCard({ sec, sectionTasks, onComplete, saving, apiFetch, onLo
                       if (done) return (
                         <div key={task.id} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '5px 6px', borderRadius: 7, opacity: 0.6 }}>
                           <span style={{ fontSize: 13 }}>✅</span>
-                          <span style={{ flex: 1, fontSize: 12, color: '#15803d', textDecoration: 'line-through', fontWeight: 600 }}>{task.title}</span>
+                          <span style={{ flex: 1, fontSize: 12, color: '#15803d', textDecoration: 'line-through', fontWeight: 600 }}>{stripEmoji(task.title)}</span>
                           {due && <span style={{ fontSize: 10, color: '#15803d' }}>{due}</span>}
                         </div>
                       );
@@ -1050,7 +1215,7 @@ function SectionTaskCard({ sec, sectionTasks, onComplete, saving, apiFetch, onLo
                         }}>
                           <span style={{ fontSize: 14, flexShrink: 0 }}>{meta.icon}</span>
                           <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontSize: 12, fontWeight: 700, color: over ? '#dc2626' : 'var(--text-primary)' }}>{task.title}</div>
+                            <div style={{ fontSize: 12, fontWeight: 700, color: over ? '#dc2626' : 'var(--text-primary)' }}>{stripEmoji(task.title)}</div>
                             {due && <div style={{ fontSize: 10, color: over ? '#dc2626' : 'var(--text-muted)', marginTop: 1 }}>{over ? '⚠ ' : ''}{due}</div>}
                           </div>
                           <button
@@ -1179,19 +1344,27 @@ export default function WorkerPage() {
   }, [apiFetch]);
 
   const generateTasksIfNeeded = useCallback(async () => {
-    // Always POST for both frequencies — the server deduplicates per section+title,
-    // so sections that already have tasks are skipped. This avoids the tenant-wide
-    // idempotency check incorrectly blocking sections that have no tasks yet.
-    // load() is called in finally so the page always populates even if generation fails.
+    // Check whether tasks already exist for today before generating.
+    // This prevents duplicate tasks when multiple workers hit the page simultaneously
+    // (race condition: two concurrent POSTs both pass the dedup check before either commits).
     try {
-      const [dailyRes, weeklyRes] = await Promise.all([
-        apiFetch('/api/tasks/generate', { method: 'POST', body: JSON.stringify({ frequency: 'daily' }) }),
-        apiFetch('/api/tasks/generate', { method: 'POST', body: JSON.stringify({ frequency: 'weekly' }) }),
-      ]);
-      const dailyData  = dailyRes.ok  ? await dailyRes.json()  : { error: await dailyRes.text() };
-      const weeklyData = weeklyRes.ok ? await weeklyRes.json() : { error: await weeklyRes.text() };
-      console.log('[tasks/generate] daily:', dailyData);
-      console.log('[tasks/generate] weekly:', weeklyData);
+      const checkRes = await apiFetch('/api/tasks/generate');
+      const check    = checkRes.ok ? await checkRes.json() : null;
+
+      const needsDaily  = !check?.dailyGenerated;
+      const needsWeekly = !check?.weeklyGenerated;
+
+      const posts = [];
+      if (needsDaily)  posts.push(apiFetch('/api/tasks/generate', { method: 'POST', body: JSON.stringify({ frequency: 'daily'  }) }));
+      if (needsWeekly) posts.push(apiFetch('/api/tasks/generate', { method: 'POST', body: JSON.stringify({ frequency: 'weekly' }) }));
+
+      if (posts.length > 0) {
+        const results = await Promise.all(posts);
+        for (const res of results) {
+          const d = res.ok ? await res.json() : { error: await res.text() };
+          console.log('[tasks/generate]', d);
+        }
+      }
     } catch (err) { console.error('[tasks/generate] error:', err); }
     finally { load(); }
   }, [apiFetch, load]);
@@ -1212,6 +1385,15 @@ export default function WorkerPage() {
   }, [apiFetch]);
 
   const handleComplete = async (task) => {
+    // Time-lock: FEEDING and EGG_COLLECTION enforce schedule compliance
+    const tl = getTimeLock(task);
+    if (tl.locked) {
+      const dueStr = new Date(task.dueDate).toLocaleTimeString('en-NG', { hour: '2-digit', minute: '2-digit' });
+      showToast(`🔒 This task opens at ${dueStr}. Come back closer to that time.`, 'warn');
+      return;
+    }
+    if (tl.soft) showToast('⚠ Logging early. Ensure feed/eggs are ready before submitting.', 'warn');
+
     // Spot-check tasks
     const isSpotCheck = task.description?.includes('SPOT-CHECK');
     if (isSpotCheck && (task.taskType === 'WEIGHT_RECORDING' || task.taskType === 'INSPECTION')) {
@@ -1229,6 +1411,10 @@ export default function WorkerPage() {
       }
       if (task.taskType === 'MORTALITY_CHECK') {
         setTaskLinkedModal({ task, type: 'mortality' }); setMortModal(section); return;
+      }
+      if (task.taskType === 'WEIGHT_RECORDING') {
+        // Non-spot-check weekly weigh-in — open the LogWeightModal and link the task
+        setTaskLinkedModal({ task, type: 'weight' }); setWeightModal(section); return;
       }
       if (task.taskType === 'INSPECTION') {
         const secStage = section?.metrics?.stage || section?.flock?.stage || 'PRODUCTION';
@@ -1435,8 +1621,13 @@ export default function WorkerPage() {
       )}
       {weightModal && (
         <LogWeightModal section={weightModal} apiFetch={apiFetch}
-          onClose={() => setWeightModal(null)}
-          onSave={() => { setWeightModal(null); bumpSave(); load(); showToast('Weight record saved ✓'); }}
+          onClose={() => { setWeightModal(null); setTaskLinkedModal(null); }}
+          onSave={() => {
+            setWeightModal(null);
+            bumpSave(); load();
+            showToast('Weight record saved ✓');
+            if (taskLinkedModal?.type === 'weight') completeLinkedTask(taskLinkedModal.task.id);
+          }}
         />
       )}
       {feedModal && (

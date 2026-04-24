@@ -30,7 +30,7 @@ import { useState, useEffect, useCallback } from 'react';
 import AppShell   from '@/components/layout/AppShell';
 import { useAuth } from '@/components/layout/AuthProvider';
 import {
-  LineChart, Line, AreaChart, Area,
+  LineChart, Line, AreaChart, Area, BarChart, Bar,
   XAxis, YAxis, CartesianGrid, Tooltip,
   Legend, ResponsiveContainer, ReferenceLine,
 } from 'recharts';
@@ -38,8 +38,8 @@ import {
 // ─────────────────────────────────────────────────────────────────────────────
 // CONSTANTS
 // ─────────────────────────────────────────────────────────────────────────────
-const ALLOWED_ROLES = ['FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
-const TABS = ['Overview', 'Production', 'Feed & Cost', 'Mortality', 'Flocks'];
+const ALLOWED_ROLES = ['FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
+const TABS = ['Overview', 'Production', 'Feed & Cost', 'Mortality', 'Egg Sessions', 'Flocks'];
 const YESTERDAY_DAYS = -1; // sentinel used by /performance — not needed here; keep for parity
 
 // Laying-rate target bands (ISA Brown / commercial layer standard)
@@ -545,6 +545,140 @@ function TabMortality({ mortData, cumulData, summary, loading }) {
 // TAB: FLOCKS
 // Per-flock breakdown table; cull recommendation flags
 // ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// TAB: EGG SESSIONS
+// Batch 1 (Morning) vs Batch 2 (Afternoon) production split.
+// sessionData shape expected from API: Array of { date, batch1Eggs, batch2Eggs,
+//   batch1Rate, batch2Rate, totalEggs } — one entry per day.
+// Falls back gracefully if API not yet returning sessionData.
+// ─────────────────────────────────────────────────────────────────────────────
+function TabEggSessions({ sessionData, loading }) {
+  const fmt    = (n, d = 0) => n != null ? Number(n).toLocaleString('en-NG', { minimumFractionDigits: d, maximumFractionDigits: d }) : '—';
+  const pctFmt = (n)        => n != null ? `${Number(n).toFixed(1)}%` : '—';
+
+  if (loading) return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {Array(4).fill(0).map((_,i) => <Skeleton key={i} h={60} />)}
+    </div>
+  );
+
+  // ── Summary aggregates ────────────────────────────────────────────────────
+  const rows = sessionData || [];
+  const hasData = rows.length > 0 && rows.some(r => (r.batch1Eggs || 0) + (r.batch2Eggs || 0) > 0);
+
+  const totalB1   = rows.reduce((s, r) => s + (r.batch1Eggs || 0), 0);
+  const totalB2   = rows.reduce((s, r) => s + (r.batch2Eggs || 0), 0);
+  const totalAll  = totalB1 + totalB2;
+  const b1Pct     = totalAll > 0 ? parseFloat(((totalB1 / totalAll) * 100).toFixed(1)) : null;
+  const b2Pct     = totalAll > 0 ? parseFloat(((totalB2 / totalAll) * 100).toFixed(1)) : null;
+
+  const avgB1Rate = rows.filter(r => r.batch1Rate != null).length > 0
+    ? parseFloat((rows.reduce((s, r) => s + (r.batch1Rate || 0), 0) / rows.filter(r => r.batch1Rate != null).length).toFixed(1))
+    : null;
+  const avgB2Rate = rows.filter(r => r.batch2Rate != null).length > 0
+    ? parseFloat((rows.reduce((s, r) => s + (r.batch2Rate || 0), 0) / rows.filter(r => r.batch2Rate != null).length).toFixed(1))
+    : null;
+
+  // Bar chart data — use recharts BarChart
+  const chartData = rows.slice(-14).map(r => ({
+    dateLabel: r.date ? new Date(r.date).toLocaleDateString('en-NG', { day: 'numeric', month: 'short' }) : '—',
+    batch1:    r.batch1Eggs || 0,
+    batch2:    r.batch2Eggs || 0,
+  }));
+
+  if (!hasData) {
+    return (
+      <div>
+        <SectionHead title="Egg Collection by Session" sub="Batch 1 (Morning) vs Batch 2 (Afternoon) — requires session-tagged egg collection records" />
+        <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12, padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted,#64748b)' }}>
+          <div style={{ fontSize: 28, marginBottom: 8 }}>🥚</div>
+          <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>No session data yet</div>
+          <div style={{ fontSize: 12 }}>
+            Session-split data appears once workers log egg collections via Batch 1 / Batch 2 tasks.<br />
+            The API will expose <code>sessionData</code> when production records include <code>collectionSession</code>.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <SectionHead title="Egg Collection by Session" sub="Batch 1 (Morning) vs Batch 2 (Afternoon) production comparison" />
+
+      {/* ── Summary KPI strip ── */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12, marginBottom: 20 }}>
+        {[
+          { icon: '🌅', label: 'Batch 1 Total',    value: fmt(totalB1),     note: b1Pct != null ? `${b1Pct}% of total` : '',                    color: '#6c63ff' },
+          { icon: '🌇', label: 'Batch 2 Total',    value: fmt(totalB2),     note: b2Pct != null ? `${b2Pct}% of total` : '',                    color: '#f59e0b' },
+          { icon: '📊', label: 'Avg B1 Lay Rate',  value: pctFmt(avgB1Rate),note: 'Morning session average',                                     color: avgB1Rate >= 82 ? '#16a34a' : avgB1Rate >= 70 ? '#d97706' : '#dc2626' },
+          { icon: '📊', label: 'Avg B2 Lay Rate',  value: pctFmt(avgB2Rate),note: 'Afternoon session average',                                   color: avgB2Rate >= 82 ? '#16a34a' : avgB2Rate >= 70 ? '#d97706' : '#dc2626' },
+        ].map(c => (
+          <div key={c.label} style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12, padding: '12px 14px' }}>
+            <div style={{ fontSize: 11, color: 'var(--text-muted,#64748b)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 6 }}>
+              {c.icon} {c.label}
+            </div>
+            <div style={{ fontSize: 22, fontWeight: 800, color: c.color }}>{c.value}</div>
+            <div style={{ fontSize: 10, color: 'var(--text-muted,#64748b)', marginTop: 4 }}>{c.note}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Stacked bar chart: B1 vs B2 per day ── */}
+      <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12, padding: '16px 12px', marginBottom: 20 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-secondary,#334155)', marginBottom: 10, paddingLeft: 4 }}>
+          Daily Egg Output — Last 14 Days
+        </div>
+        <ResponsiveContainer width="100%" height={220}>
+          <BarChart data={chartData} margin={{ top: 4, right: 16, bottom: 0, left: 0 }} barCategoryGap="30%">
+            <CartesianGrid strokeDasharray="3 3" stroke="#f0f4f8" />
+            <XAxis dataKey="dateLabel" tick={{ fontSize: 10 }} />
+            <YAxis tick={{ fontSize: 10 }} />
+            <Tooltip formatter={(v, n) => [v.toLocaleString(), n]} />
+            <Legend iconSize={10} wrapperStyle={{ fontSize: 11 }} />
+            <Bar dataKey="batch1" name="Batch 1 · Morning"   stackId="a" fill="#6c63ff" radius={[0,0,0,0]} />
+            <Bar dataKey="batch2" name="Batch 2 · Afternoon" stackId="a" fill="#f59e0b" radius={[3,3,0,0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* ── Daily breakdown table ── */}
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+          <thead>
+            <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
+              {['Date', 'Batch 1 Eggs', 'B1 Lay Rate', 'Batch 2 Eggs', 'B2 Lay Rate', 'Total'].map(h => (
+                <th key={h} style={{ padding: '8px 12px', textAlign: 'left', fontSize: 10, fontWeight: 700, color: 'var(--text-muted,#64748b)', textTransform: 'uppercase', letterSpacing: '.05em', whiteSpace: 'nowrap' }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {[...rows].reverse().map((r, i) => {
+              const total = (r.batch1Eggs || 0) + (r.batch2Eggs || 0);
+              return (
+                <tr key={r.date || i} style={{ borderBottom: '1px solid #f0f4f8', background: i % 2 === 0 ? '#fff' : '#fafbfc' }}>
+                  <td style={{ padding: '8px 12px', fontWeight: 600 }}>
+                    {r.date ? new Date(r.date).toLocaleDateString('en-NG', { weekday: 'short', day: 'numeric', month: 'short' }) : '—'}
+                  </td>
+                  <td style={{ padding: '8px 12px', color: '#6c63ff', fontWeight: 700 }}>{fmt(r.batch1Eggs)}</td>
+                  <td style={{ padding: '8px 12px', color: r.batch1Rate >= 82 ? '#16a34a' : r.batch1Rate >= 70 ? '#d97706' : r.batch1Rate != null ? '#dc2626' : 'var(--text-muted,#64748b)', fontWeight: 600 }}>
+                    {pctFmt(r.batch1Rate)}
+                  </td>
+                  <td style={{ padding: '8px 12px', color: '#f59e0b', fontWeight: 700 }}>{fmt(r.batch2Eggs)}</td>
+                  <td style={{ padding: '8px 12px', color: r.batch2Rate >= 82 ? '#16a34a' : r.batch2Rate >= 70 ? '#d97706' : r.batch2Rate != null ? '#dc2626' : 'var(--text-muted,#64748b)', fontWeight: 600 }}>
+                    {pctFmt(r.batch2Rate)}
+                  </td>
+                  <td style={{ padding: '8px 12px', fontWeight: 800, color: 'var(--text-primary,#0f172a)' }}>{fmt(total)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function TabFlocks({ flocks, loading }) {
   if (loading) return <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>{Array(3).fill(0).map((_,i) => <Skeleton key={i} h={70} />)}</div>;
   if (!flocks?.length) return <ChartEmpty message="No active production-stage layer flocks found" />;
@@ -556,7 +690,7 @@ function TabFlocks({ flocks, loading }) {
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
           <thead>
             <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
-              {['Batch', 'Section', 'Birds', 'Age', 'Lay Rate', 'HH Rate', 'Feed g/bird', 'Cumul Mort', 'Cull Signal'].map(h => (
+              {['Batch', 'Section', 'Birds', 'Age', 'Lay Rate', 'HH Rate', 'Feed g/bird', 'Avg Weight', 'Cumul Mort', 'Cull Signal'].map(h => (
                 <th key={h} style={{ padding: '8px 10px', textAlign: 'left', fontSize: 10, fontWeight: 700, color: 'var(--text-muted,#64748b)', textTransform: 'uppercase', letterSpacing: '.05em', whiteSpace: 'nowrap' }}>{h}</th>
               ))}
             </tr>
@@ -571,6 +705,13 @@ function TabFlocks({ flocks, loading }) {
                 <td style={{ padding: '8px 10px', fontWeight: 700, color: statusColor(f.layingRate, LAY_TARGET, LAY_CRITICAL) }}>{pct(f.layingRate)}</td>
                 <td style={{ padding: '8px 10px', color: statusColor(f.henHousedRate, HH_TARGET, HH_TARGET - 10) }}>{pct(f.henHousedRate)}</td>
                 <td style={{ padding: '8px 10px' }}>{f.feedGpb != null ? `${fmt(f.feedGpb, 0)}g` : '—'}</td>
+                <td style={{ padding: '8px 10px', fontWeight: f.avgWeightG ? 600 : 400,
+                  color: !f.avgWeightG ? 'var(--text-muted,#64748b)'
+                       : f.avgWeightG < 1700 || f.avgWeightG > 2200 ? 'var(--red,#ef4444)'
+                       : f.avgWeightG < 1800 || f.avgWeightG > 2000 ? '#d97706'
+                       : '#16a34a' }}>
+                  {f.avgWeightG ? `${Math.round(f.avgWeightG)}g` : '—'}
+                </td>
                 <td style={{ padding: '8px 10px', color: f.cumulMortPct > 5 ? 'var(--red,#ef4444)' : 'inherit' }}>{pct(f.cumulMortPct)}</td>
                 <td style={{ padding: '8px 10px' }}>
                   {f.cullRecommended
@@ -610,6 +751,7 @@ export default function LayerProductionPage() {
   const [mortData,   setMortData]   = useState([]);   // weekly deaths
   const [cumulData,  setCumulData]  = useState([]);   // cumulative mortality %
   const [mortSummary,setMortSummary]= useState(null);
+  const [sessionData,setSessionData]= useState([]);   // Batch 1 vs Batch 2 daily split
   const [flocks,     setFlocks]     = useState([]);   // per-flock rows
 
   // Role gate — defer until auth has resolved
@@ -621,7 +763,10 @@ export default function LayerProductionPage() {
     setDataLoading(true);
     setError(null);
     try {
-      const res = await apiFetch(`/api/production/layers?days=${days}`);
+      const [res, wtRes] = await Promise.all([
+        apiFetch(`/api/production/layers?days=${days}`),
+        apiFetch(`/api/weight-samples?days=${days}`),
+      ]);
       if (!res?.ok) {
         console.warn('Layer Analytics API not yet available — scaffold running in stub mode');
         setOverview({ kpis: [], chartData: [], summary: {} });
@@ -640,7 +785,23 @@ export default function LayerProductionPage() {
       setMortData(d.mortData      || []);
       setCumulData(d.cumulData    || []);
       setMortSummary(d.mortSummary || null);
-      setFlocks(d.flocks || []);
+      setSessionData(d.sessionData || []);
+      // Merge latest weight per flock from weight-records
+      let wtMap = {};
+      if (wtRes?.ok) {
+        const wtData = await wtRes.json();
+        // Build map: flockId → latest avgWeightG (most recent record)
+        (wtData.samples || []).forEach(r => {
+          const fid = r.flock?.id || r.flockId;
+          if (fid && (!wtMap[fid] || new Date(r.sampleDate) > new Date(wtMap[fid].sampleDate))) {
+            wtMap[fid] = r;
+          }
+        });
+      }
+      setFlocks((d.flocks || []).map(f => ({
+        ...f,
+        avgWeightG: wtMap[f.flockId]?.meanWeightG ?? null,
+      })));
 
     } catch (e) {
       console.error('Layer Analytics load error:', e);
@@ -764,11 +925,12 @@ export default function LayerProductionPage() {
         </div>
 
         {/* ── Tab content ── */}
-        {tab === 'Overview'    && <TabOverview      kpis={kpis} chartData={overview?.chartData || []} flocks={flocks} loading={dataLoading} />}
-        {tab === 'Production'  && <TabProductionCurve curveData={curveData} flockCurves={flockCurves} peakWeek={peakWeek} postPeakDeclineRate={declineRate} loading={dataLoading} days={days} setDays={setDays} />}
-        {tab === 'Feed & Cost' && <TabFeedCost       costData={costData} summary={costSummary} loading={dataLoading} />}
-        {tab === 'Mortality'   && <TabMortality      mortData={mortData} cumulData={cumulData} summary={mortSummary} loading={dataLoading} />}
-        {tab === 'Flocks'      && <TabFlocks         flocks={flocks} loading={dataLoading} />}
+        {tab === 'Overview'      && <TabOverview      kpis={kpis} chartData={overview?.chartData || []} flocks={flocks} loading={dataLoading} />}
+        {tab === 'Production'    && <TabProductionCurve curveData={curveData} flockCurves={flockCurves} peakWeek={peakWeek} postPeakDeclineRate={declineRate} loading={dataLoading} days={days} setDays={setDays} />}
+        {tab === 'Feed & Cost'   && <TabFeedCost       costData={costData} summary={costSummary} loading={dataLoading} />}
+        {tab === 'Mortality'     && <TabMortality      mortData={mortData} cumulData={cumulData} summary={mortSummary} loading={dataLoading} />}
+        {tab === 'Egg Sessions'  && <TabEggSessions    sessionData={sessionData} loading={dataLoading} />}
+        {tab === 'Flocks'        && <TabFlocks         flocks={flocks} loading={dataLoading} />}
 
       </div>
 

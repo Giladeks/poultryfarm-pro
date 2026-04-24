@@ -16,7 +16,9 @@ const ALLOWED_ROLES = [
   'INTERNAL_CONTROL',
 ];
 
-const PM_ROLES = ['PEN_MANAGER', 'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
+const PM_ROLES     = ['PEN_MANAGER', 'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
+// Workers can submit their own section summaries — PM_ROLES gate was the bug
+const SUBMIT_ROLES = ['PEN_WORKER', 'PRODUCTION_STAFF', 'PEN_MANAGER', 'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
 
 // ── Date helpers (timezone-safe) ──────────────────────────────────────────────
 function localToday() {
@@ -306,12 +308,12 @@ export async function GET(request) {
 }
 
 // ── POST /api/daily-summary ───────────────────────────────────────────────────
-// PM manually submits a summary. Refreshes aggregates, determines SUBMITTED vs FLAGGED.
+// Workers and PMs can submit a summary. Workers are restricted to their own sections.
 export async function POST(request) {
   const user = await verifyToken(request);
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  if (!PM_ROLES.includes(user.role))
-    return NextResponse.json({ error: 'Only Pen Managers and above can submit summaries' }, { status: 403 });
+  if (!SUBMIT_ROLES.includes(user.role))
+    return NextResponse.json({ error: 'Insufficient permissions to submit summaries' }, { status: 403 });
 
   try {
     const body         = await request.json();
@@ -325,6 +327,15 @@ export async function POST(request) {
     });
     if (!section)
       return NextResponse.json({ error: 'Section not found' }, { status: 404 });
+
+    // Workers can only submit their own assigned sections
+    if (user.role === 'PEN_WORKER' || user.role === 'PRODUCTION_STAFF') {
+      const assignment = await prisma.penWorkerAssignment.findFirst({
+        where: { userId: user.sub, penSectionId, isActive: true },
+      });
+      if (!assignment)
+        return NextResponse.json({ error: 'You are not assigned to this section' }, { status: 403 });
+    }
 
     const today = localToday();
     const { dbFields } = await computeAggregates(penSectionId, today);
@@ -349,6 +360,29 @@ export async function POST(request) {
       },
       include: { reviewedBy: { select: { firstName: true, lastName: true } } },
     });
+
+    // Notify PMs that the summary is ready for review
+    const pmAssignments = await prisma.penWorkerAssignment.findMany({
+      where:  { penSectionId, user: { role: 'PEN_MANAGER', isActive: true } },
+      select: { userId: true },
+    });
+    if (pmAssignments.length > 0) {
+      await prisma.notification.createMany({
+        data: pmAssignments.map(a => ({
+          tenantId:    user.tenantId,
+          recipientId: a.userId,
+          senderId:    user.sub,
+          type:        'REPORT_SUBMITTED',
+          title:       hasPending ? '⚠️ Daily Summary — Pending Verifications' : '✅ Daily Summary Submitted',
+          message:     hasPending
+            ? `Daily summary has ${dbFields.pendingEggVerifications + dbFields.pendingFeedVerifications + dbFields.pendingMortalityVerifications} pending verification(s). Please review.`
+            : `Daily summary submitted. Eggs: ${dbFields.totalEggsCollected}, Feed: ${Number(dbFields.totalFeedKg).toFixed(1)} kg, Mortality: ${dbFields.totalMortality}.`,
+          data: { entityType: 'DailySummary', penSectionId, summaryStatus: newStatus },
+          channel: 'IN_APP',
+        })),
+        skipDuplicates: true,
+      }).catch(() => {}); // non-fatal
+    }
 
     return NextResponse.json({ summary, wasSubmitted: true });
   } catch (err) {

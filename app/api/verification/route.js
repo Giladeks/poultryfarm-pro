@@ -8,7 +8,7 @@ import { verifyToken } from '@/lib/middleware/auth';
 import { z } from 'zod';
 import { checkConflictOfInterest } from '@/lib/utils/conflictOfInterest';
 
-const VERIFIER_ROLES  = ['PEN_MANAGER', 'STORE_MANAGER', 'STORE_CLERK', 'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
+const VERIFIER_ROLES  = ['PEN_MANAGER', 'STORE_MANAGER', 'STORE_CLERK', 'INTERNAL_CONTROL', 'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
 const MANAGER_ROLES   = ['STORE_MANAGER', 'FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
 
 const MANAGEMENT_OVERRIDE = ['FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
@@ -226,7 +226,11 @@ export async function GET(request) {
     // ── Feed consumption — unverified ─────────────────────────────────────────
     const pendingFeed = await prisma.feedConsumption.findMany({
       where: withSectionScope({
-        recordedDate: { gte: sevenDaysAgo },
+        recordedDate:    { gte: sevenDaysAgo },
+        // Exclude records rejected and awaiting worker correction.
+        // Once the worker logs a corrected entry (new record), the old rejected one
+        // stays excluded; the new one appears fresh in the queue.
+        rejectionReason: null,
         flock: { penSection: { pen: { farm: { tenantId: user.tenantId } } } },
       }),
       include: {
@@ -253,6 +257,7 @@ export async function GET(request) {
         recordedById:  r.recordedBy.id,
         penSectionId:  r.penSectionId,
         verificationId: verificationIdByRef[r.id] || null,
+        resubmitted:   false,
       }))
     );
 

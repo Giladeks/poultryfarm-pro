@@ -134,14 +134,91 @@ export async function POST(request) {
       bagWeightKg = Number(feedItem.bagWeightKg) || 25;
       costAtTime  = Number(feedItem.costPerKg);
 
-      // quantityKg = (bagsUsed × bagWeightKg) + partialConsumed
-      // partialConsumed = (bagWeightKg − remainingKg) only when a partial bag was opened.
-      // If remainingKg is 0 or absent, no partial bag was opened — no extra kg added.
-      const hasPartialBag  = (data.remainingKg ?? 0) > 0.1;
-      const partialConsumed = hasPartialBag ? (bagWeightKg - data.remainingKg) : 0;
-      quantityKg = parseFloat(
-        ((data.bagsUsed * bagWeightKg) + partialConsumed).toFixed(2)
-      );
+      // Correct carry-over formula:
+      // Fetch the most recent FeedConsumption record for this section today to get
+      // prevRemainingKg (kg left in the open bag from the last session).
+      //
+      // If prevRemainingKg > 0: the open bag was carried in; worker used some of it.
+      //   openBagConsumed = prevRemainingKg - data.remainingKg
+      // If prevRemainingKg = 0: first session today, a new bag was opened.
+      //   openBagConsumed = bagWeightKg - data.remainingKg  (original formula)
+      //
+      // This prevents double-counting carry-over kg across sessions.
+      let prevRemainingKg = 0;
+      try {
+        // Step 1: most recent FeedConsumption for this section+feedType.
+        // Scoped by feedInventoryId so a feed type change (Starter→Grower) starts fresh.
+        const lastSession = await prisma.feedConsumption.findFirst({
+          where: {
+            penSectionId:    data.penSectionId,
+            feedInventoryId: data.feedInventoryId,
+          },
+          orderBy: { feedTime: 'desc' },
+          select:  { remainingKg: true },
+        });
+        if (lastSession?.remainingKg != null && Number(lastSession.remainingKg) > 0) {
+          prevRemainingKg = parseFloat(Number(lastSession.remainingKg).toFixed(2));
+        } else {
+          // Step 2: no prior consumption for this feed type on this section.
+          // First issuance (or feed type just changed) — use today's acknowledged
+          // requisition's issuedQtyKg for this section as the opening stock.
+          const [yr, mo, dy] = data.recordedDate.split('-').map(Number);
+          const dayStart = new Date(Date.UTC(yr, mo - 1, dy));
+          const dayEnd   = new Date(Date.UTC(yr, mo - 1, dy + 1));
+          const todayReq = await prisma.feedRequisition.findFirst({
+            where: {
+              penSectionId:    data.penSectionId,
+              feedInventoryId: data.feedInventoryId,
+              status:          { in: ['ACKNOWLEDGED', 'CLOSED'] },
+              acknowledgedAt:  { gte: dayStart, lt: dayEnd },
+            },
+            orderBy: { acknowledgedAt: 'desc' },
+            select:  { issuedQtyKg: true, sectionBreakdown: true },
+          });
+          if (todayReq) {
+            // Try section-level issued qty first (more accurate for multi-section pens)
+            let sectionIssued = 0;
+            if (todayReq.sectionBreakdown && Array.isArray(todayReq.sectionBreakdown)) {
+              const entry = todayReq.sectionBreakdown.find(s => s.penSectionId === data.penSectionId);
+              sectionIssued = Number(entry?.acknowledgedQtyKg ?? entry?.issuedQtyKg ?? 0);
+            }
+            prevRemainingKg = sectionIssued > 0
+              ? parseFloat(sectionIssued.toFixed(2))
+              : parseFloat(Number(todayReq.issuedQtyKg || 0).toFixed(2));
+          }
+        }
+      } catch { /* non-fatal — fall back to original formula */ }
+
+      const currentRemainingKg = data.remainingKg ?? 0;
+
+      // Correct bag-level consumption formula — two branches:
+      // Branch A (bagsUsed > 0): carry-over fully used + new bags + partial new bag
+      //   consumed = prevRemainingKg + (bagsUsed × bagWt) + (bagWt - remainingKg)
+      //   Day 1: prev=0, bags=8, rem=20 → 0 + 200 + 5 = 205 kg ✓
+      //   Day 2: prev=20, bags=7, rem=10 → 20 + 175 + 15 = 210 kg ✓
+      // Branch B (bagsUsed = 0): worker only used carry-over bag
+      //   consumed = prevRemainingKg - remainingKg
+      // Empty-bags formula:
+      // data.bagsUsed = total empty bags this session (incl. carry-over bag if emptied).
+      // If prevRemainingKg > 0, one of those empties is the carry-over bag.
+      //   fullNewBagsEmptied = data.bagsUsed - 1
+      //   consumed = prevRemainingKg + (fullNewBagsEmptied × bagWt) + (bagWt - remainingKg)
+      // Day 1: prev=0, empty=8, rem=20 → 0 + 8×25 + (25-20) = 205 kg ✓
+      // Day 2: prev=20, empty=8, rem=10 → 20 + 7×25 + (25-10) = 210 kg ✓
+      const fullNewBagsEmptied = prevRemainingKg > 0
+        ? Math.max(0, data.bagsUsed - 1)
+        : data.bagsUsed;
+      const fromNewPartialBag = currentRemainingKg > 0
+        ? parseFloat((bagWeightKg - currentRemainingKg).toFixed(2))
+        : 0;
+      // Also active if worker opened a first bag but hasn't emptied it yet
+      const hasActivity = data.bagsUsed > 0 || (prevRemainingKg > 0 && currentRemainingKg === 0) || (data.bagsUsed === 0 && prevRemainingKg === 0 && currentRemainingKg > 0);
+
+      quantityKg = hasActivity
+        ? Math.max(0, parseFloat(
+            (prevRemainingKg + (fullNewBagsEmptied * bagWeightKg) + fromNewPartialBag).toFixed(2)
+          ))
+        : 0;
 
       if (quantityKg <= 0)
         return NextResponse.json({ error: 'Calculated quantity is zero — check bagsUsed and remainingKg' }, { status: 422 });

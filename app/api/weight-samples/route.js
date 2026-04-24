@@ -102,8 +102,20 @@ export async function POST(request) {
     if (!ALLOWED_ROLES.includes(user.role)) return NextResponse.json({ error: 'Forbidden' },    { status: 403 });
 
     const body = await request.json();
-    const { flockId, penSectionId, sampleDate, sampleCount, meanWeightG,
-            minWeightG, maxWeightG, uniformityPct, notes } = body;
+    const { flockId, penSectionId, sampleDate, notes } = body;
+    let { sampleCount, meanWeightG, minWeightG, maxWeightG, uniformityPct, individualWeights } = body;
+
+    // If individual weights array provided, compute all stats server-side
+    if (Array.isArray(individualWeights) && individualWeights.length > 0) {
+      const ws = individualWeights.map(Number).filter(w => w > 0);
+      sampleCount    = ws.length;
+      meanWeightG    = parseFloat((ws.reduce((s, w) => s + w, 0) / ws.length).toFixed(1));
+      minWeightG     = Math.min(...ws);
+      maxWeightG     = Math.max(...ws);
+      const band     = meanWeightG * 0.1;
+      const inBand   = ws.filter(w => w >= meanWeightG - band && w <= meanWeightG + band).length;
+      uniformityPct  = parseFloat(((inBand / ws.length) * 100).toFixed(1));
+    }
 
     // Validation
     if (!flockId)                         return NextResponse.json({ error: 'flockId is required' },           { status: 400 });
@@ -146,8 +158,9 @@ export async function POST(request) {
           meanWeightG,
           minWeightG:    minWeightG    || null,
           maxWeightG:    maxWeightG    || null,
-          uniformityPct: uniformityPct || null,
-          recordedById:  user.sub,
+          uniformityPct:     uniformityPct || null,
+          recordedById:      user.sub,
+          ...(individualWeights?.length ? { individualWeights } : {}),
         },
       }),
       // Mirror to weight_records so dashboard/charts pick it up immediately
@@ -161,8 +174,9 @@ export async function POST(request) {
           avgWeightG:    meanWeightG,
           minWeightG:    minWeightG    || null,
           maxWeightG:    maxWeightG    || null,
-          uniformityPct: uniformityPct || null,
-          recordedById:  user.sub,
+          uniformityPct:    uniformityPct || null,
+          recordedById:     user.sub,
+          ...(individualWeights?.length ? { individualWeights } : {}),
         },
       }).catch(e => {
         // Ignore duplicate key errors — weight_records has no unique constraint

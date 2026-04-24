@@ -6,7 +6,8 @@
 //   INTERNAL_CONTROL → Pending Approvals
 //   STORE_MANAGER    → Ready to Issue
 //   FARM_MANAGER+    → All requisitions + oversight
-import { useState, useEffect, useCallback, createPortal } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { useAuth } from '@/components/layout/AuthProvider';
 import AppShell   from '@/components/layout/AppShell';
 
@@ -30,7 +31,7 @@ const devSev = pct => { const a = Math.abs(pct||0); return a<=10?'ok':a<=20?'war
 const fmt    = n  => parseFloat(n||0).toLocaleString('en-NG', { minimumFractionDigits:1, maximumFractionDigits:1 });
 const fmtDate= d  => new Date(d).toLocaleDateString('en-NG', { day:'numeric', month:'short', year:'numeric' });
 
-// Show quantity as "630 kg — 25 bags + 5 kg" using bag weight (default 25 kg)
+// Show quantity as bags — the store works in whole bags only.
 function fmtBags(kg, bagWt = 25) {
   const q   = parseFloat(kg || 0);
   const bw  = parseFloat(bagWt || 25);
@@ -91,44 +92,49 @@ function ActionModal({ req, action, onClose, onDone, apiFetch }) {
   // Per-section qty inputs for issue/acknowledge: { [penSectionId]: string }
   const [sectionQtys, setSectionQtys] = useState({});
 
+  // All qty-bearing actions work in BAGS — the API receives bags × bagWt as kg.
+  const BAG_ACTIONS = ['submit', 'approve', 'issue', 'acknowledge'];
+  const isBagAction = BAG_ACTIONS.includes(action);
+
   const META = {
-    submit:      { title:'📤 Submit Requisition',  btnLabel:'Submit to IC',          btnColor:'#d97706', needsQty:true,  qtyLabel:'Confirm quantity (kg) *', placeholder:'Enter quantity to request…' },
-    approve:     { title:'✅ Approve Requisition', btnLabel:'Approve',               btnColor:'#16a34a', needsQty:true,  qtyLabel:'Approved quantity (kg) *', placeholder:'Any notes for the store…' },
+    submit:      { title:'📤 Submit Requisition',  btnLabel:'Submit to IC',          btnColor:'#d97706', needsQty:true,  qtyLabel:'Quantity to request (bags) *', placeholder:'e.g. 5' },
+    approve:     { title:'✅ Approve Requisition', btnLabel:'Approve',               btnColor:'#16a34a', needsQty:true,  qtyLabel:'Approved quantity (bags) *',   placeholder:'e.g. 5' },
     reject:      { title:'↩️ Reject Requisition',  btnLabel:'Reject & Return to PM', btnColor:'#dc2626', needsQty:false, notesLabel:'Rejection reason *', placeholder:'Explain why this is being returned…' },
-    issue:       { title:'📦 Issue Feed',          btnLabel:'Issue Feed',            btnColor:'#6c63ff', needsQty:true,  qtyLabel:'Total issued (kg) *',     placeholder:'Any issuance notes…' },
-    acknowledge: { title:'✓ Acknowledge Receipt',  btnLabel:'Confirm Receipt',       btnColor:'#16a34a', needsQty:true,  qtyLabel:'Total received (kg) *',   placeholder:'Any notes on the received feed…' },
+    issue:       { title:'📦 Issue Feed',          btnLabel:'Issue Feed',            btnColor:'#6c63ff', needsQty:true,  qtyLabel:'Total to issue (bags) *',      placeholder:'e.g. 13' },
+    acknowledge: { title:'✓ Acknowledge Receipt',  btnLabel:'Confirm Receipt',       btnColor:'#16a34a', needsQty:true,  qtyLabel:'Total received (bags) *',      placeholder:'e.g. 13' },
     close:       { title:'🔒 Close Requisition',   btnLabel:'Close',                 btnColor:'#64748b', needsQty:false, notesLabel:'Close notes *', placeholder:'Summarise the outcome…' },
   };
   const m = META[action];
 
   // Pre-fill totals and per-section qtys
   useEffect(() => {
-    if (action === 'submit')      setQty(String(req.requestedQtyKg || req.calculatedQtyKg || ''));
-    if (action === 'approve')     setQty(String(req.requestedQtyKg || ''));
-    if (action === 'issue')       setQty(String(req.approvedQtyKy || req.approvedQtyKg || ''));
-    if (action === 'acknowledge') setQty(String(req.issuedQtyKg    || ''));
+    const toBags = (kg) => kg && bagWt ? String(Math.round(Number(kg) / bagWt)) : '';
+    if (action === 'submit')      setQty(toBags(req.requestedQtyKg || req.calculatedQtyKg));
+    if (action === 'approve')     setQty(toBags(req.requestedQtyKg));
+    if (action === 'issue')       setQty(toBags(req.approvedQtyKg));
+    if (action === 'acknowledge') setQty(toBags(req.issuedQtyKg));
 
     if (action === 'issue' && hasBreakdown) {
       const init = {};
-      breakdown.forEach(s => { init[s.penSectionId] = String(s.calculatedQtyKg || ''); });
+      breakdown.forEach(s => { init[s.penSectionId] = String(s.calculatedQtyKg && bagWt ? Math.round(Number(s.calculatedQtyKg) / bagWt) : ''); });
       setSectionQtys(init);
     }
     if (action === 'acknowledge' && hasBreakdown) {
       const init = {};
-      breakdown.forEach(s => { init[s.penSectionId] = String(s.issuedQtyKg || ''); });
+      breakdown.forEach(s => { init[s.penSectionId] = String(s.issuedQtyKg && bagWt ? Math.round(Number(s.issuedQtyKg) / bagWt) : ''); });
       setSectionQtys(init);
     }
   }, [action, req]);
 
   // Auto-sum section qtys into the total field
   const sumSections = () =>
-    Object.values(sectionQtys).reduce((s, v) => s + (parseFloat(v) || 0), 0);
+    Object.values(sectionQtys).reduce((s, v) => s + (parseInt(v) || 0), 0);
 
   const handleSectionQty = (sectionId, val) => {
     const updated = { ...sectionQtys, [sectionId]: val };
     setSectionQtys(updated);
-    const total = Object.values(updated).reduce((s, v) => s + (parseFloat(v) || 0), 0);
-    setQty(String(parseFloat(total.toFixed(2)) || ''));
+    const totalBags = Object.values(updated).reduce((s, v) => s + (parseInt(v) || 0), 0);
+    setQty(String(totalBags || ''));
   };
 
   const submit = async () => {
@@ -137,23 +143,25 @@ function ActionModal({ req, action, onClose, onDone, apiFetch }) {
     setSaving(true); setErr('');
     try {
       const body = { action };
-      if (action === 'submit')      { body.requestedQtyKg     = Number(qty); body.pmNotes = notes || null; }
-      if (action === 'approve')     { body.approvedQtyKg      = Number(qty); body.icNotes = notes || null; }
+      // All bag-based actions: qty holds bag count — multiply by bagWt for API
+      const toKg = (bags) => parseFloat((parseInt(bags) * bagWt).toFixed(2));
+      if (action === 'submit')      { body.requestedQtyKg     = toKg(qty); body.pmNotes = notes || null; }
+      if (action === 'approve')     { body.approvedQtyKg      = toKg(qty); body.icNotes = notes || null; }
       if (action === 'reject')      { body.rejectionReason    = notes; }
       if (action === 'issue') {
-        body.issuedQtyKg     = Number(qty);
+        body.issuedQtyKg     = toKg(qty);
         body.issuanceNotes   = notes || null;
         if (hasBreakdown && Object.keys(sectionQtys).length > 0) {
           body.sectionIssuance = Object.entries(sectionQtys)
-            .map(([penSectionId, v]) => ({ penSectionId, issuedQtyKg: parseFloat(v) || 0 }));
+            .map(([penSectionId, bags]) => ({ penSectionId, issuedQtyKg: toKg(bags) }));
         }
       }
       if (action === 'acknowledge') {
-        body.acknowledgedQtyKg      = Number(qty);
+        body.acknowledgedQtyKg      = toKg(qty);
         body.acknowledgementNotes   = notes || null;
         if (hasBreakdown && Object.keys(sectionQtys).length > 0) {
           body.sectionAcknowledgement = Object.entries(sectionQtys)
-            .map(([penSectionId, v]) => ({ penSectionId, acknowledgedQtyKg: parseFloat(v) || 0 }));
+            .map(([penSectionId, bags]) => ({ penSectionId, acknowledgedQtyKg: toKg(bags) }));
         }
       }
       if (action === 'close')       { body.closeNotes = notes; }
@@ -262,7 +270,7 @@ function ActionModal({ req, action, onClose, onDone, apiFetch }) {
                 <thead><tr style={{background:'#f1f5f9'}}>
                   <th style={{padding:'5px 8px',textAlign:'left',color:'var(--text-muted)'}}>Section</th>
                   <th style={{padding:'5px 8px',textAlign:'right',color:'var(--text-muted)',minWidth:60}}>{action==='issue'?'Approved':'Issued'}</th>
-                  <th style={{padding:'5px 8px',textAlign:'right',color:'var(--text-muted)',minWidth:100}}>{action==='issue'?'Issue (kg)':'Received (kg)'}</th>
+                  <th style={{padding:'5px 8px',textAlign:'right',color:'var(--text-muted)',minWidth:100}}>{action==='issue'?'Issue (bags)':'Received (bags)'}</th>
                 </tr></thead>
                 <tbody>{breakdown.map((s,i)=>(
                   <tr key={s.penSectionId||i} style={{borderTop:'1px solid var(--border-card)'}}>
@@ -275,7 +283,7 @@ function ActionModal({ req, action, onClose, onDone, apiFetch }) {
                         value={sectionQtys[s.penSectionId] || ''}
                         onChange={e => handleSectionQty(s.penSectionId, e.target.value)}
                         style={{width:'100%',padding:'5px 7px',borderRadius:6,border:'1px solid #e2e8f0',fontSize:12,textAlign:'right',boxSizing:'border-box'}}
-                        placeholder="0.0" />
+                        step={isBagAction?'1':'0.1'} placeholder={isBagAction?'0':'0.0'} />
                     </td>
                   </tr>
                 ))}</tbody>
@@ -292,12 +300,14 @@ function ActionModal({ req, action, onClose, onDone, apiFetch }) {
                   <span style={{fontWeight:400,color:'var(--text-muted)',marginLeft:6}}>(auto-summed from sections above)</span>
                 )}
               </label>
-              <input type="number" min="0" step="0.1"
+              <input type="number" min="0" step={isBagAction ? '1' : '0.1'}
                 value={qty} onChange={e=>{setQty(e.target.value);setErr('');}}
                 style={{width:'100%',padding:'9px 12px',borderRadius:8,border:'1px solid #e2e8f0',fontSize:13,fontFamily:'inherit',outline:'none',boxSizing:'border-box'}}
-                placeholder="e.g. 125.5" />
+                placeholder={isBagAction ? 'e.g. 5' : 'e.g. 125'} />
               {qty && Number(qty) > 0 && (
-                <div style={{fontSize:11,color:'var(--purple)',marginTop:4,fontWeight:600}}>= {fmtBags(qty, bagWt)}</div>
+                <div style={{fontSize:11,color:'var(--purple)',marginTop:4,fontWeight:600}}>
+                  {isBagAction ? `= ${(parseInt(qty)||0) * bagWt} kg` : `= ${fmtBags(qty, bagWt)}`}
+                </div>
               )}
             </div>
           )}
@@ -345,8 +355,10 @@ function ReqCard({ req, userRole, onAction }) {
                        && req.status === 'APPROVED';
   const canAcknowledge = ['PEN_MANAGER','FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN'].includes(userRole)
                        && ['ISSUED','ISSUED_PARTIAL'].includes(req.status);
+  // Close is only shown for exception/incomplete states — not for cleanly ACKNOWLEDGED requisitions.
+  // ACKNOWLEDGED = operationally complete; IC closure would be pure busywork on routine requisitions.
   const canClose       = ['INTERNAL_CONTROL','FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN'].includes(userRole)
-                       && ['ACKNOWLEDGED','DISCREPANCY','ISSUED','ISSUED_PARTIAL','REJECTED'].includes(req.status);
+                       && ['DISCREPANCY','ISSUED_PARTIAL','REJECTED'].includes(req.status);
 
   return (
     <div style={{background:'#fff',borderRadius:12,border:`1px solid ${sm.border}`,borderLeft:`4px solid ${sm.color}`,overflow:'hidden'}}>
@@ -368,11 +380,7 @@ function ReqCard({ req, userRole, onAction }) {
           <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>
             Calc: <strong>
               {req.totalBagsRequired != null
-                ? `${req.totalBagsRequired} bag${req.totalBagsRequired !== 1 ? 's' : ''}${
-                    req.totalRemainderKg && Number(req.totalRemainderKg) > 0
-                      ? ` + ${Number(req.totalRemainderKg).toFixed(1)} kg`
-                      : ''
-                  } (${fmt(req.calculatedQtyKg)} kg)`
+                ? `${req.totalBagsRequired} bag${req.totalBagsRequired !== 1 ? 's' : ''} (${fmt(req.calculatedQtyKg)} kg)`
                 : fmtBags(req.calculatedQtyKg, req.feedInventory?.bagWeightKg)
               }
             </strong>
@@ -539,6 +547,235 @@ function Empty({ icon, title, sub }) {
 }
 
 // ── Main page ─────────────────────────────────────────────────────────────────
+// ── Bootstrap Modal ───────────────────────────────────────────────────────────
+// Raised when a pen has never had a feed requisition before.
+// PM or FM specifies how many bags each section received on the first day.
+// Creates a SUBMITTED requisition so the store can issue and the rolling
+// stock formula has an anchor for all subsequent days.
+function BootstrapModal({ apiFetch, userRole, onClose, onDone }) {
+  const [pens,         setPens]         = useState([]);
+  const [inventory,    setInventory]    = useState([]);
+  const [loadingData,  setLoadingData]  = useState(true);
+
+  const [selectedPenId,   setSelectedPenId]   = useState('');
+  const [selectedInvId,   setSelectedInvId]   = useState('');
+  const [feedForDate,     setFeedForDate]      = useState(() => {
+    const d = new Date(); d.setDate(d.getDate() + 1);
+    return d.toISOString().split('T')[0];
+  });
+  const [sectionBags,     setSectionBags]      = useState({}); // { penSectionId: bags string }
+  const [pmNotes,         setPmNotes]          = useState('');
+  const [saving,          setSaving]           = useState(false);
+  const [err,             setErr]              = useState('');
+
+  // Load pens and feed inventory on mount
+  useEffect(() => {
+    setLoadingData(true);
+    Promise.all([
+      apiFetch('/api/farm-structure'),
+      apiFetch('/api/feed/inventory'),
+    ]).then(async ([penRes, invRes]) => {
+      if (penRes.ok)  { const d = await penRes.json();  setPens(d.pens || d.sections || []); }
+      if (invRes.ok)  { const d = await invRes.json();  setInventory(d.inventory || []); }
+    }).catch(() => {}).finally(() => setLoadingData(false));
+  }, [apiFetch]);
+
+  // Sections for the selected pen
+  const selectedPen      = pens.find(p => p.id === selectedPenId);
+  const sections         = selectedPen?.sections || [];
+  const selectedInvItem  = inventory.find(i => i.id === selectedInvId);
+  const bagWt            = parseFloat(selectedInvItem?.bagWeightKg || 25);
+
+  const totalBags        = Object.values(sectionBags).reduce((s, v) => s + (parseInt(v) || 0), 0);
+  const totalKg          = parseFloat((totalBags * bagWt).toFixed(1));
+
+  const handleBags = (sectionId, val) => {
+    setSectionBags(prev => ({ ...prev, [sectionId]: val }));
+    setErr('');
+  };
+
+  const submit = async () => {
+    if (!selectedPenId)  return setErr('Select a pen');
+    if (!selectedInvId)  return setErr('Select a feed type');
+    if (!feedForDate)    return setErr('Select the date feed is needed for');
+    if (sections.length === 0) return setErr('No active sections found for this pen');
+
+    // Validate all sections have a flock and bags > 0
+    const entries = sections.map(s => ({
+      penSectionId: s.id,
+      flockId:      s.activeFlock?.id || s.flock?.id || s.flocks?.[0]?.id,
+      bags:         parseInt(sectionBags[s.id] || '0') || 0,
+    }));
+
+    const missing = entries.filter(e => !e.flockId);
+    if (missing.length > 0) return setErr('Some sections have no active flock — cannot bootstrap');
+    const zeroBags = entries.filter(e => e.bags <= 0);
+    if (zeroBags.length === entries.length) return setErr('Enter at least 1 bag for at least one section');
+    const activeSections = entries.filter(e => e.bags > 0 && e.flockId);
+    if (activeSections.length === 0) return setErr('Enter bags for at least one section');
+
+    setSaving(true); setErr('');
+    try {
+      const res = await apiFetch('/api/feed/requisitions', {
+        method: 'POST',
+        body:   JSON.stringify({
+          bootstrap:       true,
+          penId:           selectedPenId,
+          feedInventoryId: selectedInvId,
+          feedForDate,
+          sectionBags:     activeSections,
+          pmNotes:         pmNotes.trim() || null,
+        }),
+      });
+      const d = await res.json();
+      if (!res.ok) { setErr(d.error || `Failed (${res.status})`); return; }
+      onDone(d.requisition);
+    } catch { setErr('Network error — please try again'); }
+    finally   { setSaving(false); }
+  };
+
+  return createPortal(
+    <div style={{position:'fixed',inset:0,zIndex:1200,background:'rgba(0,0,0,0.45)',display:'flex',alignItems:'center',justifyContent:'center',padding:16}}
+      onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={{background:'#fff',borderRadius:14,width:'100%',maxWidth:520,boxShadow:'0 12px 48px rgba(0,0,0,0.2)',maxHeight:'90vh',overflowY:'auto'}}>
+
+        {/* Header */}
+        <div style={{padding:'16px 20px',borderBottom:'1px solid #f1f5f9',display:'flex',alignItems:'center',justifyContent:'space-between',position:'sticky',top:0,background:'#fff',zIndex:1}}>
+          <div>
+            <div style={{fontWeight:800,fontSize:15,color:'#1e293b',fontFamily:"'Poppins',sans-serif"}}>🌾 First Feed Issuance</div>
+            <div style={{fontSize:11,color:'#64748b',marginTop:2}}>Set the opening bag count for each section — anchors the rolling stock formula</div>
+          </div>
+          <button onClick={onClose} style={{background:'none',border:'none',fontSize:22,cursor:'pointer',color:'#94a3b8'}}>×</button>
+        </div>
+
+        <div style={{padding:'20px'}}>
+          {loadingData ? (
+            <div style={{textAlign:'center',padding:'32px 0',color:'#64748b',fontSize:13}}>Loading pens and inventory…</div>
+          ) : (
+            <>
+              {/* Pen selector */}
+              <div style={{marginBottom:14}}>
+                <label style={{display:'block',fontSize:11,fontWeight:700,color:'#475569',marginBottom:5}}>Pen *</label>
+                <select value={selectedPenId} onChange={e => { setSelectedPenId(e.target.value); setSectionBags({}); }}
+                  style={{width:'100%',padding:'9px 12px',borderRadius:8,border:'1px solid #e2e8f0',fontSize:13,fontFamily:'inherit',outline:'none'}}>
+                  <option value=''>— Select pen —</option>
+                  {pens.filter(p => (p.sections||[]).length > 0).map(p => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Feed inventory selector */}
+              <div style={{marginBottom:14}}>
+                <label style={{display:'block',fontSize:11,fontWeight:700,color:'#475569',marginBottom:5}}>Feed Type *</label>
+                <select value={selectedInvId} onChange={e => setSelectedInvId(e.target.value)}
+                  style={{width:'100%',padding:'9px 12px',borderRadius:8,border:'1px solid #e2e8f0',fontSize:13,fontFamily:'inherit',outline:'none'}}>
+                  <option value=''>— Select feed inventory item —</option>
+                  {inventory.map(i => (
+                    <option key={i.id} value={i.id}>{i.feedType} — {parseFloat(i.currentStockKg).toFixed(0)} kg in stock · {i.bagWeightKg} kg/bag</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Feed for date */}
+              <div style={{marginBottom:14}}>
+                <label style={{display:'block',fontSize:11,fontWeight:700,color:'#475569',marginBottom:5}}>Feed Needed For (date) *</label>
+                <input type='date' value={feedForDate} onChange={e => setFeedForDate(e.target.value)}
+                  style={{width:'100%',padding:'9px 12px',borderRadius:8,border:'1px solid #e2e8f0',fontSize:13,fontFamily:'inherit',outline:'none',boxSizing:'border-box'}} />
+                <div style={{fontSize:10,color:'#94a3b8',marginTop:3}}>Usually tomorrow — the day the workers will use this feed</div>
+              </div>
+
+              {/* Per-section bag inputs */}
+              {selectedPenId && sections.length > 0 && (
+                <div style={{marginBottom:14}}>
+                  <label style={{display:'block',fontSize:11,fontWeight:700,color:'#475569',marginBottom:8}}>
+                    Bags per Section * <span style={{fontWeight:400,color:'#94a3b8'}}>(how many bags the store will give each section on this first day)</span>
+                  </label>
+                  <div style={{border:'1px solid #e2e8f0',borderRadius:8,overflow:'hidden'}}>
+                    <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                      <thead>
+                        <tr style={{background:'#f8fafc'}}>
+                          {['Section','Flock','Birds','Bags'].map(h => (
+                            <th key={h} style={{padding:'8px 10px',textAlign:'left',fontSize:10,fontWeight:700,color:'#64748b',textTransform:'uppercase',letterSpacing:'.04em'}}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {sections.map((s, i) => {
+                          const flock = s.activeFlock || s.flock || s.flocks?.[0];
+                          const bags  = sectionBags[s.id] || '';
+                          const kgEq  = bags && parseInt(bags) > 0 ? `= ${(parseInt(bags) * bagWt).toFixed(0)} kg` : '';
+                          return (
+                            <tr key={s.id} style={{borderTop: i > 0 ? '1px solid #f1f5f9' : 'none'}}>
+                              <td style={{padding:'8px 10px',fontWeight:600}}>{s.name}</td>
+                              <td style={{padding:'8px 10px',color:'#64748b',fontSize:11}}>{flock?.batchCode || '—'}</td>
+                              <td style={{padding:'8px 10px',color:'#64748b'}}>{(flock?.currentCount || s.currentBirds || 0).toLocaleString()}</td>
+                              <td style={{padding:'8px 10px'}}>
+                                <div style={{display:'flex',alignItems:'center',gap:6}}>
+                                  <input type='number' min='0' step='1' value={bags}
+                                    onChange={e => handleBags(s.id, e.target.value)}
+                                    placeholder='0'
+                                    style={{width:64,padding:'6px 8px',borderRadius:6,border:'1px solid #e2e8f0',fontSize:12,textAlign:'right'}} />
+                                  {kgEq && <span style={{fontSize:10,color:'#6c63ff',fontWeight:600,whiteSpace:'nowrap'}}>{kgEq}</span>}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Total summary */}
+                  {totalBags > 0 && (
+                    <div style={{marginTop:8,padding:'8px 12px',background:'#f5f3ff',borderRadius:7,border:'1px solid #ddd6fe',fontSize:12,color:'#6c63ff',fontWeight:600}}>
+                      Total: {totalBags} bag{totalBags !== 1 ? 's' : ''} = {totalKg} kg across {Object.values(sectionBags).filter(v => parseInt(v) > 0).length} section{Object.values(sectionBags).filter(v => parseInt(v) > 0).length !== 1 ? 's' : ''}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {selectedPenId && sections.length === 0 && (
+                <div style={{padding:'12px',background:'#fff7ed',border:'1px solid #fed7aa',borderRadius:8,fontSize:12,color:'#92400e',marginBottom:14}}>
+                  No active sections with flocks found in this pen.
+                </div>
+              )}
+
+              {/* Notes */}
+              <div style={{marginBottom:14}}>
+                <label style={{display:'block',fontSize:11,fontWeight:700,color:'#475569',marginBottom:5}}>Notes (optional)</label>
+                <textarea rows={2} value={pmNotes} onChange={e => setPmNotes(e.target.value)}
+                  placeholder='e.g. Opening stock after restocking on 18 Apr…'
+                  style={{width:'100%',padding:'9px 12px',borderRadius:8,border:'1px solid #e2e8f0',fontSize:12,fontFamily:'inherit',outline:'none',resize:'vertical',boxSizing:'border-box'}} />
+              </div>
+
+              {/* Info callout */}
+              <div style={{padding:'10px 14px',background:'#f0fdf4',border:'1px solid #bbf7d0',borderRadius:8,fontSize:11,color:'#15803d',marginBottom:14}}>
+                <strong>How this works:</strong> This requisition goes straight to IC for approval. Once issued and acknowledged by your workers, the system uses the bag counts to automatically calculate all future daily requisitions — no manual input needed after today.
+              </div>
+
+              {err && <div style={{padding:'9px 12px',background:'#fef2f2',border:'1px solid #fecaca',borderRadius:8,fontSize:12,color:'#dc2626',marginBottom:12}}>⚠ {err}</div>}
+
+              {/* Footer buttons */}
+              <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
+                <button onClick={onClose} disabled={saving}
+                  style={{padding:'9px 18px',borderRadius:8,border:'1px solid #e2e8f0',background:'#fff',color:'#64748b',fontSize:13,fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>
+                  Cancel
+                </button>
+                <button onClick={submit} disabled={saving || totalBags === 0}
+                  style={{padding:'9px 18px',borderRadius:8,border:'none',background: saving || totalBags === 0 ? '#94a3b8' : '#6c63ff',color:'#fff',fontSize:13,fontWeight:700,cursor: saving || totalBags === 0 ? 'not-allowed' : 'pointer',fontFamily:'inherit'}}>
+                  {saving ? 'Submitting…' : '📤 Submit to IC'}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 export default function FeedRequisitionsPage() {
   const { user, apiFetch } = useAuth();
   const role = user?.role;
@@ -554,6 +791,7 @@ export default function FeedRequisitionsPage() {
   const [summary,    setSummary]    = useState({});
   const [loading,    setLoading]    = useState(true);
   const [actionModal,setActionModal]= useState(null); // { req, action }
+  const [bootstrapModal, setBootstrapModal] = useState(false);
   const [toast,      setToast]      = useState(null);
 
   const showToast = (msg, type='success') => {
@@ -639,6 +877,14 @@ export default function FeedRequisitionsPage() {
           <h1 style={{fontFamily:"'Poppins',sans-serif",fontSize:22,fontWeight:800,margin:0,color:'var(--text-primary)'}}>
             Feed Requisitions
           </h1>
+          {/* Bootstrap button — PM and FM only, to anchor the rolling stock formula on day 0 */}
+          {['PEN_MANAGER','FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN'].includes(role) && (
+            <button
+              onClick={() => setBootstrapModal(true)}
+              style={{marginLeft:'auto',padding:'8px 16px',borderRadius:8,border:'1.5px solid #6c63ff',background:'#f5f3ff',color:'#6c63ff',fontSize:12,fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}}>
+              ＋ First Issuance
+            </button>
+          )}
         </div>
         <p style={{fontSize:13,color:'var(--text-muted)',margin:0}}>
           Manage feed requests from pen sections through IC approval to store issuance.
@@ -716,6 +962,18 @@ export default function FeedRequisitionsPage() {
           apiFetch={apiFetch}
           onClose={() => setActionModal(null)}
           onDone={handleDone}
+        />
+      )}
+      {bootstrapModal && (
+        <BootstrapModal
+          apiFetch={apiFetch}
+          userRole={role}
+          onClose={() => setBootstrapModal(false)}
+          onDone={(req) => {
+            setBootstrapModal(false);
+            showToast(`Bootstrap requisition ${req.requisitionNumber} submitted ✓`);
+            load();
+          }}
         />
       )}
     </div>

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>PoultryFarm Pro · Implementation Tracker Rev 1.7</title>
+<title>PoultryFarm Pro · Implementation Tracker Rev 2.2</title>
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
   body{background:#f0f4f8;font-family:'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:#0f172a;padding:0}
@@ -113,7 +113,7 @@
 <div class="banner">
   <div class="banner-top">
     <div>
-      <h1>🐔 PoultryFarm Pro <span>Implementation Tracker · Workplan Rev 1.6 · April 2026</span></h1>
+      <h1>🐔 PoultryFarm Pro <span>Implementation Tracker · Workplan Rev 2.2 · April 2026</span></h1>
       <div class="banner-meta">Multi-tenant poultry ERP · Next.js 16 · Prisma 5.22 · PostgreSQL · JWT · Recharts</div>
     </div>
     <div class="overall-pill">
@@ -137,6 +137,7 @@
         <li>Phase 8C <span class="tag tag-done">DONE</span> — Brooding / Rearing / Production lifecycle + dashboard/performance bug fixes (Rev 1.6): section-level lay rate, yesterday mode, period-aware rates, force-dynamic caching fix</li>
         <li>Phase 8D <span class="tag tag-done">DONE</span> — Layer Production Module: /production/layers, HH rate, feed cost/crate, persistence curve, ISA Brown overlay, per-flock lines, peak week, cull trigger, mortality chart</li>
         <li>Phase 8G <span class="tag tag-active">PARTIAL</span> — Code-based templates done; task_templates DB model + admin UI pending</li>
+        <li>Phase 8H <span class="tag tag-done">DONE</span> — Feed Switch workflow (PM→FM→SM→PM): feed_change_requests, atomic inventory swap, carry-over chain resets on feed type change</li>
         <li>Phase 10-NEW-A <span class="tag tag-active">ACTIVE</span> — Egg Store Receipt Acknowledgement: full dispute/recount/force-accept flow, egg_inventory_balance, /egg-store page deployed; Flocks tab layingRate fix applied</li>
         <li>Phase 8-Supplement <span class="tag tag-done">DONE</span> — Flock Lifecycle: /cull, /deplete, /lifecycle-summary + /api/broiler-harvests deployed; store-mediated flow (TRANSFERRED_TO_STORE); full UI in app/farm/page.js</li>
         <li>Phase 8-Supp-Arch <span class="tag tag-done">DONE</span> — AppShell 5-group navigation; BusinessUnit architecture documented; 6-product store inventory design</li>
@@ -198,7 +199,40 @@
 
 <script>
 // ─────────────────────────────────────────────────────────────────────────────
-// WORKPLAN DATA — Rev 1.9 (April 2026)
+// WORKPLAN DATA — Rev 2.2 (April 2026)
+// Rev 2.2 changes (Worker Feed & Egg Session Fixes):
+//   • WorkerFeedModal: renamed bagsUsed→emptyBags (primary tracking unit for store returns)
+//   • WorkerFeedModal: empty-bags formula:
+//     - Branch A (emptyBags>0): prev + (fullNewBagsEmptied × bagWt) + (bagWt - remaining)
+//     - Branch B (emptyBags=0): prev - remaining (carry-over only session)
+//     - fullNewBagsEmptied = emptyBags - 1 when prevRemainingKg > 0 (carry-over bag counts as 1 empty)
+//   • LogEggModal: empty bags banner — fetches today's FeedConsumption, partitions by 07:30 cutoff
+//     - Batch 1 (07:30 store run): sums emptyBags from sessions before 07:30
+//     - Batch 2 (15:30 store run): sums emptyBags from sessions 07:30 onwards
+//     - Prominent amber banner: "🛍️ Return N empty bags to the store"
+//   • LogWeightModal: replaced old avg/min/max manual-entry with bucket-entry (per-bird weights)
+//     - Enter key per bird, live avg/min/max/uniformity, layer thresholds (1700-2200g colour bands)
+//     - Sends individualWeights[] to /api/weight-samples
+//   • worker/page.js: WEIGHT_RECORDING task now routes to LogWeightModal (was marking complete silently)
+//   • worker/page.js: task linked on weight modal open → completeLinkedTask on save
+//   • daily-summary/route.js: PEN_WORKER added to SUBMIT_ROLES — workers can submit own section summaries
+//   • DailySummaryCard.js: submitError state — errors surface as red banner (was silent catch)
+//   • DailySummaryCard.js: SUBMITTED/FLAGGED status messages added (banner shows instead of dead button)
+//   • Storage key bumped v19→v20
+// Rev 2.1 changes (Phase 8H Feed Switch + Worker Fixes):
+//   • Phase 8H — Feed Switch workflow: PM→FM→SM→PM full lifecycle
+//   • getTimeLock moved to module level (ReferenceError in SectionTaskCard fix)
+//   • feed-changes middleware ordering fix
+//   • SQL migration: tenantId quoting fix (f."tenantId")
+//   • Feed requisition Close button scoped to DISCREPANCY/ISSUED_PARTIAL/REJECTED only
+// Rev 2.0 changes (Operational Corrections Sprint):
+//   • Feed requisition: projection formula, bags-primary UI, IC access, Prisma enrichment
+//   • Verification: IC in VERIFIER_ROLES, reject path fix, FeedConsumption rejectSourceRecord
+//   • Layer weight tracking: farm-structure latestWeightG for LAYER, bucket-entry modal
+//   • Task system: duplicate race condition, stripEmoji, getTimeLock
+//   • Rearing advance: COI bypass removed, same-day task generation
+//   • WorkerFeedModal: prevRemainingKg carry-over (no date filter), first-issuance fallback
+//   • Storage key bumped v17→v20 (across all three rev increments)
 // Rev 1.9 changes vs Rev 1.7 (Worker Operations Sprint):
 //   • Phase 8G (Worker Task System) — major operational overhaul shipped:
 //     - Layer PRODUCTION daily tasks: 12-task shift schedule matching operational spreadsheet
@@ -419,6 +453,24 @@ const phases = [
       { t:"Feed requisition: pen-level grouping, sectionBreakdown JSON, bags+kg display", s:"done"},
       { t:"Feed requisitions page (/feed-requisitions) — role-aware tabs for PM/IC/Store", s:"done"}
     ]},
+    { name:"Feed Requisition Corrections (Rev 2.0–2.1)", tasks:[
+      { t:"Projection formula: 7-day avg + today ±15% override, ceil to whole bags, 5% buffer, carry-over subtracted", s:"done"},
+      { t:"All action modals bags-primary (submit/approve/issue/acknowledge)", s:"done"},
+      { t:"Bootstrap first issuance: BootstrapModal + POST bootstrap path", s:"done"},
+      { t:"Middleware: /feed-requisitions and /feed-changes before /feed (startsWith ordering fix)", s:"done"},
+      { t:"Stale Prisma client: enrichRequisition() for list and [id] routes", s:"done"},
+      { t:"IC access: INTERNAL_CONTROL added to VERIFIER_ROLES in verification routes", s:"done"},
+      { t:"Close button scoped to DISCREPANCY/ISSUED_PARTIAL/REJECTED only (not ACKNOWLEDGED)", s:"done"}
+    ]},
+    { name:"WorkerFeedModal Carry-Over Chain (Rev 2.0–2.2)", tasks:[
+      { t:"emptyBags field replaces bagsUsed as primary UI concept (empty bags returned to store)", s:"done"},
+      { t:"Two-branch formula: Branch A (emptyBags>0) uses prev+fullNew×bw+(bw-remaining); Branch B uses prev-remaining", s:"done"},
+      { t:"fullNewBagsEmptied = emptyBags-1 when carry-over exists (carry-over bag contributes prevRemainingKg not full bagWt)", s:"done"},
+      { t:"prevRemainingKg fetched from last FeedConsumption (no date filter — crosses day boundary correctly)", s:"done"},
+      { t:"First-issuance fallback: acknowledged requisition issuedQtyKg used as opening stock when no prior consumption", s:"done"},
+      { t:"Feed type scoping: lookup filtered by feedInventoryId — feed switch resets chain automatically", s:"done"},
+      { t:"LogEggModal empty bags banner: 07:30 cutoff partitions Batch 1 vs Batch 2 empties for each store trip", s:"done"}
+    ]},
     { name:"Navigation & Profile", tasks:[
       { t:"AppShell nav: Daily Summaries + Feed Requisitions wired, PEN_MANAGER removed from My Tasks", s:"done"},
       { t:"PM pending verifications panel — feed consumption visibility for PM", s:"done"},
@@ -478,6 +530,17 @@ const phases = [
       { t:"COI guard — excludes PM self-approved records (Advance to Production) from same-day block in both conflictOfInterest.js and verification/route.js", s:"done"},
       { t:"feedBagWeightKg added to tenant settings (default 25kg), used for bags display across performance page", s:"done"},
       { t:"settings route default includes feedBagWeightKg — configurable per farm", s:"done"}
+    ]},
+    { name:"Layer Weight Tracking (Rev 2.0)", tasks:[
+      { t:"farm-structure route: latestWeightG + uniformityPct for LAYER sections (was broiler-only)", s:"done"},
+      { t:"Bucket-entry weight modal: per-bird entry, live avg/min/max/uniformity, layer thresholds", s:"done"},
+      { t:"Layer Analytics Flocks tab: Avg Weight column with colour coding", s:"done"},
+      { t:"SQL migration: individualWeights JSONB on weight_records and weight_samples", s:"done"}
+    ]},
+    { name:"Rearing Advance to Production (Rev 2.0)", tasks:[
+      { t:"firstEggCollection removed from advance route — COI bypass eliminated", s:"done"},
+      { t:"Same-day task generation on advance: rearing tasks cancelled, 12 production tasks created immediately", s:"done"},
+      { t:"Worker notified to log first egg through normal task flow", s:"done"}
     ]},
     { name:"Dashboard & Performance Bug Fixes (Rev 1.6 Session)", tasks:[
       { t:"export const dynamic = 'force-dynamic' added to /api/dashboard/route.js — was returning cached 0-egg response for all roles", s:"done"},
@@ -629,6 +692,21 @@ const phases = [
       { t:"Dashboard page WorkerDashboard: 5 KPI cards for Layer PRODUCTION (Live Birds → Feed Used Today → Eggs Today → Mortality → Tasks)", s:"done"},
       { t:"Dashboard page WorkerDashboard: grid dynamic repeat(workerKpis.length, 1fr); todayFeedKg summed from section metrics", s:"done"}
     ]},
+    { name:"Worker Corrections (Rev 2.0–2.2)", tasks:[
+      { t:"getTimeLock moved to module level — was inside WorkerPage, unavailable to SectionTaskCard", s:"done"},
+      { t:"WEIGHT_RECORDING task routes to LogWeightModal (was silently marking complete)", s:"done"},
+      { t:"LogWeightModal: replaced avg/min/max manual entry with bucket-entry (per-bird weights, live stats, layer thresholds)", s:"done"},
+      { t:"LogEggModal: empty bags banner — fetches FeedConsumption, partitions by 07:30 cutoff for Batch 1/2 store runs", s:"done"},
+      { t:"WorkerFeedModal: renamed bagsUsed→emptyBags; two-branch formula (emptyBags>0 vs carry-over only)", s:"done"},
+      { t:"WorkerFeedModal: prevRemainingKg carry-over fetched from last session (no date filter — crosses day boundaries)", s:"done"},
+      { t:"WorkerFeedModal: first-issuance fallback — uses acknowledgedQtyKg from requisition when no prior consumption", s:"done"},
+      { t:"ObservationModal: Flag an Issue button made full-width amber (was hidden accordion)", s:"done"},
+      { t:"Time-lock: FEEDING/EGG_COLLECTION tasks greyed >2h early, soft warning 30-120min early", s:"done"},
+      { t:"Duplicate task race condition: GET-before-POST + server-side early-exit guard", s:"done"},
+      { t:"stripEmoji() applied to all task.title display sites", s:"done"},
+      { t:"DailySummaryCard: PEN_WORKER added to SUBMIT_ROLES; submitError surfaced (was silent 403)", s:"done"},
+      { t:"DailySummaryCard: SUBMITTED/FLAGGED status banners shown when summary already submitted", s:"done"}
+    ]},
     { name:"Remaining — DB-Backed Template System", tasks:[
       { t:"SQL migration: task_templates table — id, tenantId, penSectionId (nullable), operationType, taskType, title, scheduledTime, dataEntryType, isDefault, isActive, createdAt, updatedAt", s:"planned"},
       { t:"SQL migration: daily_tasks table — id, tenantId, penSectionId, assignedUserId, templateId, taskType, title, scheduledTime, dueDate, status, completedAt, completedBy, notes, dataPayload (Json), createdAt, updatedAt", s:"planned"},
@@ -666,13 +744,31 @@ const phases = [
     ]}
   ]},
 
-  { id:"p8h", name:"Phase 8H · Feed Management Refactor", phaseStatus:"planned", groups:[
-    { name:"Features", tasks:[
-      { t:"Phase-tagged feed types: LAYER_STARTER, LAYER_GROWER, LAYER_LAYER, BROILER_STARTER, BROILER_FINISHER, BROODING_STARTER", s:"planned"},
-      { t:"withdrawalDays column on FeedInventory (SQL migration)", s:"planned"},
-      { t:"Feed inventory auto-filtered by active operation mode", s:"planned"},
-      { t:"Consumption logging pre-filled from task context — feed type from requisition, session from task title (shipped in Rev 1.9 Worker Sprint)", s:"done"},
-      { t:"Withdrawal period tracking for BROILER_FINISHER — highlight red if today >= stop-use date", s:"planned"}
+  { id:"p8h", name:"Phase 8H · Feed Switch (Feed Change Request) Workflow", phaseStatus:"done", groups:[
+    { name:"DB & Schema", tasks:[
+      { t:"FeedPhase enum (STARTER/GROWER/LAYER/BROILER_STARTER/BROILER_FINISHER) on feed_inventory", s:"done"},
+      { t:"FeedChangeRequestStatus + FeedChangeReason enums", s:"done"},
+      { t:"feed_change_requests table — full lifecycle, FK constraints, indexes", s:"done"},
+      { t:"isReturn + tenantId + returnReason on store_receipts", s:"done"}
+    ]},
+    { name:"API Routes", tasks:[
+      { t:"GET/POST /api/feed/changes — list with role scoping, duplicate-active guard", s:"done"},
+      { t:"PATCH /api/feed/changes/[id] — 5 actions: submit/approve/reject/execute/acknowledge+cancel", s:"done"},
+      { t:"execute: atomic $transaction — credit old inventory, debit new, StoreReceipt (isReturn), StoreIssuance", s:"done"}
+    ]},
+    { name:"UI — app/feed-changes/page.js", tasks:[
+      { t:"Role-aware page: PM create/submit, FM approve/reject, SM execute, PM acknowledge", s:"done"},
+      { t:"ChangeCard with status colour-bar, timeline expansion, all 5 action modals", s:"done"},
+      { t:"AppShell nav: 'Feed Switch' (ClipboardCheck) under Operations; middleware /feed-changes added", s:"done"}
+    ]},
+    { name:"Carry-over Chain Integration", tasks:[
+      { t:"prevRemainingKg scoped by feedInventoryId — feed type change resets chain automatically", s:"done"},
+      { t:"First-issuance fallback: acknowledgedQtyKg from new feed req used as opening stock", s:"done"}
+    ]},
+    { name:"Still Planned (deferred from original 8H scope)", tasks:[
+      { t:"withdrawalDays on FeedInventory + BROILER_FINISHER withdrawal tracking", s:"planned"},
+      { t:"Feed inventory auto-filtered by operation mode", s:"planned"},
+      { t:"Feed phase auto-suggestion based on bird age/stage", s:"planned"}
     ]}
   ]},
 

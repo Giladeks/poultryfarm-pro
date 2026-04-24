@@ -34,7 +34,7 @@ import { verifyToken }  from '@/lib/middleware/auth';
 // ─────────────────────────────────────────────────────────────────────────────
 // CONSTANTS
 // ─────────────────────────────────────────────────────────────────────────────
-const ALLOWED_ROLES  = ['FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
+const ALLOWED_ROLES  = ['FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN'];
 const MAX_DAYS       = 365;
 const DEFAULT_DAYS   = 30;
 const EGGS_PER_CRATE = 30;
@@ -147,14 +147,15 @@ export async function GET(request) {
           collectionDate: { gte: from },
         },
         select: {
-          flockId:        true,
-          penSectionId:   true,
-          collectionDate: true,
-          totalEggs:      true,
-          gradeACount:    true,
-          gradeBCount:    true,
-          crackedCount:   true,
-          cratesCollected:true,
+          flockId:           true,
+          penSectionId:      true,
+          collectionDate:    true,
+          collectionSession: true,
+          totalEggs:         true,
+          gradeACount:       true,
+          gradeBCount:       true,
+          crackedCount:      true,
+          cratesCollected:   true,
         },
         orderBy: { collectionDate: 'asc' },
       }),
@@ -223,6 +224,36 @@ export async function GET(request) {
       eggByDate[dk].gradeBCount    += r.gradeBCount    || 0;
       eggByDate[dk].cratesCollected+= r.cratesCollected|| 0;
     });
+
+    // ── 5b. Aggregate egg data by DATE + SESSION (for Egg Sessions tab) ────────
+    // Key: YYYY-MM-DD → { b1Eggs, b2Eggs, b1Birds, b2Birds }
+    // lay rate per session = session eggs / totalBirds × 100
+    // (totalBirds is shared across sessions — same flock on same day)
+    const eggByDateSession = {};
+    eggRows.forEach(r => {
+      const dk  = toDateKey(r.collectionDate);
+      const ses = Number(r.collectionSession) === 2 ? 2 : 1;
+      if (!eggByDateSession[dk]) eggByDateSession[dk] = { b1Eggs: 0, b2Eggs: 0 };
+      if (ses === 1) eggByDateSession[dk].b1Eggs += r.totalEggs || 0;
+      else           eggByDateSession[dk].b2Eggs += r.totalEggs || 0;
+    });
+
+    // Build flat sessionData array sorted by date ascending, bounded by `from`
+    const sessionData = Object.entries(eggByDateSession)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, d]) => {
+        const b1Rate = totalBirds > 0 && d.b1Eggs > 0
+          ? parseFloat((d.b1Eggs / totalBirds * 100).toFixed(2)) : null;
+        const b2Rate = totalBirds > 0 && d.b2Eggs > 0
+          ? parseFloat((d.b2Eggs / totalBirds * 100).toFixed(2)) : null;
+        return {
+          date,
+          batch1Eggs: d.b1Eggs || 0,
+          batch2Eggs: d.b2Eggs || 0,
+          batch1Rate: b1Rate,
+          batch2Rate: b2Rate,
+        };
+      });
 
     // ── 6. Aggregate feed data by DATE with cost ──────────────────────────────
     const feedByDate = {};
@@ -669,6 +700,7 @@ export async function GET(request) {
       mortData,
       cumulData,
       mortSummary,
+      sessionData,
       flocks: flockRows,
       // Meta — useful for debug / client logging
       _meta: {
@@ -712,6 +744,7 @@ function buildEmptyResponse() {
     mortData:            [],
     cumulData:           [],
     mortSummary:         { cumulMortPct: null, weekDeaths: 0, weekMortRate: null },
+    sessionData:         [],
     flocks:              [],
     _meta:               { flockCount: 0 },
   };

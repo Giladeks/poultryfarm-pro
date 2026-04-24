@@ -145,6 +145,10 @@ const NAV_ITEMS = [
     roles: ['PEN_MANAGER','STORE_MANAGER','INTERNAL_CONTROL','FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN'],
   },
   {
+    href: '/feed-changes', icon: 'ClipboardCheck', label: 'Feed Switch', section: 'shared', group: 'operations',
+    roles: ['PEN_MANAGER','STORE_MANAGER','INTERNAL_CONTROL','FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN'],
+  },
+  {
     href: '/egg-store', icon: 'Package', label: 'Egg Store', section: 'shared', group: 'operations',
     roles: ['STORE_MANAGER','STORE_CLERK','INTERNAL_CONTROL','FARM_MANAGER','FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN'],
     opModes: ['LAYER_ONLY', 'BOTH'],
