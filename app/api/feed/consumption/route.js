@@ -564,7 +564,7 @@ async function upsertDraftRequisition({
     },
     select: {
       id: true, currentCount: true, batchCode: true,
-      penSection: { select: { id: true, name: true } },
+      penSection: { select: { id: true, name: true, pen: { select: { name: true } } } },
     },
   });
 
@@ -612,6 +612,7 @@ async function upsertDraftRequisition({
     return {
       penSectionId:           f.penSection.id,
       sectionName:            f.penSection.name,
+      penName:                f.penSection.pen?.name ?? null,
       flockId:                f.id,
       batchCode:              f.batchCode,
       birdCount:              f.currentCount,

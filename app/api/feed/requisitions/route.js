@@ -236,12 +236,13 @@ export async function POST(request) {
       const sectionBreakdown = await Promise.all(data.sectionBags.map(async (s) => {
         const flock = await prisma.flock.findFirst({
           where:  { id: s.flockId, penSection: { pen: { farm: { tenantId: user.tenantId } } } },
-          select: { currentCount: true, batchCode: true, penSection: { select: { name: true } } },
+          select: { currentCount: true, batchCode: true, penSection: { select: { name: true, pen: { select: { name: true } } } } },
         });
         const issuedQtyKg = parseFloat((s.bags * bw).toFixed(2));
         return {
           penSectionId:           s.penSectionId,
           sectionName:            flock?.penSection?.name ?? s.penSectionId,
+          penName:                flock?.penSection?.pen?.name ?? null,
           flockId:                s.flockId,
           batchCode:              flock?.batchCode ?? '',
           birdCount:              flock?.currentCount ?? 0,

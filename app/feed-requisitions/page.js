@@ -368,14 +368,30 @@ function ReqCard({ req, userRole, onAction }) {
         <div style={{flex:1,minWidth:0}}>
           <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:3,flexWrap:'wrap'}}>
             <span style={{fontFamily:"'Poppins',sans-serif",fontSize:13,fontWeight:700,color:'var(--text-primary)'}}>{req.requisitionNumber}</span>
+            {/* Pen name tag — inline between req number and status */}
+            {(() => {
+              const penName = req.pen?.name || req.penSection?.pen?.name
+                || (req.sectionBreakdown?.length > 0
+                    ? [...new Set(req.sectionBreakdown.map(s => s.penName).filter(Boolean))].join(', ')
+                    : null);
+              return penName ? (
+                <span style={{
+                  padding:'2px 8px', borderRadius:6,
+                  background:'#f1f5f9', border:'1px solid #e2e8f0',
+                  fontSize:11, fontWeight:700, color:'var(--text-secondary)',
+                  letterSpacing:'0.01em',
+                }}>
+                  {penName}
+                </span>
+              ) : null;
+            })()}
             <StatusBadge status={req.status} />
             {req.deviationPct != null && Math.abs(req.deviationPct) > 5 && <DevChip pct={req.deviationPct} />}
           </div>
           <div style={{fontSize:12,color:'var(--text-secondary)'}}>
-            {req.pen?.name || req.penSection?.pen?.name}
-            {' · '}{req.feedInventory?.feedType}
+            {req.feedInventory?.feedType}
             {' · '}Feed for {fmtDate(req.feedForDate)}
-            {req.sectionBreakdown?.length > 0 && <span style={{marginLeft:6,padding:'1px 6px',background:'#ede9fe',color:'#6c63ff',borderRadius:10,fontSize:10,fontWeight:700}}>{req.sectionBreakdown.length} sections</span>}
+            {req.sectionBreakdown?.length > 0 && <span style={{marginLeft:6,padding:'1px 6px',background:'#ede9fe',color:'#6c63ff',borderRadius:10,fontSize:10,fontWeight:700}}>{req.sectionBreakdown.length} section{req.sectionBreakdown.length!==1?'s':''}</span>}
           </div>
           <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>
             Calc: <strong>
@@ -453,17 +469,24 @@ function ReqCard({ req, userRole, onAction }) {
                   {req.sectionBreakdown.map((s, i) => (
                     <tr key={s.penSectionId || i} style={{borderTop:'1px solid var(--border-card)',background: i%2===0?'#fff':'#fafafa'}}>
                       <td style={{padding:'7px 10px',fontWeight:600,color:'var(--text-primary)'}}>
-                        {s.sectionName}
-                        {s.formulaUsed && s.formulaUsed !== 'BAG_COUNT' && (
-                          <span style={{
-                            marginLeft:5, padding:'1px 5px', borderRadius:8,
-                            fontSize:9, fontWeight:700,
-                            background: s.formulaUsed === 'DEFAULT' ? '#fef2f2' : '#fffbeb',
-                            color:      s.formulaUsed === 'DEFAULT' ? '#dc2626' : '#d97706',
-                          }}>
-                            {s.formulaUsed === 'DEFAULT' ? 'est.' : '7d avg'}
-                          </span>
+                        {s.penName && (
+                          <div style={{fontSize:10,fontWeight:700,color:'var(--text-muted)',marginBottom:2,letterSpacing:'0.03em'}}>
+                            🏠 {s.penName}
+                          </div>
                         )}
+                        <div style={{display:'flex',alignItems:'center',gap:4}}>
+                          {s.sectionName}
+                          {s.formulaUsed && s.formulaUsed !== 'BAG_COUNT' && (
+                            <span style={{
+                              padding:'1px 5px', borderRadius:8,
+                              fontSize:9, fontWeight:700,
+                              background: s.formulaUsed === 'DEFAULT' ? '#fef2f2' : '#fffbeb',
+                              color:      s.formulaUsed === 'DEFAULT' ? '#dc2626' : '#d97706',
+                            }}>
+                              {s.formulaUsed === 'DEFAULT' ? 'est.' : '7d avg'}
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td style={{padding:'7px 10px',color:'var(--text-muted)'}}>{s.batchCode}</td>
                       <td style={{padding:'7px 10px',textAlign:'right',color:'var(--text-secondary)'}}>{(s.birdCount||0).toLocaleString()}</td>
@@ -553,66 +576,89 @@ function Empty({ icon, title, sub }) {
 // Creates a SUBMITTED requisition so the store can issue and the rolling
 // stock formula has an anchor for all subsequent days.
 function BootstrapModal({ apiFetch, userRole, onClose, onDone }) {
-  const [pens,         setPens]         = useState([]);
-  const [inventory,    setInventory]    = useState([]);
-  const [loadingData,  setLoadingData]  = useState(true);
+  const [pens,        setPens]        = useState([]);
+  const [inventory,   setInventory]   = useState([]);
+  const [loadingData, setLoadingData] = useState(true);
 
-  const [selectedPenId,   setSelectedPenId]   = useState('');
-  const [selectedInvId,   setSelectedInvId]   = useState('');
-  const [feedForDate,     setFeedForDate]      = useState(() => {
+  const [selectedPenId, setSelectedPenId] = useState('');
+  const [selectedInvId, setSelectedInvId] = useState('');
+  const [feedForDate,   setFeedForDate]   = useState(() => {
     const d = new Date(); d.setDate(d.getDate() + 1);
     return d.toISOString().split('T')[0];
   });
-  const [sectionBags,     setSectionBags]      = useState({}); // { penSectionId: bags string }
-  const [pmNotes,         setPmNotes]          = useState('');
-  const [saving,          setSaving]           = useState(false);
-  const [err,             setErr]              = useState('');
+  // rows: [{ id: uid, penSectionId: '', bags: '' }] — PM adds sections one at a time
+  const [rows,    setRows]    = useState([{ id: 1, penSectionId: '', bags: '' }]);
+  const [pmNotes, setPmNotes] = useState('');
+  const [saving,  setSaving]  = useState(false);
+  const [err,     setErr]     = useState('');
 
-  // Load pens and feed inventory on mount
+  // Load pens (scoped by API for PMs) and feed inventory
   useEffect(() => {
     setLoadingData(true);
     Promise.all([
       apiFetch('/api/farm-structure'),
       apiFetch('/api/feed/inventory'),
     ]).then(async ([penRes, invRes]) => {
-      if (penRes.ok)  { const d = await penRes.json();  setPens(d.pens || d.sections || []); }
-      if (invRes.ok)  { const d = await invRes.json();  setInventory(d.inventory || []); }
+      if (penRes.ok) {
+        const d = await penRes.json();
+        const allPens = (d.farms || []).flatMap(farm => farm.pens || []);
+        const pensWithSections = allPens.map(pen => ({
+          ...pen,
+          sections: (pen.sections || []).filter(s =>
+            s.activeFlock || s.flock ||
+            (s.flocks || []).some(f => !f.status || f.status === 'ACTIVE')
+          ),
+        })).filter(pen => pen.sections.length > 0);
+        setPens(pensWithSections);
+      }
+      if (invRes.ok) { const d = await invRes.json(); setInventory(d.inventory || []); }
     }).catch(() => {}).finally(() => setLoadingData(false));
   }, [apiFetch]);
 
-  // Sections for the selected pen
-  const selectedPen      = pens.find(p => p.id === selectedPenId);
-  const sections         = selectedPen?.sections || [];
-  const selectedInvItem  = inventory.find(i => i.id === selectedInvId);
-  const bagWt            = parseFloat(selectedInvItem?.bagWeightKg || 25);
+  const selectedPen     = pens.find(p => p.id === selectedPenId);
+  const allSections     = selectedPen?.sections || [];
+  const selectedInvItem = inventory.find(i => i.id === selectedInvId);
+  const bagWt           = parseFloat(selectedInvItem?.bagWeightKg || 25);
 
-  const totalBags        = Object.values(sectionBags).reduce((s, v) => s + (parseInt(v) || 0), 0);
-  const totalKg          = parseFloat((totalBags * bagWt).toFixed(1));
+  // IDs already picked in other rows — prevent duplicates
+  const usedIds = new Set(rows.map(r => r.penSectionId).filter(Boolean));
 
-  const handleBags = (sectionId, val) => {
-    setSectionBags(prev => ({ ...prev, [sectionId]: val }));
+  const addRow    = () => setRows(prev => [...prev, { id: Date.now(), penSectionId: '', bags: '' }]);
+  const removeRow = (id) => setRows(prev => prev.filter(r => r.id !== id));
+  const setRowField = (id, field, val) => {
+    setRows(prev => prev.map(r => r.id === id ? { ...r, [field]: val } : r));
     setErr('');
   };
 
+  const totalBags = rows.reduce((s, r) => s + (parseInt(r.bags) || 0), 0);
+  const totalKg   = parseFloat((totalBags * bagWt).toFixed(1));
+
   const submit = async () => {
-    if (!selectedPenId)  return setErr('Select a pen');
-    if (!selectedInvId)  return setErr('Select a feed type');
-    if (!feedForDate)    return setErr('Select the date feed is needed for');
-    if (sections.length === 0) return setErr('No active sections found for this pen');
+    if (!selectedPenId) return setErr('Select a pen');
+    if (!selectedInvId) return setErr('Select a feed type');
+    if (!feedForDate)   return setErr('Select the date feed is needed for');
 
-    // Validate all sections have a flock and bags > 0
-    const entries = sections.map(s => ({
-      penSectionId: s.id,
-      flockId:      s.activeFlock?.id || s.flock?.id || s.flocks?.[0]?.id,
-      bags:         parseInt(sectionBags[s.id] || '0') || 0,
-    }));
+    // Build valid entries: row must have a section selected, bags > 0, and an active flock
+    const activeSections = rows
+      .filter(r => r.penSectionId && parseInt(r.bags) > 0)
+      .map(r => {
+        const sec   = allSections.find(s => s.id === r.penSectionId);
+        const flock = sec?.activeFlock || sec?.flock || sec?.flocks?.[0];
+        return flock ? { penSectionId: r.penSectionId, flockId: flock.id, bags: parseInt(r.bags) } : null;
+      })
+      .filter(Boolean);
 
-    const missing = entries.filter(e => !e.flockId);
-    if (missing.length > 0) return setErr('Some sections have no active flock — cannot bootstrap');
-    const zeroBags = entries.filter(e => e.bags <= 0);
-    if (zeroBags.length === entries.length) return setErr('Enter at least 1 bag for at least one section');
-    const activeSections = entries.filter(e => e.bags > 0 && e.flockId);
-    if (activeSections.length === 0) return setErr('Enter bags for at least one section');
+    if (activeSections.length === 0)
+      return setErr('Add at least one section with a bag count and an active flock');
+
+    const noFlock = rows.filter(r => {
+      if (!r.penSectionId || !parseInt(r.bags)) return false;
+      const sec   = allSections.find(s => s.id === r.penSectionId);
+      const flock = sec?.activeFlock || sec?.flock || sec?.flocks?.[0];
+      return !flock;
+    });
+    if (noFlock.length > 0)
+      return setErr('One or more selected sections have no active flock — remove them or clear the bag count');
 
     setSaving(true); setErr('');
     try {
@@ -643,7 +689,7 @@ function BootstrapModal({ apiFetch, userRole, onClose, onDone }) {
         <div style={{padding:'16px 20px',borderBottom:'1px solid #f1f5f9',display:'flex',alignItems:'center',justifyContent:'space-between',position:'sticky',top:0,background:'#fff',zIndex:1}}>
           <div>
             <div style={{fontWeight:800,fontSize:15,color:'#1e293b',fontFamily:"'Poppins',sans-serif"}}>🌾 First Feed Issuance</div>
-            <div style={{fontSize:11,color:'#64748b',marginTop:2}}>Set the opening bag count for each section — anchors the rolling stock formula</div>
+            <div style={{fontSize:11,color:'#64748b',marginTop:2}}>Add each section that is ready for its first issuance — anchors the rolling stock formula</div>
           </div>
           <button onClick={onClose} style={{background:'none',border:'none',fontSize:22,cursor:'pointer',color:'#94a3b8'}}>×</button>
         </div>
@@ -656,12 +702,11 @@ function BootstrapModal({ apiFetch, userRole, onClose, onDone }) {
               {/* Pen selector */}
               <div style={{marginBottom:14}}>
                 <label style={{display:'block',fontSize:11,fontWeight:700,color:'#475569',marginBottom:5}}>Pen *</label>
-                <select value={selectedPenId} onChange={e => { setSelectedPenId(e.target.value); setSectionBags({}); }}
+                <select value={selectedPenId}
+                  onChange={e => { setSelectedPenId(e.target.value); setRows([{ id: 1, penSectionId: '', bags: '' }]); setErr(''); }}
                   style={{width:'100%',padding:'9px 12px',borderRadius:8,border:'1px solid #e2e8f0',fontSize:13,fontFamily:'inherit',outline:'none'}}>
                   <option value=''>— Select pen —</option>
-                  {pens.filter(p => (p.sections||[]).length > 0).map(p => (
-                    <option key={p.id} value={p.id}>{p.name}</option>
-                  ))}
+                  {pens.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
               </div>
 
@@ -682,62 +727,90 @@ function BootstrapModal({ apiFetch, userRole, onClose, onDone }) {
                 <label style={{display:'block',fontSize:11,fontWeight:700,color:'#475569',marginBottom:5}}>Feed Needed For (date) *</label>
                 <input type='date' value={feedForDate} onChange={e => setFeedForDate(e.target.value)}
                   style={{width:'100%',padding:'9px 12px',borderRadius:8,border:'1px solid #e2e8f0',fontSize:13,fontFamily:'inherit',outline:'none',boxSizing:'border-box'}} />
-                <div style={{fontSize:10,color:'#94a3b8',marginTop:3}}>Usually tomorrow — the day the workers will use this feed</div>
+                <div style={{fontSize:10,color:'#94a3b8',marginTop:3}}>Usually tomorrow — the day workers will use this feed</div>
               </div>
 
-              {/* Per-section bag inputs */}
-              {selectedPenId && sections.length > 0 && (
+              {/* Section rows — only shown once a pen is selected */}
+              {selectedPenId && (
                 <div style={{marginBottom:14}}>
-                  <label style={{display:'block',fontSize:11,fontWeight:700,color:'#475569',marginBottom:8}}>
-                    Bags per Section * <span style={{fontWeight:400,color:'#94a3b8'}}>(how many bags the store will give each section on this first day)</span>
-                  </label>
-                  <div style={{border:'1px solid #e2e8f0',borderRadius:8,overflow:'hidden'}}>
-                    <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
-                      <thead>
-                        <tr style={{background:'#f8fafc'}}>
-                          {['Section','Flock','Birds','Bags'].map(h => (
-                            <th key={h} style={{padding:'8px 10px',textAlign:'left',fontSize:10,fontWeight:700,color:'#64748b',textTransform:'uppercase',letterSpacing:'.04em'}}>{h}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {sections.map((s, i) => {
-                          const flock = s.activeFlock || s.flock || s.flocks?.[0];
-                          const bags  = sectionBags[s.id] || '';
-                          const kgEq  = bags && parseInt(bags) > 0 ? `= ${(parseInt(bags) * bagWt).toFixed(0)} kg` : '';
-                          return (
-                            <tr key={s.id} style={{borderTop: i > 0 ? '1px solid #f1f5f9' : 'none'}}>
-                              <td style={{padding:'8px 10px',fontWeight:600}}>{s.name}</td>
-                              <td style={{padding:'8px 10px',color:'#64748b',fontSize:11}}>{flock?.batchCode || '—'}</td>
-                              <td style={{padding:'8px 10px',color:'#64748b'}}>{(flock?.currentCount || s.currentBirds || 0).toLocaleString()}</td>
-                              <td style={{padding:'8px 10px'}}>
-                                <div style={{display:'flex',alignItems:'center',gap:6}}>
-                                  <input type='number' min='0' step='1' value={bags}
-                                    onChange={e => handleBags(s.id, e.target.value)}
-                                    placeholder='0'
-                                    style={{width:64,padding:'6px 8px',borderRadius:6,border:'1px solid #e2e8f0',fontSize:12,textAlign:'right'}} />
-                                  {kgEq && <span style={{fontSize:10,color:'#6c63ff',fontWeight:600,whiteSpace:'nowrap'}}>{kgEq}</span>}
-                                </div>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
+                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
+                    <label style={{fontSize:11,fontWeight:700,color:'#475569'}}>
+                      Sections &amp; Bags *
+                    </label>
+                    {allSections.length > rows.length && (
+                      <button onClick={addRow}
+                        style={{padding:'4px 10px',borderRadius:6,border:'1.5px dashed #6c63ff',background:'#f5f3ff',color:'#6c63ff',fontSize:11,fontWeight:700,cursor:'pointer'}}>
+                        + Add Section
+                      </button>
+                    )}
                   </div>
 
-                  {/* Total summary */}
-                  {totalBags > 0 && (
-                    <div style={{marginTop:8,padding:'8px 12px',background:'#f5f3ff',borderRadius:7,border:'1px solid #ddd6fe',fontSize:12,color:'#6c63ff',fontWeight:600}}>
-                      Total: {totalBags} bag{totalBags !== 1 ? 's' : ''} = {totalKg} kg across {Object.values(sectionBags).filter(v => parseInt(v) > 0).length} section{Object.values(sectionBags).filter(v => parseInt(v) > 0).length !== 1 ? 's' : ''}
+                  {allSections.length === 0 ? (
+                    <div style={{padding:'12px',background:'#fff7ed',border:'1px solid #fed7aa',borderRadius:8,fontSize:12,color:'#92400e'}}>
+                      No sections with active flocks found in this pen.
+                    </div>
+                  ) : (
+                    <div style={{display:'flex',flexDirection:'column',gap:8}}>
+                      {rows.map((row, i) => {
+                        const sec   = allSections.find(s => s.id === row.penSectionId);
+                        const flock = sec?.activeFlock || sec?.flock || sec?.flocks?.[0];
+                        const kgEq  = row.bags && parseInt(row.bags) > 0
+                          ? `= ${(parseInt(row.bags) * bagWt).toFixed(0)} kg` : '';
+                        // Sections available for this row: not picked in other rows
+                        const available = allSections.filter(s =>
+                          s.id === row.penSectionId || !usedIds.has(s.id)
+                        );
+                        return (
+                          <div key={row.id} style={{display:'flex',alignItems:'center',gap:8,padding:'10px 12px',
+                            background:'#f8fafc',borderRadius:9,border:'1px solid #e2e8f0'}}>
+                            {/* Section dropdown */}
+                            <select value={row.penSectionId}
+                              onChange={e => setRowField(row.id, 'penSectionId', e.target.value)}
+                              style={{flex:1,padding:'7px 10px',borderRadius:7,border:'1px solid #e2e8f0',
+                                fontSize:12,fontFamily:'inherit',outline:'none',background:'#fff'}}>
+                              <option value=''>— Section —</option>
+                              {available.map(s => {
+                                const f = s.activeFlock || s.flock || s.flocks?.[0];
+                                return (
+                                  <option key={s.id} value={s.id}>
+                                    {s.name}{f ? ` · ${f.batchCode} (${(f.currentCount||0).toLocaleString()} birds)` : ' · No flock'}
+                                  </option>
+                                );
+                              })}
+                            </select>
+                            {/* Bag count input */}
+                            <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:2,flexShrink:0}}>
+                              <input type='number' min='1' step='1' value={row.bags}
+                                onChange={e => setRowField(row.id, 'bags', e.target.value)}
+                                placeholder='Bags'
+                                style={{width:64,padding:'7px 8px',borderRadius:7,border:'1px solid #e2e8f0',
+                                  fontSize:12,textAlign:'right',background:'#fff'}} />
+                              {kgEq && <span style={{fontSize:9,color:'#6c63ff',fontWeight:700}}>{kgEq}</span>}
+                            </div>
+                            {/* Remove row button — always show; only row = clear, else remove */}
+                            <button
+                              onClick={() => rows.length === 1
+                                ? setRowField(row.id, 'penSectionId', '') || setRowField(row.id, 'bags', '')
+                                : removeRow(row.id)}
+                              style={{flexShrink:0,width:26,height:26,borderRadius:6,border:'1px solid #fecaca',
+                                background:'#fff',color:'#dc2626',fontSize:14,cursor:'pointer',
+                                display:'flex',alignItems:'center',justifyContent:'center',fontWeight:700}}>
+                              ×
+                            </button>
+                          </div>
+                        );
+                      })}
+
+                      {/* Total summary */}
+                      {totalBags > 0 && (
+                        <div style={{padding:'8px 12px',background:'#f5f3ff',borderRadius:7,
+                          border:'1px solid #ddd6fe',fontSize:12,color:'#6c63ff',fontWeight:600}}>
+                          Total: {totalBags} bag{totalBags!==1?'s':''} = {totalKg} kg
+                          {' '}across {rows.filter(r=>parseInt(r.bags)>0&&r.penSectionId).length} section{rows.filter(r=>parseInt(r.bags)>0&&r.penSectionId).length!==1?'s':''}
+                        </div>
+                      )}
                     </div>
                   )}
-                </div>
-              )}
-
-              {selectedPenId && sections.length === 0 && (
-                <div style={{padding:'12px',background:'#fff7ed',border:'1px solid #fed7aa',borderRadius:8,fontSize:12,color:'#92400e',marginBottom:14}}>
-                  No active sections with flocks found in this pen.
                 </div>
               )}
 
@@ -746,24 +819,29 @@ function BootstrapModal({ apiFetch, userRole, onClose, onDone }) {
                 <label style={{display:'block',fontSize:11,fontWeight:700,color:'#475569',marginBottom:5}}>Notes (optional)</label>
                 <textarea rows={2} value={pmNotes} onChange={e => setPmNotes(e.target.value)}
                   placeholder='e.g. Opening stock after restocking on 18 Apr…'
-                  style={{width:'100%',padding:'9px 12px',borderRadius:8,border:'1px solid #e2e8f0',fontSize:12,fontFamily:'inherit',outline:'none',resize:'vertical',boxSizing:'border-box'}} />
+                  style={{width:'100%',padding:'9px 12px',borderRadius:8,border:'1px solid #e2e8f0',
+                    fontSize:12,fontFamily:'inherit',outline:'none',resize:'vertical',boxSizing:'border-box'}} />
               </div>
 
               {/* Info callout */}
               <div style={{padding:'10px 14px',background:'#f0fdf4',border:'1px solid #bbf7d0',borderRadius:8,fontSize:11,color:'#15803d',marginBottom:14}}>
-                <strong>How this works:</strong> This requisition goes straight to IC for approval. Once issued and acknowledged by your workers, the system uses the bag counts to automatically calculate all future daily requisitions — no manual input needed after today.
+                <strong>How this works:</strong> This requisition goes straight to IC for approval. Once issued and acknowledged, the system uses these bag counts to automatically calculate all future daily requisitions.
               </div>
 
               {err && <div style={{padding:'9px 12px',background:'#fef2f2',border:'1px solid #fecaca',borderRadius:8,fontSize:12,color:'#dc2626',marginBottom:12}}>⚠ {err}</div>}
 
-              {/* Footer buttons */}
+              {/* Footer */}
               <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
                 <button onClick={onClose} disabled={saving}
-                  style={{padding:'9px 18px',borderRadius:8,border:'1px solid #e2e8f0',background:'#fff',color:'#64748b',fontSize:13,fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>
+                  style={{padding:'9px 18px',borderRadius:8,border:'1px solid #e2e8f0',background:'#fff',
+                    color:'#64748b',fontSize:13,fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>
                   Cancel
                 </button>
                 <button onClick={submit} disabled={saving || totalBags === 0}
-                  style={{padding:'9px 18px',borderRadius:8,border:'none',background: saving || totalBags === 0 ? '#94a3b8' : '#6c63ff',color:'#fff',fontSize:13,fontWeight:700,cursor: saving || totalBags === 0 ? 'not-allowed' : 'pointer',fontFamily:'inherit'}}>
+                  style={{padding:'9px 18px',borderRadius:8,border:'none',
+                    background: saving || totalBags === 0 ? '#94a3b8' : '#6c63ff',
+                    color:'#fff',fontSize:13,fontWeight:700,fontFamily:'inherit',
+                    cursor: saving || totalBags === 0 ? 'not-allowed' : 'pointer'}}>
                   {saving ? 'Submitting…' : '📤 Submit to IC'}
                 </button>
               </div>

@@ -1,14 +1,13 @@
 'use client';
 // app/worker/page.js — Pen Worker Daily Dashboard
 // Redesigned: section-first layout — tasks nested per section, DailySummaryCard inline
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import AppShell from '@/components/layout/AppShell';
 import { useAuth } from '@/components/layout/AuthProvider';
 import WaterMeterModal from '@/components/water/WaterMeterModal';
 import WorkerFeedModal from '@/components/feed/WorkerFeedModal';
 import SpotCheckCompleteModal from '@/components/tasks/SpotCheckCompleteModal';
-import DailySummaryCard     from '@/components/daily/DailySummaryCard';
 
 const fmt    = n => Number(n || 0).toLocaleString('en-NG');
 const fmtPct = n => `${Number(n || 0).toFixed(1)}%`;
@@ -108,37 +107,25 @@ function LogEggModal({ section, task, apiFetch, onClose, onSave }) {
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
 
   // ── Fetch today's feed consumption to compute empty bags for this store trip ──
-  // Partition using the task session label stored as [Label] prefix in the notes field.
-  // WorkerFeedModal writes e.g. "[Morning (Batch 1)]" or "[Midday Top-up]" into notes.
-  // Batch 1 store run: records labelled "[Morning (Batch 1)]" only.
-  // Batch 2 store run: all other records (top-ups + afternoon feed).
-  // Time-independent — works correctly regardless of when the worker actually logs.
+  // Batch 1 run (with 07:30 eggs): empties from morning feed session only (before 07:30)
+  // Batch 2 run (with 15:30 eggs): empties from ALL sessions since the morning run (07:30+)
   useEffect(() => {
     (async () => {
       try {
-        const feedRes = await apiFetch(`/api/feed/consumption?penSectionId=${section.id}&limit=50`);
-        if (!feedRes.ok) { setEmptyBags(0); return; }
-        const { consumption } = await feedRes.json();
+        const res = await apiFetch(
+          `/api/feed/consumption?penSectionId=${section.id}&from=${today}&to=${today}&limit=20`
+        );
+        if (!res.ok) { setEmptyBags(0); return; }
+        const { consumption } = await res.json();
+        if (!consumption?.length) { setEmptyBags(0); return; }
 
-        // Filter to today using ISO date string (safe for Prisma Date objects)
-        const todayFeeds = (consumption || []).filter(r => {
-          if (!r.recordedDate) return false;
-          const iso = typeof r.recordedDate === 'string'
-            ? r.recordedDate
-            : new Date(r.recordedDate).toISOString();
-          return iso.slice(0, 10) === today;
-        });
-        if (!todayFeeds.length) { setEmptyBags(0); return; }
-
-        // Read the [Label] prefix stored by WorkerFeedModal in the notes field.
-        // Records with no label (pre-fix legacy records) default to Batch 1.
-        const isBatch1Record = (notes) =>
-          !notes || notes.startsWith('[Morning (Batch 1)]') || notes.startsWith('[Morning Feed');
-
+        const CUTOFF_MINS = 7 * 60 + 30; // 07:30 = when Batch 1 goes to store
         let bags = 0;
-        for (const rec of todayFeeds) {
+        for (const rec of consumption) {
           if (!rec.bagsUsed) continue;
-          const isMorningFeed = isBatch1Record(rec.notes);
+          const ft = new Date(rec.feedTime || rec.recordedDate);
+          const recMins = ft.getHours() * 60 + ft.getMinutes();
+          const isMorningFeed = recMins < CUTOFF_MINS;
           if (!isBatch2 && isMorningFeed)  bags += Number(rec.bagsUsed);
           if (isBatch2  && !isMorningFeed) bags += Number(rec.bagsUsed);
         }
@@ -1367,7 +1354,6 @@ export default function WorkerPage() {
   const [obsModal,       setObsModal]       = useState(null);  // { task, section }
   const [taskLinkedModal,setTaskLinkedModal] = useState(null); // { task, type }
   const [saveCount,      setSaveCount]      = useState(0);    // bumped on every save to refresh DailySummaryCards
-  const [summaryModal,   setSummaryModal]   = useState(null); // { section, taskId }
 
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type });
@@ -1411,37 +1397,44 @@ export default function WorkerPage() {
     } finally { setLoading(false); }
   }, [apiFetch]);
 
-  const generateTasksIfNeeded = useCallback(async () => {
-    // Check whether tasks already exist for today before generating.
-    // This prevents duplicate tasks when multiple workers hit the page simultaneously
-    // (race condition: two concurrent POSTs both pass the dedup check before either commits).
-    try {
-      const checkRes = await apiFetch('/api/tasks/generate');
-      const check    = checkRes.ok ? await checkRes.json() : null;
-
-      const needsDaily  = !check?.dailyGenerated;
-      const needsWeekly = !check?.weeklyGenerated;
-
-      const posts = [];
-      if (needsDaily)  posts.push(apiFetch('/api/tasks/generate', { method: 'POST', body: JSON.stringify({ frequency: 'daily'  }) }));
-      if (needsWeekly) posts.push(apiFetch('/api/tasks/generate', { method: 'POST', body: JSON.stringify({ frequency: 'weekly' }) }));
-
-      if (posts.length > 0) {
-        const results = await Promise.all(posts);
-        for (const res of results) {
-          const d = res.ok ? await res.json() : { error: await res.text() };
-          console.log('[tasks/generate]', d);
-        }
-      }
-    } catch (err) { console.error('[tasks/generate] error:', err); }
-    finally { load(); }
-  }, [apiFetch, load]);
+  // ── Task generation — fires exactly once per mount ──────────────────────────
+  // The old useCallback+useEffect([generateTasksIfNeeded]) pattern re-fired whenever
+  // apiFetch or load changed reference (each render gave new refs → new callback →
+  // effect re-ran → duplicate POST before first commit → doubled tasks).
+  // useRef gate ensures generate runs once per mount regardless of reference churn.
+  const generateCalledRef = useRef(false);
+  const apiFetchRef       = useRef(apiFetch);
+  const loadRef           = useRef(load);
+  useEffect(() => { apiFetchRef.current = apiFetch; }, [apiFetch]);
+  useEffect(() => { loadRef.current     = load;     }, [load]);
 
   useEffect(() => {
-    // generateTasksIfNeeded always calls load() after POSTing tasks,
-    // so we don't need a separate load() call here.
-    generateTasksIfNeeded();
-  }, [generateTasksIfNeeded]);
+    if (generateCalledRef.current) return;
+    generateCalledRef.current = true;
+
+    (async () => {
+      try {
+        const checkRes = await apiFetchRef.current('/api/tasks/generate');
+        const check    = checkRes.ok ? await checkRes.json() : null;
+
+        const needsDaily  = !check?.dailyGenerated;
+        const needsWeekly = !check?.weeklyGenerated;
+
+        const posts = [];
+        if (needsDaily)  posts.push(apiFetchRef.current('/api/tasks/generate', { method: 'POST', body: JSON.stringify({ frequency: 'daily'  }) }));
+        if (needsWeekly) posts.push(apiFetchRef.current('/api/tasks/generate', { method: 'POST', body: JSON.stringify({ frequency: 'weekly' }) }));
+
+        if (posts.length > 0) {
+          const results = await Promise.all(posts);
+          for (const res of results) {
+            const d = res.ok ? await res.json() : { error: await res.text() };
+            console.log('[tasks/generate]', d);
+          }
+        }
+      } catch (err) { console.error('[tasks/generate] error:', err); }
+      finally { loadRef.current(); }
+    })();
+  }, []); // empty deps — intentional, ref pattern keeps apiFetch/load current
 
   const completeLinkedTask = useCallback(async (taskId) => {
     if (!taskId) return;
@@ -1500,12 +1493,9 @@ export default function WorkerPage() {
         setObsModal({ task, section }); return;
       }
     }
-    // REPORT_SUBMISSION — open DailySummaryCard inline as a bottom-sheet modal.
-    // On submit, completeLinkedTask is called directly so the task turns green instantly.
+    // REPORT_SUBMISSION — navigate to dedicated summary page
     if (task.taskType === 'REPORT_SUBMISSION') {
-      const section = sections.find(s => s.id === task.penSectionId);
-      setTaskLinkedModal({ task, type: 'summary' });
-      setSummaryModal({ section: section || { id: task.penSectionId }, taskId: task.id });
+      router.push('/worker/summary');
       return;
     }
     // Generic / checklist tasks — mark complete immediately
@@ -1740,40 +1730,6 @@ export default function WorkerPage() {
             else if (failCount > 0) showToast('Inspection submitted — IC notified of failures ⚠️', 'warn');
             else                    showToast('Spot check completed ✓');
           }} />
-      )}
-
-      {/* ── Daily Summary Modal (REPORT_SUBMISSION task) ── */}
-      {summaryModal && (
-        <div style={{ position:'fixed',inset:0,zIndex:1200,background:'rgba(0,0,0,0.5)',
-          display:'flex',alignItems:'flex-end',justifyContent:'center' }}
-          onClick={e => e.target===e.currentTarget && setSummaryModal(null)}>
-          <div style={{ background:'#fff',borderRadius:'16px 16px 0 0',width:'100%',maxWidth:560,
-            maxHeight:'90vh',overflowY:'auto',boxShadow:'0 -4px 30px rgba(0,0,0,0.2)' }}>
-            <div style={{ display:'flex',alignItems:'center',justifyContent:'space-between',
-              padding:'14px 18px 0',marginBottom:4 }}>
-              <div style={{ fontWeight:800,fontSize:15,color:'#1e293b',fontFamily:"'Poppins',sans-serif" }}>
-                📋 Daily Summary
-              </div>
-              <button onClick={() => setSummaryModal(null)}
-                style={{ background:'none',border:'none',fontSize:22,cursor:'pointer',color:'#94a3b8' }}>×</button>
-            </div>
-            <div style={{ padding:'0 14px 20px' }}>
-              <DailySummaryCard
-                penSectionId={summaryModal.section?.id}
-                apiFetch={apiFetch}
-                refreshKey={saveCount}
-                onSummarySubmitted={() => {
-                  if (taskLinkedModal?.type === 'summary')
-                    completeLinkedTask(taskLinkedModal.task.id);
-                  setSummaryModal(null);
-                  setTaskLinkedModal(null);
-                  load();
-                  showToast('Daily summary submitted — task complete ✓');
-                }}
-              />
-            </div>
-          </div>
-        </div>
       )}
     </AppShell>
   );

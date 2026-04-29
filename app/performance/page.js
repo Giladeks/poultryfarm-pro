@@ -639,6 +639,30 @@ export default function EggsPage() {
       status:mortalityStatus(rearMortRate) },
   ] : [];
 
+  // ── Today's live values for the "My Section Performance" block ─────────────
+  // These are always current-day regardless of the period picker (which only affects charts/records).
+  const todayLiveEggs      = productionLayers.reduce((a,s) => a + (s.metrics?.todayEggs || 0), 0);
+  const todayLiveFeedKg    = productionLayers.reduce((a,s) => a + (s.metrics?.todayFeedKg || 0), 0);
+  const todayLiveMortality = productionLayers.reduce((a,s) => a + (s.metrics?.todayMortality || 0), 0);
+  // Lay rate today: total eggs today / total birds × 100 (server-computed per section, re-derived here for accuracy)
+  const todayLayRate = prodBirds > 0 && todayLiveEggs > 0
+    ? parseFloat((todayLiveEggs / prodBirds * 100).toFixed(1)) : null;
+  // Grade A today: from metrics.todayGradeAPct — weighted average across sections that have data
+  const todayGradeASecns = productionLayers.filter(s => s.metrics?.todayGradeAPct != null && s.metrics?.todayEggs > 0);
+  const todayGradeAPct   = todayGradeASecns.length > 0
+    ? parseFloat((todayGradeASecns.reduce((a,s) => a + (s.metrics.todayGradeAPct * s.metrics.todayEggs), 0)
+        / todayGradeASecns.reduce((a,s) => a + s.metrics.todayEggs, 0)).toFixed(1))
+    : null;
+  // Latest avg weight across production sections (from latestWeightG on each section metric)
+  const prodWtSecns   = productionLayers.filter(s => s.metrics?.latestWeightG);
+  const prodAvgWtG    = prodWtSecns.length
+    ? parseFloat((prodWtSecns.reduce((a,s) => a + s.metrics.latestWeightG, 0) / prodWtSecns.length).toFixed(0))
+    : null;
+  const prodUniformity = (() => {
+    const u = weightData?.summary?.latestUniformityPct;
+    return u != null ? parseFloat(Number(u).toFixed(1)) : null;
+  })();
+
   const productionKpis = productionLayers.length > 0 ? [
     { icon:'🐦', label:'Live Hens', value:fmt(prodBirds),
       sub:`${productionLayers.length} section${productionLayers.length!==1?'s':''}`,
@@ -659,18 +683,24 @@ export default function EggsPage() {
           : prodFeedGpbToday < feedBenchmarkGpb * 0.85 ? 'Below recommended level' : 'Above recommended level')
         : 'No feed logged yet today',
       status: feedStatus(prodFeedGpbToday) },
-    { icon:'📊', label:layRateKpiLabel,
-      value:avgRate!=null?`${avgRate}%`:'—', sub:'Target 82%',
-      delta:avgRate!=null?(avgRate>=82?`+${(avgRate-82).toFixed(1)}% above target`:`${(avgRate-82).toFixed(1)}% below target`):'No data yet',
-      status:avgRate!=null?layRateStatus(avgRate):'neutral' },
-    { icon:'🥚', label:eggsKpiLabel, value:fmt(periodEggsDisplay),
+    { icon:'📊', label:'Lay Rate Today',
+      value:todayLayRate!=null?`${todayLayRate}%`:'—', sub:'Target 82%',
+      delta:todayLayRate!=null?(todayLayRate>=82?`+${(todayLayRate-82).toFixed(1)}% above target`:`${(todayLayRate-82).toFixed(1)}% below target`):'No collections yet today',
+      status:todayLayRate!=null?layRateStatus(todayLayRate):'neutral' },
+    { icon:'🥚', label:'Eggs Today', value:fmt(todayLiveEggs),
       sub:`7d total ${fmt(weekEggs)}`,
-      delta:periodEggsDisplay>0?`${fmt(periodEggsDisplay)} collected`:'None recorded yet',
-      status:periodEggsDisplay>0?'good':'neutral' },
+      delta:todayLiveEggs>0?`${fmt(todayLiveEggs)} collected today`:'None recorded yet today',
+      status:todayLiveEggs>0?'good':'neutral' },
     { icon:'⭐', label:'Grade A Rate',
-      value:gradeAPct!=null?`${gradeAPct}%`:'—', sub:'Target ≥85%',
-      delta:gradeAPct!=null?(gradeAPct>=85?`+${(gradeAPct-85).toFixed(1)}% above target`:`${(gradeAPct-85).toFixed(1)}% below target`):'No data yet',
-      status:gradeAStatus(gradeAPct) },
+      value:todayGradeAPct!=null?`${todayGradeAPct}%`:'Pending',
+      sub:todayGradeAPct!=null?'Target ≥85%':'Grade pending today\'s grading',
+      delta:todayGradeAPct!=null?(todayGradeAPct>=85?`+${(todayGradeAPct-85).toFixed(1)}% above target`:`${(todayGradeAPct-85).toFixed(1)}% below target`):'Grade eggs to see rate',
+      status:gradeAStatus(todayGradeAPct) },
+    { icon:'⚖️', label:'Avg Body Weight',
+      value:prodAvgWtG!=null?`${prodAvgWtG}g`:'—',
+      sub:prodAvgWtG!=null?`Target 1,800–2,000g · ${prodUniformity!=null?`Uniformity ${prodUniformity}%`:'No uniformity data'}`:'No weigh-in recorded',
+      delta:prodAvgWtG!=null?(prodAvgWtG>=1800&&prodAvgWtG<=2000?'✓ Within target range':prodAvgWtG<1800?'Below target weight':'Above target weight'):'Log a weight to track',
+      status:prodAvgWtG==null?'neutral':prodAvgWtG>=1800&&prodAvgWtG<=2000?'good':prodAvgWtG>=1600&&prodAvgWtG<=2200?'warn':'critical' },
     { icon:'💧', label:'Water Intake',
       value:prodAvgWater!=null?`${prodAvgWater} L/bird`:'—',
       sub:prodAvgWater!=null?`Benchmark ${prodWaterBench} L/bird · age ${prodAvgAge}d`:'Not tracked yet',
@@ -1018,6 +1048,124 @@ export default function EggsPage() {
                     </div>
                   )}
                 </div>
+
+                {/* ── Weight & Uniformity Trend ── */}
+                {(() => {
+                  const wSamples = weightData?.samples || weightData?.records || [];
+                  // Normalise field names: weight_records uses sampleDate/meanWeightG, weight_samples may differ
+                  const weightChartData = wSamples.map(s => ({
+                    date:        s.sampleDate || s.recordDate,
+                    weightG:     s.meanWeightG   != null ? parseFloat(Number(s.meanWeightG).toFixed(0))   : null,
+                    uniformity:  s.uniformityPct != null ? parseFloat(Number(s.uniformityPct).toFixed(1)) : null,
+                  })).filter(d => d.date && (d.weightG != null || d.uniformity != null))
+                    .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+                  if (!loading && weightChartData.length === 0) return (
+                    <div className="card">
+                      <div style={{ fontWeight:700, fontSize:14, marginBottom:8 }}>⚖️ Weight &amp; Uniformity</div>
+                      <div style={{ fontSize:11, color:'var(--text-muted)', marginBottom:12 }}>Avg body weight (g) · Flock uniformity %</div>
+                      <EmptyState msg="No weight records yet — log a weekly weigh-in to track trends"/>
+                    </div>
+                  );
+
+                  const hasUniformity = weightChartData.some(d => d.uniformity != null);
+
+                  return (
+                    <div className="card">
+                      <div style={{ fontWeight:700, fontSize:14, marginBottom:4 }}>⚖️ Weight &amp; Uniformity</div>
+                      <div style={{ fontSize:11, color:'var(--text-muted)', marginBottom:16 }}>
+                        Avg body weight (g, left axis){hasUniformity ? ' · Uniformity % (right axis)' : ''} · {days} days
+                      </div>
+                      {loading ? <Skeleton h={200}/> : (
+                        <ResponsiveContainer width="100%" height={200}>
+                          <ComposedChart data={weightChartData} margin={{top:4,right:hasUniformity?40:8,bottom:4,left:0}}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false}/>
+                            <XAxis dataKey="date" tickFormatter={fmtDate} tick={{fontSize:10,fill:'var(--text-muted)'}}/>
+                            <YAxis
+                              yAxisId="wt"
+                              orientation="left"
+                              tick={{fontSize:10,fill:'#6c63ff'}}
+                              width={48}
+                              tickFormatter={v=>`${v}g`}
+                              domain={['auto','auto']}
+                            />
+                            {hasUniformity && (
+                              <YAxis
+                                yAxisId="uni"
+                                orientation="right"
+                                tick={{fontSize:10,fill:'#16a34a'}}
+                                width={36}
+                                tickFormatter={v=>`${v}%`}
+                                domain={[0,100]}
+                              />
+                            )}
+                            <Tooltip content={({active,payload,label})=>{
+                              if(!active||!payload?.length) return null;
+                              return (
+                                <div style={{background:'#fff',border:'1px solid var(--border)',borderRadius:8,padding:'10px 14px',fontSize:12}}>
+                                  <div style={{fontWeight:700,color:'var(--text-muted)',marginBottom:6}}>{fmtDate(label)}</div>
+                                  {payload.map((p,i)=>(
+                                    <div key={i} style={{color:p.color,marginBottom:2}}>
+                                      {p.name}: <strong>{p.name==='Uniformity'?`${Number(p.value).toFixed(1)}%`:`${Number(p.value).toFixed(0)}g`}</strong>
+                                    </div>
+                                  ))}
+                                </div>
+                              );
+                            }}/>
+                            <Legend iconSize={10} wrapperStyle={{fontSize:11}}/>
+                            <Line
+                              yAxisId="wt"
+                              type="monotone"
+                              dataKey="weightG"
+                              name="Avg Weight (g)"
+                              stroke="#6c63ff"
+                              strokeWidth={2.5}
+                              dot={{r:3,fill:'#6c63ff'}}
+                              activeDot={{r:5}}
+                              connectNulls
+                            />
+                            {/* Target weight band — 1800g lower, 2000g upper for laying hens */}
+                            <Line
+                              yAxisId="wt"
+                              type="monotone"
+                              dataKey={() => 1800}
+                              name="Min target (1,800g)"
+                              stroke="#d97706"
+                              strokeWidth={1}
+                              strokeDasharray="4 3"
+                              dot={false}
+                              legendType="none"
+                            />
+                            <Line
+                              yAxisId="wt"
+                              type="monotone"
+                              dataKey={() => 2000}
+                              name="Max target (2,000g)"
+                              stroke="#d97706"
+                              strokeWidth={1}
+                              strokeDasharray="4 3"
+                              dot={false}
+                              legendType="none"
+                            />
+                            {hasUniformity && (
+                              <Line
+                                yAxisId="uni"
+                                type="monotone"
+                                dataKey="uniformity"
+                                name="Uniformity"
+                                stroke="#16a34a"
+                                strokeWidth={2}
+                                dot={{r:3,fill:'#16a34a'}}
+                                activeDot={{r:5}}
+                                connectNulls
+                              />
+                            )}
+                          </ComposedChart>
+                        </ResponsiveContainer>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             </div>
           );
