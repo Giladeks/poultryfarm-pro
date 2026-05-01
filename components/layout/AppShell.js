@@ -7,6 +7,8 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { createPortal } from 'react-dom';
 import { useAuth } from './AuthProvider';
 import { ROLE_LABELS } from '@/lib/constants/roles';
+import ConnectivityBanner    from '@/components/ui/ConnectivityBanner';
+import { usePWA }            from '@/hooks/usePWA';
 import {
   // Nav items
   LayoutDashboard, Building2, Egg, ClipboardList, ClipboardCheck, Bird,
@@ -843,7 +845,11 @@ function CollapsibleGroup({ section, items, isOpen, onToggle, collapsed, pathnam
 
 // ── AppShell ──────────────────────────────────────────────────────────────────
 export default function AppShell({ children }) {
-  const { user, logout } = useAuth();
+  const { user, logout, apiFetch } = useAuth();
+
+  // ── PWA: register service worker + push subscription ─────────────────
+  usePWA(apiFetch);
+
   const pathname         = usePathname();
   const searchParams     = useSearchParams();
   const search           = searchParams.toString() ? `?${searchParams.toString()}` : '';
@@ -1163,6 +1169,8 @@ export default function AppShell({ children }) {
   });
 
   return (
+    <>
+    <ConnectivityBanner />
     <div style={{ display: 'flex', minHeight: '100vh', background: 'var(--bg-base)', fontFamily: "'Nunito', sans-serif" }}>
       <style>{`
         @keyframes fadeInUp   { from { opacity:0; transform:translateY(6px)  } to { opacity:1; transform:none } }
@@ -1540,6 +1548,7 @@ export default function AppShell({ children }) {
         </main>
       </div>
     </div>
+    </>
   );
 }
 

@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PoultryFarm Pro — Logo Export</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, 'Helvetica Neue', sans-serif;
+    background: #f8fafc;
+    color: #1e1b4b;
+    min-height: 100vh;
+    padding: 40px 24px 80px;
+  }
+
+  .page-header {
+    max-width: 900px;
+    margin: 0 auto 40px;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+  }
+
+  .header-mark { flex-shrink: 0; }
+
+  .header-text h1 {
+    font-size: 22px;
+    font-weight: 700;
+    color: #1e1b4b;
+    letter-spacing: -0.4px;
+  }
+
+  .header-text p {
+    font-size: 13px;
+    color: #64748b;
+    margin-top: 3px;
+  }
+
+  .section {
+    max-width: 900px;
+    margin: 0 auto 36px;
+  }
+
+  .section-title {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: #94a3b8;
+    margin-bottom: 14px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #e2e8f0;
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 14px;
+  }
+
+  .logo-card {
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .logo-card.dark-bg .preview-area { background: #0f0e1a; }
+  .logo-card.mid-bg  .preview-area { background: #1e1b4b; }
+  .logo-card.light-bg .preview-area { background: #f8fafc; }
+  .logo-card.white-bg .preview-area { background: #ffffff; }
+
+  .preview-area {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    min-height: 100px;
+    background: #f1f5f9;
+  }
+
+  .card-info {
+    padding: 10px 12px;
+    border-top: 1px solid #e2e8f0;
+    background: #fff;
+  }
+
+  .card-name {
+    font-size: 11px;
+    font-weight: 700;
+    color: #1e1b4b;
+    margin-bottom: 2px;
+  }
+
+  .card-meta {
+    font-size: 10px;
+    color: #94a3b8;
+    margin-bottom: 8px;
+  }
+
+  .dl-btn {
+    width: 100%;
+    padding: 6px 10px;
+    background: #6c63ff;
+    color: #fff;
+    border: none;
+    border-radius: 7px;
+    font-size: 11px;
+    font-weight: 700;
+    font-family: inherit;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+
+  .dl-btn:hover { background: #5b52e0; }
+  .dl-btn:active { background: #4a42c8; }
+
+  .dl-btn.secondary {
+    background: #f1f5f9;
+    color: #6c63ff;
+    border: 1px solid #ddd6fe;
+  }
+
+  .dl-btn.secondary:hover { background: #ede9fe; }
+
+  .dl-all-row {
+    max-width: 900px;
+    margin: 0 auto 40px;
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .dl-all-btn {
+    padding: 11px 22px;
+    background: #1e1b4b;
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 700;
+    font-family: inherit;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+
+  .dl-all-btn:hover { background: #312e81; }
+
+  .palette {
+    max-width: 900px;
+    margin: 0 auto 40px;
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 20px;
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .swatch {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .swatch-box {
+    width: 32px;
+    height: 32px;
+    border-radius: 7px;
+    flex-shrink: 0;
+  }
+
+  .swatch-info { line-height: 1.4; }
+  .swatch-hex  { font-size: 12px; font-weight: 700; color: #1e1b4b; font-family: monospace; }
+  .swatch-role { font-size: 10px; color: #94a3b8; }
+
+  canvas { display: none; }
+</style>
+</head>
+<body>
+
+<div class="page-header">
+  <div class="header-mark">
+    <svg width="52" height="52" viewBox="0 0 52 52" xmlns="http://www.w3.org/2000/svg">
+      <rect width="52" height="52" rx="13" fill="#1e1b4b"/>
+      <path d="M7,44 L7,35 C7,25 11,19 16,16 C21,13 25,15 27,21 L27,28 C28,18 32,12 38,10 C44,8 48,12 48,20 L48,44 Z" fill="#6c63ff"/>
+      <path d="M38,10 C44,8 48,12 48,20 L48,44 L38,44 Z" fill="#f59e0b"/>
+      <line x1="7" y1="44" x2="48" y2="44" stroke="#48c774" stroke-width="3" stroke-linecap="round"/>
+    </svg>
+  </div>
+  <div class="header-text">
+    <h1>PoultryFarm Pro — Logo Export</h1>
+    <p>Amber accent mark · All production sizes · PNG download</p>
+  </div>
+</div>
+
+<div class="dl-all-row">
+  <button class="dl-all-btn" onclick="downloadAll()">↓ Download all sizes (ZIP not available — click each below)</button>
+</div>
+
+<!-- BRAND PALETTE -->
+<div class="section">
+  <div class="section-title">Brand palette</div>
+  <div class="palette">
+    <div class="swatch">
+      <div class="swatch-box" style="background:#1e1b4b;"></div>
+      <div class="swatch-info"><div class="swatch-hex">#1e1b4b</div><div class="swatch-role">Ink navy · container</div></div>
+    </div>
+    <div class="swatch">
+      <div class="swatch-box" style="background:#6c63ff;"></div>
+      <div class="swatch-info"><div class="swatch-hex">#6c63ff</div><div class="swatch-role">Brand purple · comb body</div></div>
+    </div>
+    <div class="swatch">
+      <div class="swatch-box" style="background:#f59e0b;"></div>
+      <div class="swatch-info"><div class="swatch-hex">#f59e0b</div><div class="swatch-role">Harvest amber · accent peak</div></div>
+    </div>
+    <div class="swatch">
+      <div class="swatch-box" style="background:#48c774;"></div>
+      <div class="swatch-info"><div class="swatch-hex">#48c774</div><div class="swatch-role">Growth green · baseline</div></div>
+    </div>
+    <div class="swatch">
+      <div class="swatch-box" style="background:#f8fafc; border:1px solid #e2e8f0;"></div>
+      <div class="swatch-info"><div class="swatch-hex">#f8fafc</div><div class="swatch-role">Surface white</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- APP / PWA ICONS (square, on navy) -->
+<div class="section">
+  <div class="section-title">App icons · PWA · Play Store · App Store</div>
+  <div class="grid" id="grid-app"></div>
+</div>
+
+<!-- FAVICON SIZES -->
+<div class="section">
+  <div class="section-title">Favicon sizes</div>
+  <div class="grid" id="grid-favicon"></div>
+</div>
+
+<!-- WORDMARK LOCKUPS -->
+<div class="section">
+  <div class="section-title">Wordmark lockups · horizontal</div>
+  <div class="grid" id="grid-wordmark"></div>
+</div>
+
+<!-- SOCIAL / OPEN GRAPH -->
+<div class="section">
+  <div class="section-title">Social · Open Graph · cover art</div>
+  <div class="grid" id="grid-social"></div>
+</div>
+
+<canvas id="canvas"></canvas>
+
+<script>
+const NAVY   = '#1e1b4b';
+const PURPLE = '#6c63ff';
+const AMBER  = '#f59e0b';
+const GREEN  = '#48c774';
+const WHITE  = '#ffffff';
+
+/* ── Core mark drawing function ──────────────────────────────────────────────
+   Draws the comb-and-circuit mark into a canvas 2D context.
+   s = total icon size (square), bg = container fill (or null for transparent)
+*/
+function drawMark(ctx, s, bg) {
+  const r = s * 0.24;  // corner radius
+  const pad = s * 0.08; // inner padding
+
+  // Container rounded square
+  if (bg) {
+    roundRect(ctx, 0, 0, s, s, r, bg);
+  }
+
+  const mx = pad;           // mark left edge
+  const mw = s - pad * 2;  // mark width
+  const by = s - pad * 1.4; // baseline y
+  const th = s * 0.58;     // total comb height available
+
+  // Comb peak heights (5 peaks, ascending left to right)
+  // Peak top y = by - peakHeight
+  const peaks = [
+    { h: th * 0.42 },
+    { h: th * 0.58 },
+    { h: th * 0.74 },
+    { h: th * 0.88 },
+    { h: th * 1.00 },
+  ];
+
+  const pw = mw / 5; // width per peak zone
+
+  // Build comb outline path
+  ctx.beginPath();
+  ctx.moveTo(mx, by);
+
+  for (let i = 0; i < peaks.length; i++) {
+    const x0 = mx + i * pw;
+    const x1 = mx + (i + 0.5) * pw;
+    const x2 = mx + (i + 1) * pw;
+    const peakY = by - peaks[i].h;
+    const riseY = by - peaks[i].h * 0.35;
+
+    ctx.lineTo(x0, riseY);
+    ctx.bezierCurveTo(x0, peakY + peaks[i].h * 0.1, x1 - pw * 0.15, peakY, x1, peakY);
+    ctx.bezierCurveTo(x1 + pw * 0.15, peakY, x2, peakY + peaks[i].h * 0.1, x2, riseY);
+  }
+
+  ctx.lineTo(mx + mw, by);
+  ctx.closePath();
+  ctx.fillStyle = PURPLE;
+  ctx.fill();
+
+  // Amber accent — rightmost peak (peak index 4) redrawn on top
+  const ax = mx + 3 * pw;
+  const ax2 = mx + mw;
+  const aRise = by - peaks[3].h * 0.35;
+  const aRise2 = by - peaks[4].h * 0.35;
+  const aPeak3Y = by - peaks[3].h;
+  const aPeak4Y = by - peaks[4].h;
+  const aMid3 = mx + 3.5 * pw;
+  const aMid4 = mx + 4.5 * pw;
+
+  ctx.beginPath();
+  ctx.moveTo(ax, aRise);
+  ctx.bezierCurveTo(ax, aPeak3Y + peaks[3].h * 0.1, aMid3 - pw * 0.15, aPeak3Y, aMid3, aPeak3Y);
+  ctx.bezierCurveTo(aMid3 + pw * 0.15, aPeak3Y, mx + 4 * pw, aRise2, mx + 4 * pw, aRise2);
+  ctx.bezierCurveTo(mx + 4 * pw, aPeak4Y + peaks[4].h * 0.1, aMid4 - pw * 0.15, aPeak4Y, aMid4, aPeak4Y);
+  ctx.bezierCurveTo(aMid4 + pw * 0.15, aPeak4Y, ax2, aPeak4Y + peaks[4].h * 0.1, ax2, aRise2);
+  ctx.lineTo(ax2, by);
+  ctx.lineTo(ax, by);
+  ctx.closePath();
+  ctx.fillStyle = AMBER;
+  ctx.fill();
+
+  // Green baseline
+  const lw = Math.max(1.5, s * 0.04);
+  ctx.beginPath();
+  ctx.moveTo(mx, by);
+  ctx.lineTo(mx + mw, by);
+  ctx.strokeStyle = GREEN;
+  ctx.lineWidth = lw;
+  ctx.lineCap = 'round';
+  ctx.stroke();
+}
+
+/* ── Wordmark lockup ─────────────────────────────────────────────────────────
+   Draws icon + "PoultryFarm Pro" text side by side
+*/
+function drawWordmark(ctx, w, h, iconSize, fontSize, bg) {
+  if (bg) {
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, w, h);
+  }
+
+  // Centre the icon vertically; place text aligned to the same centre
+  const iconX = Math.round(h * 0.12);
+  const iconY = Math.round((h - iconSize) / 2);
+
+  // Translate so drawMark renders at (iconX, iconY)
+  ctx.save();
+  ctx.translate(iconX, iconY);
+  drawMark(ctx, iconSize, NAVY);
+  ctx.restore();
+
+  const tx   = iconX + iconSize + Math.round(iconSize * 0.22);
+  const midY = h / 2;
+
+  ctx.font = `700 ${fontSize}px -apple-system, "Helvetica Neue", sans-serif`;
+  ctx.textBaseline = 'middle';
+
+  ctx.fillStyle = bg === NAVY || bg === '#0f0e1a' ? WHITE : NAVY;
+  ctx.fillText('PoultryFarm', tx, midY - fontSize * 0.62);
+
+  ctx.fillStyle = PURPLE;
+  ctx.fillText('Pro', tx, midY + fontSize * 0.28);
+}
+
+function roundRect(ctx, x, y, w, h, r, fill) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+  if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+}
+
+/* ── Canvas → PNG download ───────────────────────────────────────────────────*/
+function canvasToPng(canvas, filename) {
+  const a = document.createElement('a');
+  a.href = canvas.toDataURL('image/png');
+  a.download = filename;
+  a.click();
+}
+
+const canvas = document.getElementById('canvas');
+const ctx    = canvas.getContext('2d');
+
+function renderIcon(size, bg, filename) {
+  canvas.width  = size;
+  canvas.height = size;
+  ctx.clearRect(0, 0, size, size);
+  drawMark(ctx, size, bg);
+  canvasToPng(canvas, filename);
+}
+
+function renderWordmark(w, h, iconSize, fontSize, bg, filename) {
+  canvas.width  = w;
+  canvas.height = h;
+  ctx.clearRect(0, 0, w, h);
+  drawWordmark(ctx, w, h, iconSize, fontSize, bg);
+  canvasToPng(canvas, filename);
+}
+
+/* ── Build preview SVG for a given size ─────────────────────────────────────*/
+function markSVG(s, bg) {
+  const pad = s * 0.08;
+  const mw  = s - pad * 2;
+  const by  = s - pad * 1.4;
+  const th  = s * 0.58;
+
+  const peaks = [0.42, 0.58, 0.74, 0.88, 1.00].map(f => ({ h: th * f }));
+  const pw = mw / 5;
+  const mx = pad;
+
+  let purple = `M ${mx},${by} `;
+  for (let i = 0; i < peaks.length; i++) {
+    const x0 = mx + i * pw, x1 = mx + (i + 0.5) * pw, x2 = mx + (i + 1) * pw;
+    const py = by - peaks[i].h, ry = by - peaks[i].h * 0.35;
+    purple += `L ${x0},${ry} C ${x0},${py + peaks[i].h * 0.1} ${x1 - pw * 0.15},${py} ${x1},${py} C ${x1 + pw * 0.15},${py} ${x2},${py + peaks[i].h * 0.1} ${x2},${ry} `;
+  }
+  purple += `L ${mx + mw},${by} Z`;
+
+  const ax = mx + 3 * pw, ax2 = mx + mw;
+  const aRise  = by - peaks[3].h * 0.35;
+  const aRise2 = by - peaks[4].h * 0.35;
+  const ap3 = by - peaks[3].h, ap4 = by - peaks[4].h;
+  const am3 = mx + 3.5 * pw, am4 = mx + 4.5 * pw;
+
+  const amber = `M ${ax},${aRise} C ${ax},${ap3 + peaks[3].h * 0.1} ${am3 - pw * 0.15},${ap3} ${am3},${ap3} C ${am3 + pw * 0.15},${ap3} ${mx + 4 * pw},${aRise2} ${mx + 4 * pw},${aRise2} C ${mx + 4 * pw},${ap4 + peaks[4].h * 0.1} ${am4 - pw * 0.15},${ap4} ${am4},${ap4} C ${am4 + pw * 0.15},${ap4} ${ax2},${ap4 + peaks[4].h * 0.1} ${ax2},${aRise2} L ${ax2},${by} L ${ax},${by} Z`;
+
+  const lw = Math.max(1.5, s * 0.04);
+  const bgRect = bg ? `<rect width="${s}" height="${s}" rx="${s * 0.24}" fill="${bg}"/>` : '';
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${s}" height="${s}" viewBox="0 0 ${s} ${s}">
+    ${bgRect}
+    <path d="${purple}" fill="${PURPLE}"/>
+    <path d="${amber}" fill="${AMBER}"/>
+    <line x1="${mx}" y1="${by}" x2="${mx + mw}" y2="${by}" stroke="${GREEN}" stroke-width="${lw}" stroke-linecap="round"/>
+  </svg>`;
+}
+
+/* ── Card builder ────────────────────────────────────────────────────────────*/
+function makeIconCard(container, label, meta, size, bg, bgClass, filename) {
+  const card = document.createElement('div');
+  card.className = `logo-card ${bgClass}`;
+
+  const preview = document.createElement('div');
+  preview.className = 'preview-area';
+  preview.innerHTML = markSVG(size > 120 ? 80 : size, bg);
+
+  const info = document.createElement('div');
+  info.className = 'card-info';
+  info.innerHTML = `
+    <div class="card-name">${label}</div>
+    <div class="card-meta">${meta}</div>
+    <button class="dl-btn" onclick="renderIcon(${size}, '${bg || ''}', '${filename}')">↓ Download PNG</button>
+  `;
+
+  card.appendChild(preview);
+  card.appendChild(info);
+  container.appendChild(card);
+}
+
+function makeWordmarkCard(container, label, meta, w, h, iconSize, fontSize, bg, bgClass, filename) {
+  const card = document.createElement('div');
+  card.className = `logo-card ${bgClass}`;
+  card.style.gridColumn = 'span 2';
+
+  // SVG preview
+  const pad   = h * 0.18;
+  const iconX  = Math.round(h * 0.12);
+  const iconY  = Math.round((h - iconSize) / 2);
+  const tx     = iconX + iconSize + Math.round(iconSize * 0.22);
+  const midY   = h / 2;
+  const fs     = fontSize;
+  const txtClr = (bg === NAVY || bg === '#0f0e1a') ? WHITE : NAVY;
+  const bgFill = bg || '#f1f5f9';
+
+  // Build the comb mark SVG paths positioned at (iconX, iconY)
+  const innerMark = markSVG(iconSize, NAVY)
+    .replace(`<svg xmlns="http://www.w3.org/2000/svg" width="${iconSize}" height="${iconSize}" viewBox="0 0 ${iconSize} ${iconSize}">`, '')
+    .replace('</svg>', '')
+    .replace(
+      `<rect width="${iconSize}" height="${iconSize}" rx="${(iconSize * 0.24).toFixed(2)}" fill="${NAVY}"/>`,
+      `<rect x="${iconX}" y="${iconY}" width="${iconSize}" height="${iconSize}" rx="${(iconSize * 0.24).toFixed(2)}" fill="${NAVY}"/>`
+    )
+    .replace(/(<(?:path|line)[^>]*?)(\/>)/g, (match, open, close) => {
+      // wrap paths in a translate group so they shift with the icon
+      return match;
+    });
+
+  const svgPreview = `<svg xmlns="http://www.w3.org/2000/svg" width="${Math.min(w, 300)}" height="${Math.round(h * (Math.min(w,300)/w))}" viewBox="0 0 ${w} ${h}">
+    <rect width="${w}" height="${h}" fill="${bgFill}"/>
+    <g transform="translate(${iconX},${iconY})">${
+      markSVG(iconSize, NAVY)
+        .replace(`<svg xmlns="http://www.w3.org/2000/svg" width="${iconSize}" height="${iconSize}" viewBox="0 0 ${iconSize} ${iconSize}">`, '')
+        .replace('</svg>', '')
+    }</g>
+    <text x="${tx}" y="${midY - fs * 0.62}" font-family="-apple-system,'Helvetica Neue',sans-serif" font-size="${fs}" font-weight="700" fill="${txtClr}" dominant-baseline="middle">PoultryFarm</text>
+    <text x="${tx}" y="${midY + fs * 0.28}" font-family="-apple-system,'Helvetica Neue',sans-serif" font-size="${fs}" font-weight="700" fill="${PURPLE}" dominant-baseline="middle">Pro</text>
+  </svg>`;
+
+  const preview = document.createElement('div');
+  preview.className = 'preview-area';
+  preview.style.padding = '16px';
+  preview.innerHTML = svgPreview;
+
+  const info = document.createElement('div');
+  info.className = 'card-info';
+  info.innerHTML = `
+    <div class="card-name">${label}</div>
+    <div class="card-meta">${meta}</div>
+    <button class="dl-btn" onclick="renderWordmark(${w},${h},${iconSize},${fontSize},'${bg || WHITE}','${filename}')">↓ Download PNG</button>
+  `;
+
+  card.appendChild(preview);
+  card.appendChild(info);
+  container.appendChild(card);
+}
+
+/* ── Populate grids ──────────────────────────────────────────────────────────*/
+const gApp      = document.getElementById('grid-app');
+const gFavicon  = document.getElementById('grid-favicon');
+const gWordmark = document.getElementById('grid-wordmark');
+const gSocial   = document.getElementById('grid-social');
+
+// App / PWA icons
+const appSizes = [
+  [1024, 'App Store (iOS)',      '1024 × 1024 px'],
+  [512,  'Play Store (Android)', '512 × 512 px'],
+  [192,  'PWA icon',             '192 × 192 px'],
+  [180,  'Apple touch icon',     '180 × 180 px'],
+  [167,  'iPad Pro icon',        '167 × 167 px'],
+  [152,  'iPad icon',            '152 × 152 px'],
+  [120,  'iPhone icon',          '120 × 120 px'],
+  [96,   'Android HDPI',         '96 × 96 px'],
+];
+appSizes.forEach(([sz, label, meta]) =>
+  makeIconCard(gApp, label, meta, sz, NAVY, 'dark-bg', `pfp-icon-${sz}.png`)
+);
+
+// Favicons
+const faviconSizes = [
+  [64,  'Favicon standard', '64 × 64 px'],
+  [48,  'Favicon large',    '48 × 48 px'],
+  [32,  'Favicon',          '32 × 32 px'],
+  [16,  'Favicon small',    '16 × 16 px'],
+];
+faviconSizes.forEach(([sz, label, meta]) =>
+  makeIconCard(gFavicon, label, meta, sz, NAVY, 'dark-bg', `pfp-favicon-${sz}.png`)
+);
+
+// Wordmark lockups
+const wordmarkSizes = [
+  [600, 120, 84, 28, WHITE, 'white-bg', 'Wordmark · light',          '600 × 120 px · light bg',    'pfp-wordmark-light.png'],
+  [600, 120, 84, 28, NAVY,  'dark-bg',  'Wordmark · dark',           '600 × 120 px · dark bg',     'pfp-wordmark-dark.png'],
+  [400, 80,  56, 19, WHITE, 'white-bg', 'Wordmark · medium · light', '400 × 80 px · light bg',     'pfp-wordmark-md-light.png'],
+  [400, 80,  56, 19, NAVY,  'dark-bg',  'Wordmark · medium · dark',  '400 × 80 px · dark bg',      'pfp-wordmark-md-dark.png'],
+  [240, 48,  34, 11, WHITE, 'white-bg', 'Wordmark · small · light',  '240 × 48 px · light bg',     'pfp-wordmark-sm-light.png'],
+  [240, 48,  34, 11, NAVY,  'dark-bg',  'Wordmark · small · dark',   '240 × 48 px · dark bg',      'pfp-wordmark-sm-dark.png'],
+];
+wordmarkSizes.forEach(([w, h, is, fs, bg, bgc, label, meta, fn]) =>
+  makeWordmarkCard(gWordmark, label, meta, w, h, is, fs, bg, bgc, fn)
+);
+
+// Social / OG
+const socialSizes = [
+  [1200, 630,  168, 56, NAVY,  'dark-bg',  'Open Graph / Twitter card',  '1200 × 630 px', 'pfp-og.png'],
+  [800,  800,  160, 50, NAVY,  'dark-bg',  'Square social (LinkedIn)',    '800 × 800 px',  'pfp-social-square.png'],
+  [1500, 500,  120, 38, NAVY,  'dark-bg',  'Twitter / X header',         '1500 × 500 px', 'pfp-twitter-header.png'],
+];
+socialSizes.forEach(([w, h, is, fs, bg, bgc, label, meta, fn]) =>
+  makeWordmarkCard(gSocial, label, meta, w, h, is, fs, bg, bgc, fn)
+);
+
+/* ── Download all sequentially ───────────────────────────────────────────────*/
+function downloadAll() {
+  let i = 0;
+  const queue = [
+    ...appSizes.map(([sz,,]) => () => renderIcon(sz, NAVY, `pfp-icon-${sz}.png`)),
+    ...faviconSizes.map(([sz,,]) => () => renderIcon(sz, NAVY, `pfp-favicon-${sz}.png`)),
+    ...wordmarkSizes.map(([w,h,is,fs,bg,,,,fn]) => () => renderWordmark(w,h,is,fs,bg||WHITE,fn)),
+    ...socialSizes.map(([w,h,is,fs,bg,,,,fn]) => () => renderWordmark(w,h,is,fs,bg||WHITE,fn)),
+  ];
+  function next() {
+    if (i >= queue.length) return;
+    queue[i++]();
+    setTimeout(next, 300);
+  }
+  next();
+}
+</script>
+</body>
+</html>

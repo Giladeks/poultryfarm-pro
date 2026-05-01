@@ -127,7 +127,7 @@ export async function middleware(request) {
 
 export const config = {
   matcher: [
-    // Match all routes except static files
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.png$|.*\\.jpg$|.*\\.svg$).*)',
+    // Match all routes except static files and PWA assets
+    '/((?!_next/static|_next/image|favicon.ico|manifest\\.json|sw\\.js|offline|icons/.*|.*\\.png$|.*\\.jpg$|.*\\.svg$|.*\\.ico$|.*\\.webp$).*)',
   ],
 };

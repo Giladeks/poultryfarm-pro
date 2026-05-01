@@ -797,18 +797,47 @@ function LogWeightModal({ section, apiFetch, onClose, onSave }) {
 // that need only a one-tap confirmation and optional flagged notes.
 
 function ObservationModal({ task, section, apiFetch, onClose, onSave }) {
-  const [notes,    setNotes]    = useState('');
-  const [flagging, setFlagging] = useState(false);
-  const [saving,   setSaving]   = useState(false);
-  const [error,    setError]    = useState('');
+  const [notes,       setNotes]       = useState('');
+  const [flagging,    setFlagging]    = useState(false);
+  const [saving,      setSaving]      = useState(false);
+  const [error,       setError]       = useState('');
+  const [photoFile,   setPhotoFile]   = useState(null);   // File object from camera/gallery
+  const [photoPreview,setPhotoPreview]= useState(null);   // local object URL for preview
+  const [uploading,   setUploading]   = useState(false);  // S3 upload in progress
+  const photoInputRef = useRef(null);
   const meta = TYPE_META[task?.taskType] || TYPE_META.OTHER;
+
+  // Upload photo to S3 via presigned URL, return public URL or null
+  async function uploadPhoto(file) {
+    setUploading(true);
+    try {
+      const res = await apiFetch('/api/observations/photo', {
+        method: 'POST',
+        body: JSON.stringify({ taskId: task.id, fileName: file.name, fileType: file.type }),
+      });
+      if (!res.ok) { setError('Photo upload failed — you can still submit without it'); return null; }
+      const { uploadUrl, publicUrl } = await res.json();
+      const s3res = await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': file.type }, body: file });
+      if (!s3res.ok) { setError('Photo upload failed — submitting without photo'); return null; }
+      return publicUrl;
+    } catch { setError('Photo upload failed — submitting without photo'); return null; }
+    finally { setUploading(false); }
+  }
 
   async function complete(note) {
     setSaving(true); setError('');
     try {
+      let photoUrl = null;
+      if (photoFile) photoUrl = await uploadPhoto(photoFile);
+
+      const completionNotes = photoUrl
+        ? `${note}
+📷 Photo: ${photoUrl}`
+        : note;
+
       const res = await apiFetch('/api/tasks?action=complete', {
         method: 'POST',
-        body: JSON.stringify({ taskId: task.id, completionNotes: note }),
+        body: JSON.stringify({ taskId: task.id, completionNotes }),
       });
       if (!res.ok) { const d = await res.json(); setError(d.error || 'Failed'); return; }
       onSave();
@@ -816,15 +845,24 @@ function ObservationModal({ task, section, apiFetch, onClose, onSave }) {
     finally { setSaving(false); }
   }
 
+  function handlePhotoChange(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) { setError('Photo must be under 10 MB'); return; }
+    setPhotoFile(file);
+    setPhotoPreview(URL.createObjectURL(file));
+    setError('');
+  }
+
   return (
     <ModalShell title={`${meta.icon} ${stripEmoji(task?.title) || 'Complete Task'}`} onClose={onClose}
       footer={<>
-        <button className='btn btn-ghost' onClick={onClose} disabled={saving}>Cancel</button>
+        <button className='btn btn-ghost' onClick={onClose} disabled={saving || uploading}>Cancel</button>
         {flagging
           ? <button onClick={() => { if (!notes.trim()) { setError('Describe the issue'); return; } complete(`Issue flagged: ${notes.trim()}`); }}
-              disabled={saving || !notes.trim()}
-              style={{ padding:'9px 16px', borderRadius:9, border:'none', background: saving?'#94a3b8':'#dc2626', color:'#fff', fontSize:13, fontWeight:700, cursor:'pointer', fontFamily:'inherit' }}>
-              {saving ? 'Saving…' : '⚑ Submit & Flag Issue'}
+              disabled={saving || uploading || !notes.trim()}
+              style={{ padding:'9px 16px', borderRadius:9, border:'none', background: (saving||uploading)?'#94a3b8':'#dc2626', color:'#fff', fontSize:13, fontWeight:700, cursor:'pointer', fontFamily:'inherit' }}>
+              {(saving||uploading) ? (uploading?'Uploading photo…':'Saving…') : '⚑ Submit & Flag Issue'}
             </button>
           : <button onClick={() => complete('All clear — no issues found.')}
               disabled={saving}
@@ -846,7 +884,6 @@ function ObservationModal({ task, section, apiFetch, onClose, onSave }) {
             {task.description}
           </div>
         )}
-        {/* Two equal-weight paths — All Clear hint + prominent Flag button */}
         {!flagging && (
           <div style={{ padding:'9px 13px', background:'#f0fdf4', border:'1px solid #bbf7d0', borderRadius:8, fontSize:12, color:'#15803d' }}>
             Tap <strong>All Clear</strong> if no issues were found.
@@ -862,11 +899,51 @@ function ObservationModal({ task, section, apiFetch, onClose, onSave }) {
           <span>{flagging ? 'Hide issue report' : 'Flag an Issue Instead'}</span>
         </button>
         {flagging && (
-          <div>
-            <label style={{ display:'block', fontSize:11, fontWeight:700, color:'var(--text-secondary)', marginBottom:5 }}>Describe the issue *</label>
-            <textarea className='input' rows={3} value={notes} onChange={e => { setNotes(e.target.value); setError(''); }}
-              placeholder='e.g. Blocked nipple in row 3, leaking pipe near cage 7…' style={{ resize:'vertical' }} autoFocus />
-          </div>
+          <>
+            <div>
+              <label style={{ display:'block', fontSize:11, fontWeight:700, color:'var(--text-secondary)', marginBottom:5 }}>Describe the issue *</label>
+              <textarea className='input' rows={3} value={notes} onChange={e => { setNotes(e.target.value); setError(''); }}
+                placeholder='e.g. Blocked nipple in row 3, leaking pipe near cage 7…' style={{ resize:'vertical' }} autoFocus />
+            </div>
+
+            {/* Photo capture — camera on mobile, file picker on desktop */}
+            <div>
+              <label style={{ display:'block', fontSize:11, fontWeight:700, color:'var(--text-secondary)', marginBottom:6 }}>
+                📷 Photo evidence <span style={{ fontWeight:400, color:'var(--text-muted)' }}>(optional)</span>
+              </label>
+              {photoPreview ? (
+                <div style={{ position:'relative', borderRadius:10, overflow:'hidden', border:'2px solid #fecaca', maxHeight:180 }}>
+                  <img src={photoPreview} alt="Issue photo" style={{ width:'100%', objectFit:'cover', maxHeight:180, display:'block' }} />
+                  <button
+                    onClick={() => { setPhotoFile(null); setPhotoPreview(null); if (photoInputRef.current) photoInputRef.current.value = ''; }}
+                    style={{ position:'absolute', top:6, right:6, width:28, height:28, borderRadius:'50%',
+                      background:'rgba(0,0,0,0.6)', border:'none', color:'#fff', fontSize:16,
+                      cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
+                    ×
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => photoInputRef.current?.click()}
+                  style={{ width:'100%', padding:'10px 14px', borderRadius:9,
+                    border:'1.5px dashed #e2e8f0', background:'#f8fafc',
+                    color:'var(--text-secondary)', fontSize:12, fontWeight:600,
+                    cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', gap:8 }}>
+                  <span style={{ fontSize:20 }}>📷</span>
+                  <span>Take photo or choose from gallery</span>
+                </button>
+              )}
+              {/* capture="environment" opens rear camera on mobile */}
+              <input
+                ref={photoInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                capture="environment"
+                style={{ display:'none' }}
+                onChange={handlePhotoChange}
+              />
+            </div>
+          </>
         )}
         {error && <div style={{ padding:'8px 12px', borderRadius:8, background:'#fef2f2', border:'1px solid #fecaca', fontSize:12, color:'#dc2626' }}>⚠ {error}</div>}
       </div>
