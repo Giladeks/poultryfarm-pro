@@ -1,4 +1,5 @@
 'use client';
+export const dynamic = 'force-dynamic';
 // app/farm/page.js — Flock management page
 // Phase 8-Supplement (Store Flow Revision):
 //   - CullModal: disposition SOLD removed → TRANSFERRED_TO_STORE added with store selector

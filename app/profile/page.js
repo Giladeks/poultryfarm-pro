@@ -1,4 +1,5 @@
 'use client';
+export const dynamic = 'force-dynamic';
 // app/profile/page.js — User profile: edit name, phone, avatar (S3)
 // Email is read-only for self; only FARM_ADMIN / CHAIRPERSON / SUPER_ADMIN can change it.
 import { useState, useRef, useCallback } from 'react';

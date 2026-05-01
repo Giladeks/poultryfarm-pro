@@ -1,4 +1,5 @@
 'use client';
+export const dynamic = 'force-dynamic';
 // app/rearing/page.js — Phase 8C Rearing Module with Transfer Verification
 // Sending PM: initiates transfer (PENDING) → flock stays put
 // Receiving PM: confirms receipt (COMPLETED) or disputes → flock moves on confirm

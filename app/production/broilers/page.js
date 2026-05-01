@@ -1,4 +1,5 @@
 'use client';
+export const dynamic = 'force-dynamic';
 // app/production/broilers/page.js — Phase 8E · Broiler Production Analytics
 //
 // Dedicated analytics page for PRODUCTION-stage broiler flocks.

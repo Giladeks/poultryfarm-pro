@@ -1,4 +1,5 @@
 'use client';
+export const dynamic = 'force-dynamic';
 // app/settings/page.js — Slack-style horizontal-tab layout
 // Tabs: Settings (overview) | Notifications | Email Alerts | Farm Profile | Security | Access Logs
 //

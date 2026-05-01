@@ -1,4 +1,5 @@
 'use client';
+export const dynamic = 'force-dynamic';
 // app/feed-changes/page.js
 // Phase 8H — Feed Change Request Workflow
 // PM creates → FM approves → SM executes (return old + issue new) → PM acknowledges

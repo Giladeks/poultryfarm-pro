@@ -1,4 +1,5 @@
 'use client';
+export const dynamic = 'force-dynamic';
 // app/reports/page.js — Reports & Export Engine
 import { useState, useCallback } from 'react';
 import AppShell from '@/components/layout/AppShell';

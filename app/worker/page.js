@@ -1,4 +1,5 @@
 'use client';
+export const dynamic = 'force-dynamic';
 // app/worker/page.js — Pen Worker Daily Dashboard
 // Redesigned: section-first layout — tasks nested per section, DailySummaryCard inline
 import { useState, useEffect, useCallback, useRef } from 'react';

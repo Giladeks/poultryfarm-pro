@@ -1,4 +1,5 @@
 'use client';
+export const dynamic = 'force-dynamic';
 // app/store/page.js — Store Inventory · Live Bird Receipts
 //
 // Mirrors the egg-store acknowledge/dispute flow for FlockLifecycleEvents.

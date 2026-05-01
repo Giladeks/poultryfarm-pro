@@ -1,4 +1,5 @@
 'use client';
+export const dynamic = 'force-dynamic';
 // app/production/layers/page.js — Phase 8D · Layer Production Analytics
 //
 // Dedicated analytics page for PRODUCTION-stage layer flocks.

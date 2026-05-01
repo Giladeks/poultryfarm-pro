@@ -1,4 +1,5 @@
 'use client';
+export const dynamic = 'force-dynamic';
 // app/audit/page.js — Audit Log + IC Investigation Flow
 import { useState, useEffect, useCallback, useRef } from 'react';
 import AppShell   from '@/components/layout/AppShell';

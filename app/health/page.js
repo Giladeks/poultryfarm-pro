@@ -1,4 +1,5 @@
 'use client';
+export const dynamic = 'force-dynamic';
 // app/health/page.js
 // UI additions:
 //   • Compact 7-day strip calendar above the table, coloured dots per vaccination status

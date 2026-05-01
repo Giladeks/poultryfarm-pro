@@ -1,4 +1,5 @@
 'use client';
+export const dynamic = 'force-dynamic';
 // app/feed-requisitions/page.js
 // Feed Requisition Workflow page
 // Role-aware — single page, different default tabs per role:

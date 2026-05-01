@@ -1,4 +1,5 @@
 'use client';
+export const dynamic = 'force-dynamic';
 // app/brooding/page.js — Phase 8C v2 Brooding Module
 // Tabs: Active Batches | New Day-Old Intake | Log Delivery | Temperature
 //

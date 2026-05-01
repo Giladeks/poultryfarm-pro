@@ -1,4 +1,5 @@
 'use client';
+export const dynamic = 'force-dynamic';
 // app/egg-store/page.js — Egg Store Receipt Acknowledgement
 //
 // Dedicated page for Store Manager / Store Clerk to acknowledge receipt of

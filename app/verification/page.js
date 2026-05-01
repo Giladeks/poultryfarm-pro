@@ -1,4 +1,5 @@
 'use client';
+export const dynamic = 'force-dynamic';
 // app/verification/page.js
 // Permission model (revised):
 //   PEN_MANAGER / STORE_MANAGER / STORE_CLERK  → Verify + Reject only

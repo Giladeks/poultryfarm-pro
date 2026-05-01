@@ -1,4 +1,5 @@
 'use client';
+export const dynamic = 'force-dynamic';
 // app/eggs/page.js — Layer Performance (formerly Egg Collection)
 import React, { useState, useEffect, useCallback } from 'react';
 import AppShell from '@/components/layout/AppShell';

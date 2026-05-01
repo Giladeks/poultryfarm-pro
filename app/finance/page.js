@@ -1,4 +1,5 @@
 'use client';
+export const dynamic = 'force-dynamic';
 // app/finance/page.js — Finance module: AP | AR | P&L | Reconciliation
 import { useState, useEffect, useCallback } from 'react';
 import AppShell from '@/components/layout/AppShell';

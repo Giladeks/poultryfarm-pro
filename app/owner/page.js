@@ -1,4 +1,5 @@
 'use client';
+export const dynamic = 'force-dynamic';
 // app/owner/page.js — Business Intelligence & Analytics (Batch 8)
 import { useState, useEffect } from 'react';
 import AppShell from '@/components/layout/AppShell';

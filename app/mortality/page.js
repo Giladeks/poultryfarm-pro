@@ -1,4 +1,5 @@
 'use client';
+export const dynamic = 'force-dynamic';
 // app/mortality/page.js — Mortality Records Module
 import { useState, useEffect, useCallback } from 'react';
 import AppShell from '@/components/layout/AppShell';

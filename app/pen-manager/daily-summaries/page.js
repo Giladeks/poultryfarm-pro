@@ -1,4 +1,5 @@
 'use client';
+export const dynamic = 'force-dynamic';
 // app/pen-manager/daily-summaries/page.js
 // Daily Summaries review page for Pen Managers (and Farm Managers+).
 //

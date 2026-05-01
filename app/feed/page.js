@@ -1,4 +1,5 @@
 'use client';
+export const dynamic = 'force-dynamic';
 // app/feed/page.js — restructured UI
 // 3 primary tabs: Inventory & Receipts | Consumption | Management
 // "Inventory & Receipts" merges the old Inventory + Receipts tabs

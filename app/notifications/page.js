@@ -1,4 +1,5 @@
 'use client';
+export const dynamic = 'force-dynamic';
 // app/notifications/page.js
 import { useState, useEffect, useCallback } from 'react';
 import AppShell from '@/components/layout/AppShell';
