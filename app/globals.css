@@ -307,6 +307,23 @@ body {
 .grid-2   { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
 .grid-3   { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
 
+/* ── Worker section grid: 3-col desktop → 1-col mobile ── */
+.worker-section-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+}
+
+/* ── Modal input grids: collapse on mobile ── */
+.modal-input-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.modal-input-grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+
+/* ── Feed bag inputs grid: 2-col desktop → 1-col mobile ── */
+.feed-bag-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+/* ── Session/date grid in feed modal: 2-col desktop → 1-col mobile ── */
+.feed-session-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
 /* ── AppShell mobile layout ── */
 /* Sidebar slides off-screen; bottom nav appears                             */
 .mobile-nav {
@@ -464,6 +481,59 @@ body {
   /* ── Section grid in dashboard: 1 col ── */
   .section-grid-2col {
     grid-template-columns: 1fr !important;
+  }
+
+  /* ── Worker section grid: collapse to 1 col ── */
+  .worker-section-grid {
+    grid-template-columns: 1fr !important;
+    gap: 10px !important;
+  }
+
+  /* ── Modal input grids: collapse to 1 col ── */
+  .modal-input-grid-2 { grid-template-columns: 1fr !important; }
+  .modal-input-grid-3 { grid-template-columns: 1fr !important; }
+
+  /* ── Feed modal grids: collapse to 1 col ── */
+  .feed-bag-grid     { grid-template-columns: 1fr !important; }
+  .feed-session-grid { grid-template-columns: 1fr !important; }
+
+  /* ── DashModalShell: bottom-sheet on mobile ── */
+  .dash-modal-overlay {
+    padding: 0 !important;
+    align-items: flex-end !important;
+  }
+  .dash-modal-inner {
+    border-radius: 20px 20px 0 0 !important;
+    max-height: 92vh !important;
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  /* ── Yesterday toggle: proper tap zone ── */
+  .yesterday-toggle {
+    min-height: 44px !important;
+    padding: 10px 16px !important;
+  }
+
+  /* ── Bucket weight Add button: full tap zone ── */
+  .weight-add-btn {
+    min-height: 48px !important;
+    padding: 12px 20px !important;
+    font-size: 15px !important;
+  }
+
+  /* ── DailySummaryCard checklist rows: generous tap targets ── */
+  .checklist-row {
+    min-height: 48px !important;
+    padding: 10px !important;
+  }
+
+  /* ── DailySummaryCard submit button: full width ── */
+  .summary-submit-btn {
+    width: 100% !important;
+    min-height: 48px !important;
+    font-size: 14px !important;
+    justify-content: center !important;
   }
 }
 

@@ -677,15 +677,15 @@ const MORT_CAUSES = [
 // ── Simple portal modal shell ─────────────────────────────────────────────────
 function DashModalShell({ title, onClose, footer, children }) {
   return createPortal(
-    <div style={{position:'fixed',inset:0,zIndex:1200,background:'rgba(0,0,0,0.45)',display:'flex',alignItems:'center',justifyContent:'center',padding:16}}
+    <div className="dash-modal-overlay" style={{position:'fixed',inset:0,zIndex:1200,background:'rgba(0,0,0,0.45)',display:'flex',alignItems:'center',justifyContent:'center',padding:16}}
       onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <div style={{background:'#fff',borderRadius:14,width:'100%',maxWidth:460,boxShadow:'0 12px 48px rgba(0,0,0,0.2)',display:'flex',flexDirection:'column',maxHeight:'90vh'}}>
+      <div className="dash-modal-inner" style={{background:'#fff',borderRadius:14,width:'100%',maxWidth:460,boxShadow:'0 12px 48px rgba(0,0,0,0.2)',display:'flex',flexDirection:'column',maxHeight:'90vh'}}>
         <div style={{padding:'18px 20px',borderBottom:'1px solid var(--border-card)',display:'flex',alignItems:'center',justifyContent:'space-between',flexShrink:0}}>
           <span style={{fontSize:15,fontWeight:800,color:'var(--text-primary)',fontFamily:"'Poppins',sans-serif"}}>{title}</span>
-          <button onClick={onClose} style={{background:'none',border:'none',fontSize:22,cursor:'pointer',color:'var(--text-muted)',lineHeight:1}}>×</button>
+          <button onClick={onClose} style={{background:'none',border:'none',fontSize:22,cursor:'pointer',color:'var(--text-muted)',lineHeight:1,minHeight:44,minWidth:44,display:'flex',alignItems:'center',justifyContent:'center'}}>×</button>
         </div>
         <div style={{padding:'18px 20px',overflowY:'auto',flexGrow:1}}>{children}</div>
-        <div style={{padding:'14px 20px',borderTop:'1px solid var(--border-card)',display:'flex',gap:10,justifyContent:'flex-end',flexShrink:0}}>{footer}</div>
+        <div style={{padding:'14px 20px',borderTop:'1px solid var(--border-card)',display:'flex',gap:10,justifyContent:'flex-end',flexShrink:0,flexWrap:'wrap'}}>{footer}</div>
       </div>
     </div>,
     document.body
@@ -776,7 +776,7 @@ function EditRecordModal({ item, apiFetch, onClose, onSave }) {
       <div style={{display:'flex',flexDirection:'column',gap:14}}>
         {isEgg ? (<>
           {/* Date + session */}
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+          <div className="modal-input-grid-2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
             <div>
               <label className="label">Collection Date *</label>
               <input type="date" className="input" value={eggForm.collectionDate}
@@ -792,21 +792,21 @@ function EditRecordModal({ item, apiFetch, onClose, onSave }) {
             </div>
           </div>
           {/* Crate-based fields */}
-          <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:10}}>
+          <div className="modal-input-grid-3" style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:10}}>
             <div>
               <label className="label">Full Crates *</label>
-              <input type="number" className="input" min="0" value={eggForm.cratesCollected}
+              <input type="number" inputMode="numeric" className="input" min="0" value={eggForm.cratesCollected}
                 onChange={e=>setE('cratesCollected',e.target.value)} placeholder="0" autoFocus/>
               <div style={{fontSize:9,color:'var(--text-muted)',marginTop:3}}>30 eggs each</div>
             </div>
             <div>
               <label className="label">Loose Eggs</label>
-              <input type="number" className="input" min="0" max="29" value={eggForm.looseEggs}
+              <input type="number" inputMode="numeric" className="input" min="0" max="29" value={eggForm.looseEggs}
                 onChange={e=>setE('looseEggs',e.target.value)} placeholder="0–29"/>
             </div>
             <div>
               <label className="label">Cracked</label>
-              <input type="number" className="input" min="0" value={eggForm.crackedCount}
+              <input type="number" inputMode="numeric" className="input" min="0" value={eggForm.crackedCount}
                 onChange={e=>setE('crackedCount',e.target.value)} placeholder="0"/>
             </div>
           </div>
@@ -820,7 +820,7 @@ function EditRecordModal({ item, apiFetch, onClose, onSave }) {
             </div>
           )}
         </>) : (<>
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+          <div className="modal-input-grid-2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
             <div>
               <label className="label">Date *</label>
               <input type="date" className="input" value={mortForm.recordDate}
@@ -828,7 +828,7 @@ function EditRecordModal({ item, apiFetch, onClose, onSave }) {
             </div>
             <div>
               <label className="label">Number of Deaths *</label>
-              <input type="number" className="input" min="1" value={mortForm.count}
+              <input type="number" inputMode="numeric" className="input" min="1" value={mortForm.count}
                 onChange={e=>setM('count',e.target.value)} placeholder="0"/>
             </div>
           </div>
@@ -1124,7 +1124,7 @@ function WorkerDashboard({ sections, tasks, user, apiFetch, showYesterday }) {
         )}
         {/* Flagged sections shown first */}
         {flaggedSections.length > 0 && (
-          <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:14,marginBottom:flaggedSections.length&&okSections.length?20:0}}>
+          <div className="worker-section-grid" style={{marginBottom:flaggedSections.length&&okSections.length?20:0}}>
             {flaggedSections.map(sec => (
               <WorkerSectionGridCard
                 key={sec.id}
@@ -1145,7 +1145,7 @@ function WorkerDashboard({ sections, tasks, user, apiFetch, showYesterday }) {
             My Sections ({okSections.length})
           </div>
         )}
-        <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:14}}>
+        <div className="worker-section-grid">
           {okSections.map(sec => (
             <WorkerSectionGridCard
               key={sec.id}
@@ -3699,6 +3699,7 @@ export default function DashboardPage() {
           <div style={{ display:'flex', justifyContent:'flex-end', marginBottom:8 }}>
             <button
               onClick={() => setShowYesterday(v => !v)}
+              className="yesterday-toggle"
               style={{
                 padding:'5px 14px', borderRadius:20, border:'1.5px solid',
                 borderColor: showYesterday ? '#6c63ff' : '#e2e8f0',

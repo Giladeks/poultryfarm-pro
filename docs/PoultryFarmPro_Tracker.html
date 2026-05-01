@@ -146,7 +146,7 @@
         <li>Phase 8E <span class="tag tag-done">DONE</span> — /production/broilers: harvest scheduler, Ross 308/Cobb 500 curves, FCR, batch profitability, 6-tab analytics</li>
         <li>Phase 8G <span class="tag tag-active">PARTIAL</span> — Worker Task System: 12-task layer production schedule, shift-block UI, ObservationModal, task-aware feed/egg modals, conditional top-up No Feed Added path, quick-log bar reduced to mortality, KPI narrative chips. DB-backed templates + admin UI still planned.</li>
         <li>Phase 8F <span class="tag tag-next">NEXT SPRINT</span> — Worker PWA (manifest, service worker, offline queue, web push). Deferred until task system stable.</li>
-        <li>Phase 8-Role-Corrections <span class="tag tag-done">DONE</span> — MORTALITY_CHECK dual-button, WorkerFeedModal issued qty banner, Feed Log tab (SM/IC/FM) with variance tracking</li>
+        <li>Role profile corrections (PM, FM, IC, SM) — egg/feed process flow alignment — <span class="tag tag-next">NEXT CHAT</span></li>
       </ul>
     </div>
     <div class="ctx-block">
@@ -653,18 +653,47 @@ const phases = [
     ]}
   ]},
 
-  { id:"p8f", name:"Phase 8F · Worker PWA", phaseStatus:"next", groups:[
-    { name:"PWA Core", tasks:[
-      { t:"public/manifest.json — standalone display, theme #6c63ff", s:"planned"},
-      { t:"public/sw.js — offline caching, IndexedDB submission queue", s:"planned"},
-      { t:"Web Push — 07:00 shift-start notification with pending task count", s:"planned"},
-      { t:"Connectivity indicator always visible (components/ui/ConnectivityBanner.js)", s:"planned"},
-      { t:"Photo documentation on flagged observation tasks", s:"planned"},
-      { t:"One-tap 'no issues' completion for observation tasks", s:"planned"}
+  { id:"p8f", name:"Worker PWA", phaseStatus:"done", groups:[
+    { name:"Shipped (Rev 2.4 — Production)", tasks:[
+      { t:"public/manifest.json — standalone PWA, #6c63ff theme, /worker start URL", s:"done"},
+      { t:"public/sw.js — cache-first static, network-first API GETs, IndexedDB offline queue, background sync, push handler", s:"done"},
+      { t:"components/ui/ConnectivityBanner.js — offline red banner, syncing blue flash, green sync-complete toast", s:"done"},
+      { t:"hooks/usePWA.js — SW registration, VAPID push subscription, enablePushNotifications() export", s:"done"},
+      { t:"app/api/push/subscribe/route.js — upsert push subscription per user+endpoint", s:"done"},
+      { t:"app/api/push/send/route.js — shift-start notifications at 07:00 WAT via Vercel cron", s:"done"},
+      { t:"app/api/observations/photo/route.js — S3 presigned URL for flagged observation photos", s:"done"},
+      { t:"ObservationModal — photo capture on flag path (capture=environment, rear camera on mobile)", s:"done"},
+      { t:"AppShell — usePWA() wired, ConnectivityBanner rendered, useSearchParams Suspense boundary fix", s:"done"},
+      { t:"app/offline/page.js — branded offline fallback page", s:"done"},
+      { t:"Middleware — manifest.json + sw.js + icons/* excluded from JWT auth check", s:"done"},
+      { t:"app/layout.js — manifest link tag + iOS PWA meta tags + viewport themeColor", s:"done"},
+      { t:"Vercel deployment — .npmrc legacy-peer-deps, prisma generate in build script, force-dynamic on all AppShell pages", s:"done"},
+      { t:"Supabase — schema + seed data migrated, pooled/direct URL configured in Vercel env vars", s:"done"},
+      { t:"PWA confirmed working on https://poultryfarm-pro.vercel.app — SW registered, manifest detected on HTTPS", s:"done"}
+    ]},
+    { name:"Outstanding", tasks:[
+      { t:"Mobile responsive polish — rendering not fluid on mobile; dedicated sprint needed", s:"planned"},
+      { t:"VAPID keys — generate + add to Vercel env vars before push notifications go live", s:"planned"},
+      { t:"push_subscriptions SQL migration — run in Supabase SQL editor", s:"planned"},
+      { t:"PWA icons — PFP branding icons updated and deployed", s:"done"}
     ]}
   ]},
 
   // ── Rev 1.9: Phase 8G — Worker Operations Sprint completed (UI + modal layer). DB templates still pending. ──
+  { id:"p8f-mobile", name:"Mobile Responsive Polish — PWA UI Refinement", phaseStatus:"next", groups:[
+    { name:"Mobile UI fixes needed", tasks:[
+      { t:"Global — touch targets minimum 44px, no horizontal scroll, font sizes readable on 375px viewport", s:"planned"},
+      { t:"Worker page — task cards stacked cleanly, modal bottom-sheet style on mobile, no overflow", s:"planned"},
+      { t:"Feed modal — bag count input and form fields full-width, numeric keyboard on mobile inputs", s:"planned"},
+      { t:"Egg modal — crate/loose/cracked inputs properly sized for thumb input", s:"planned"},
+      { t:"AppShell sidebar — collapses correctly on mobile, hamburger menu works", s:"planned"},
+      { t:"Performance page charts — ResponsiveContainer respects mobile viewport, legends readable", s:"planned"},
+      { t:"Feed Requisitions page — cards readable on 375px, action buttons thumb-friendly", s:"planned"},
+      { t:"Modals — max-height: 90vh with overflowY:auto on all modals, sticky headers/footers", s:"planned"},
+      { t:"ConnectivityBanner — does not overlap content on mobile", s:"planned"},
+      { t:"PWA install prompt — tested on Android Chrome and iOS Safari", s:"planned"}
+    ]}
+  ]},
   { id:"p8g", name:"Phase 8G · Worker Task Templates System", phaseStatus:"active", groups:[
     { name:"Shipped in Rev 1.1–1.3 (code-based templates)", tasks:[
       { t:"Code-based daily/weekly task templates per operationType (hardcoded in task generate route)", s:"done"},
@@ -720,14 +749,27 @@ const phases = [
   ]},
 
   // ── NEXT CHAT: Role Profile Corrections (PM / FM / IC / SM) ───────────────
-  { id:"p8-role-corrections", name:"Role Profile Corrections · PM / FM / IC / SM — Egg & Feed Process Flow", phaseStatus:"done", groups:[
-    { name:"Shipped (Rev 2.3)", tasks:[
-      { t:"MORTALITY_CHECK task: dual-button — '💀 Log Deaths' opens modal, '✓ No Deaths' marks task complete (no record, no IC queue item)", s:"done"},
-      { t:"WorkerFeedModal: issued qty banner from today's sectionBreakdown — shows kg + bag count from store issuance", s:"done"},
-      { t:"Feed Requisitions page: 🌾 Feed Log tab for SM/IC/FM — consumption vs issued per section per day with variance chip", s:"done"},
-      { t:"Feed Log tab: date picker, session rows (time/session/kg/remaining/g-bird/worker), colour-coded variance chip", s:"done"},
-      { t:"IC/FM Pending Approval tab: approve/reject SUBMITTED requisitions — API already correct, UI tabs confirmed", s:"done"},
-      { t:"SM Ready to Issue tab: issues against APPROVED requisitions — API already correct, UI tabs confirmed", s:"done"}
+  { id:"p8-role-corrections", name:"Role Profile Corrections · PM / FM / IC / SM — Egg & Feed Process Flow", phaseStatus:"next", groups:[
+    { name:"Pen Manager (PM) corrections", tasks:[
+      { t:"PM verification queue: exclude No-Feed-Added top-up completions (no consumption record = nothing to verify)", s:"planned"},
+      { t:"PM egg verification: session-aware (Batch 1 / Batch 2 shown clearly in verification card)", s:"planned"},
+      { t:"PM dashboard: feed distribution visibility — see today's feed log per section (task-driven not free-form)", s:"planned"},
+      { t:"PM feed requisition view: DRAFT auto-created from worker consumption, PM submits to IC", s:"planned"}
+    ]},
+    { name:"Farm Manager (FM) corrections", tasks:[
+      { t:"FM dashboard: feed KPI uses todayFeedKg (same field as worker chips) not 7d average", s:"planned"},
+      { t:"FM feed requisition approval flow: review sectionBreakdown, approve qty to store", s:"planned"},
+      { t:"FM egg analytics: session-split view (Batch 1 vs Batch 2 production comparison)", s:"planned"}
+    ]},
+    { name:"Internal Control (IC) corrections", tasks:[
+      { t:"IC verification: feed consumption records from task-linked logs carry task context (session label visible)", s:"planned"},
+      { t:"IC feed requisition: sees SUBMITTED requisitions, approves/rejects before store issuance", s:"planned"},
+      { t:"IC zero-count mortality records: no longer created (No Deaths = no record = no IC queue item)", s:"planned"}
+    ]},
+    { name:"Store Manager (SM) corrections", tasks:[
+      { t:"SM feed issuance: issues against APPROVED requisition; feedInventoryId drives WorkerFeedModal auto-fill", s:"planned"},
+      { t:"SM: issued quantity visible to worker on their feed modal (from requisition)", s:"planned"},
+      { t:"SM feed log: see task-linked consumption vs requisition-issued quantity per section per day", s:"planned"}
     ]}
   ]},
 

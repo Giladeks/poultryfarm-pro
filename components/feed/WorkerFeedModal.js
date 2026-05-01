@@ -389,7 +389,7 @@ export default function WorkerFeedModal({ section, task, apiFetch, onClose, onSa
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
 
           {/* Session label — read only, derived from task */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div className="feed-session-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <div>
               <label className="label">Session</label>
               <div style={{ padding: '9px 12px', borderRadius: 8, background: 'var(--bg-elevated)', border: '1px solid var(--border-card)', fontSize: 13, fontWeight: 600 }}>
@@ -454,11 +454,12 @@ export default function WorkerFeedModal({ section, task, apiFetch, onClose, onSa
           )}
 
           {/* Bag inputs */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div className="feed-bag-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <div>
               <label className="label">Empty Bags *</label>
               <input
                 type="number"
+                inputMode="numeric"
                 className="input"
                 min="0"
                 step="1"
@@ -475,6 +476,7 @@ export default function WorkerFeedModal({ section, task, apiFetch, onClose, onSa
               <label className="label">Remaining in Open Bag (kg)</label>
               <input
                 type="number"
+                inputMode="decimal"
                 className="input"
                 min="0"
                 max={prevRemainingKg > 0 ? prevRemainingKg : bagWt}

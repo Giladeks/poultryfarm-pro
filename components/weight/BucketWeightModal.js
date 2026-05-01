@@ -130,12 +130,12 @@ export default function BucketWeightModal({ section, task, apiFetch, onClose, on
   };
 
   return (
-    <div style={{
+    <div className="dash-modal-overlay" style={{
       position:'fixed', inset:0, zIndex:1200,
       background:'rgba(0,0,0,0.45)',
       display:'flex', alignItems:'center', justifyContent:'center', padding:16,
     }} onClick={e => e.target === e.currentTarget && onClose()}>
-      <div style={{
+      <div className="dash-modal-inner" style={{
         background:'#fff', borderRadius:14, width:'100%', maxWidth:460,
         boxShadow:'0 12px 48px rgba(0,0,0,0.2)', maxHeight:'92vh', overflowY:'auto',
       }}>
@@ -150,7 +150,7 @@ export default function BucketWeightModal({ section, task, apiFetch, onClose, on
               {section?.name} · {isLayer ? 'Layer production' : 'Broiler'} · Target: {targetSample} birds
             </div>
           </div>
-          <button onClick={onClose} style={{ background:'none', border:'none', fontSize:22, cursor:'pointer', color:'#94a3b8' }}>×</button>
+          <button onClick={onClose} style={{ background:'none', border:'none', fontSize:22, cursor:'pointer', color:'#94a3b8', minHeight:44, minWidth:44, display:'flex', alignItems:'center', justifyContent:'center' }}>×</button>
         </div>
 
         <div style={{ padding:'18px 20px', display:'flex', flexDirection:'column', gap:14 }}>
@@ -189,7 +189,7 @@ export default function BucketWeightModal({ section, task, apiFetch, onClose, on
             <div style={{ display:'flex', gap:8 }}>
               <input
                 ref={inputRef}
-                type='number' min='1' max='9999' step='1'
+                type='number' inputMode='decimal' min='1' max='9999' step='1'
                 value={input}
                 onChange={e => { setInput(e.target.value); setError(''); }}
                 onKeyDown={handleKeyDown}
@@ -198,6 +198,7 @@ export default function BucketWeightModal({ section, task, apiFetch, onClose, on
                 style={{ flex:1, padding:'11px 14px', borderRadius:8, border:`1.5px solid ${error ? '#fecaca' : '#e2e8f0'}`, fontSize:15, fontFamily:'inherit', outline:'none', boxSizing:'border-box' }}
               />
               <button onClick={addWeight} disabled={!input || saving}
+                className="weight-add-btn"
                 style={{ padding:'11px 20px', borderRadius:8, border:'none', background: input ? '#6c63ff' : '#e2e8f0', color: input ? '#fff' : '#94a3b8', fontSize:14, fontWeight:700, cursor: input ? 'pointer' : 'not-allowed', whiteSpace:'nowrap', fontFamily:'inherit' }}>
                 + Add
               </button>

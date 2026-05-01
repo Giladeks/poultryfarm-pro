@@ -206,7 +206,7 @@ export default function DailySummaryCard({ penSectionId, isLayer = true, stage =
             {checklist.map(([field, label]) => {
               const checked = summary[field] === true;
               return (
-                <label key={field} style={{
+                <label key={field} className="checklist-row" style={{
                   display: 'flex', alignItems: 'center', gap: 10,
                   cursor: isLocked ? 'default' : 'pointer',
                   padding: '6px 10px', borderRadius: 7,
@@ -219,7 +219,7 @@ export default function DailySummaryCard({ penSectionId, isLayer = true, stage =
                     checked={!!checked}
                     disabled={isLocked || saving}
                     onChange={e => toggleCheck(field, e.target.checked)}
-                    style={{ width: 15, height: 15, accentColor: 'var(--green)', cursor: isLocked ? 'default' : 'pointer' }}
+                    style={{ width: 18, height: 18, accentColor: 'var(--green)', cursor: isLocked ? 'default' : 'pointer', flexShrink: 0 }}
                   />
                   <span style={{ fontSize: 13, color: checked ? '#166534' : 'var(--text-secondary)', fontWeight: checked ? 700 : 400 }}>
                     {label}
@@ -319,11 +319,13 @@ export default function DailySummaryCard({ penSectionId, isLayer = true, stage =
           <button
             onClick={submitSummary}
             disabled={submitting}
+            className="summary-submit-btn"
             style={{
-              width: '100%', padding: '9px 0', borderRadius: 8, border: 'none',
+              width: '100%', padding: '11px 0', borderRadius: 8, border: 'none',
               background: submitting ? '#94a3b8' : '#16a34a',
-              color: '#fff', fontSize: 12, fontWeight: 700,
+              color: '#fff', fontSize: 13, fontWeight: 700,
               cursor: submitting ? 'not-allowed' : 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}>
             {submitting ? 'Submitting…' : '✓ Submit Day Summary'}
           </button>
