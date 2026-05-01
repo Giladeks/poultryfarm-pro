@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { Suspense } from 'react';
 import { createPortal } from 'react-dom';
 import { useAuth } from './AuthProvider';
 import { ROLE_LABELS } from '@/lib/constants/roles';
@@ -844,15 +845,32 @@ function CollapsibleGroup({ section, items, isOpen, onToggle, collapsed, pathnam
 }
 
 // ── AppShell ──────────────────────────────────────────────────────────────────
+// Inner component that safely uses useSearchParams (must be wrapped in Suspense)
+function AppShellInner({ children, search }) {
+  return <AppShellContent search={search}>{children}</AppShellContent>;
+}
+
+function SearchParamsProvider({ children }) {
+  const searchParams = useSearchParams();
+  const search = searchParams.toString() ? `?${searchParams.toString()}` : '';
+  return <AppShellContent search={search}>{children}</AppShellContent>;
+}
+
 export default function AppShell({ children }) {
+  return (
+    <Suspense fallback={<AppShellContent search="">{children}</AppShellContent>}>
+      <SearchParamsProvider>{children}</SearchParamsProvider>
+    </Suspense>
+  );
+}
+
+function AppShellContent({ children, search }) {
   const { user, logout, apiFetch } = useAuth();
 
   // ── PWA: register service worker + push subscription ─────────────────
   usePWA(apiFetch);
 
   const pathname         = usePathname();
-  const searchParams     = useSearchParams();
-  const search           = searchParams.toString() ? `?${searchParams.toString()}` : '';
 
   const [collapsed,     setCollapsed]     = useState(false);
   const [notifOpen,     setNotifOpen]     = useState(false);
