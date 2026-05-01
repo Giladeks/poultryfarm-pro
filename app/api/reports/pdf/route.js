@@ -583,17 +583,3 @@ export async function GET(request) {
   }
 }
 
-
-
-================================================
-FILE: app/api/search/route.js
-================================================
-// app/api/search/route.js — Global cross-entity search
-import { NextResponse } from 'next/server';
-import { prisma }       from '@/lib/db/prisma';
-import { verifyToken }  from '@/lib/middleware/auth';
-
-const MANAGER_ROLES = ['FARM_MANAGER', 'FARM_ADMIN', 'CHAIRPERSON', 'SUPER_ADMIN', 'PEN_MANAGER'];
-const STORE_ROLES   = ['STORE_MANAGER', 'STORE_CLERK'];
-
-// Map entity type → the page href to navigate to

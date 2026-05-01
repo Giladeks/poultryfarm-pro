@@ -32,7 +32,7 @@
 
 import { NextResponse } from 'next/server';
 import webpush          from 'web-push';
-import { prisma }       from '@/lib/prisma';
+import { prisma }       from '@/lib/db/prisma';
 import { verifyToken }  from '@/lib/middleware/auth';
 
 export const dynamic = 'force-dynamic';

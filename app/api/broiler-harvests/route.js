@@ -123,7 +123,7 @@ export async function POST(request) {
 
     // ── Resolve or create LIVE_BIRDS inventory item ───────────────────────────
     const itemName = `Live Birds — ${flock.batchCode}`;
-    let liveBirdsItemId: string;
+    let liveBirdsItemId;
     const existing = await prisma.inventoryItem.findFirst({
       where: { storeId: data.storeId, tenantId: user.tenantId, name: itemName, category: 'LIVE_BIRDS' },
       select: { id: true },
