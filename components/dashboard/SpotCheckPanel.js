@@ -168,7 +168,7 @@ export default function SpotCheckPanel({ apiFetch, user }) {
                 <div style={{ padding:'8px 12px', background:'#fef2f2', border:'1px solid #fecaca', borderRadius:8, fontSize:12, color:'#dc2626' }}>⚠ {err}</div>
               )}
 
-              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
+              <div className="modal-input-grid-2" style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
                 {/* Check type */}
                 <div>
                   <label style={{ display:'block', fontSize:11, fontWeight:700, color:'var(--text-secondary)', marginBottom:5 }}>Check Type</label>
@@ -302,6 +302,7 @@ export default function SpotCheckPanel({ apiFetch, user }) {
                         padding:'10px 18px',
                         borderBottom: i < history.length - 1 ? '1px solid var(--border-card)' : 'none',
                         background:'#fff',
+                        flexWrap:'wrap',
                       }}>
                         {/* Type icon */}
                         <span style={{ fontSize:16, flexShrink:0 }}>
@@ -325,8 +326,9 @@ export default function SpotCheckPanel({ apiFetch, user }) {
                           <button
                             onClick={() => setCompletingTask(task)}
                             style={{
-                              padding:'4px 11px', borderRadius:7, border:'1px solid #bbf7d0',
-                              background:'#f0fdf4', color:'#16a34a', fontSize:10,
+                              minHeight:'36px', padding:'6px 14px',
+                              borderRadius:7, border:'1px solid #bbf7d0',
+                              background:'#f0fdf4', color:'#16a34a', fontSize:11,
                               fontWeight:700, cursor:'pointer', flexShrink:0, whiteSpace:'nowrap',
                             }}>
                             Complete

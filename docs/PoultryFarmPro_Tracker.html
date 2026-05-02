@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>PoultryFarm Pro · Implementation Tracker Rev 2.2</title>
+<title>PoultryFarm Pro · Implementation Tracker Rev 2.5</title>
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
   body{background:#f0f4f8;font-family:'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:#0f172a;padding:0}
@@ -113,7 +113,7 @@
 <div class="banner">
   <div class="banner-top">
     <div>
-      <h1>🐔 PoultryFarm Pro <span>Implementation Tracker · Workplan Rev 2.2 · April 2026</span></h1>
+      <h1>🐔 PoultryFarm Pro <span>Implementation Tracker · Workplan Rev 2.5 · May 2026</span></h1>
       <div class="banner-meta">Multi-tenant poultry ERP · Next.js 16 · Prisma 5.22 · PostgreSQL · JWT · Recharts</div>
     </div>
     <div class="overall-pill">
@@ -145,8 +145,9 @@
         <li>Phase 8-Supp-Arch <span class="tag tag-done">DONE</span> — Navigation Architecture: AppShell 5-group sidebar (Production/Operations/Intelligence/Business/Processing); BusinessUnit design documented for Phase 10</li>
         <li>Phase 8E <span class="tag tag-done">DONE</span> — /production/broilers: harvest scheduler, Ross 308/Cobb 500 curves, FCR, batch profitability, 6-tab analytics</li>
         <li>Phase 8G <span class="tag tag-active">PARTIAL</span> — Worker Task System: 12-task layer production schedule, shift-block UI, ObservationModal, task-aware feed/egg modals, conditional top-up No Feed Added path, quick-log bar reduced to mortality, KPI narrative chips. DB-backed templates + admin UI still planned.</li>
-        <li>Phase 8F <span class="tag tag-next">NEXT SPRINT</span> — Worker PWA (manifest, service worker, offline queue, web push). Deferred until task system stable.</li>
-        <li>Role profile corrections (PM, FM, IC, SM) — egg/feed process flow alignment — <span class="tag tag-next">NEXT CHAT</span></li>
+        <li>Phase 8F <span class="tag tag-done">DONE</span> — Worker PWA: manifest, service worker, offline queue, web push. Deployed on Vercel.</li>
+        <li>Phase 8F-Mobile <span class="tag tag-done">DONE</span> — Full mobile responsive polish sprint: AppShell sidebar hidden on mobile, bottom nav per role, KPI scroll strips, bottom-sheet modals, numeric keyboards, touch targets, chart grid collapse, Recharts overflow fix.</li>
+        <li>Phase 8G <span class="tag tag-next">NEXT SPRINT</span> — DB-backed task template admin UI (code templates already done)</li>
       </ul>
     </div>
     <div class="ctx-block">
@@ -175,10 +176,50 @@
         <li>Next.js 16 dynamic routes: <code>const params = await rawParams</code></li>
         <li>Schema changes: SQL → <code>prisma db pull</code> → <code>prisma generate</code> — never edit schema.prisma directly</li>
         <li>All API routes must scope every query with <code>tenantId</code></li>
+        <li>Mobile: useIsMobile() hook (matchMedia 768px) in AppShell + page components; never use CSS !important to override inline React styles</li>
+        <li>SWC parser: never wrap JSX IIFE patterns <code>{expr ? (() =&gt; {})() : ...}</code> in custom components — use inline style ternary instead</li>
       </ul>
     </div>
   </div>
 </div>
+<!-- ── Transition Prompt ── -->
+<div class="context-section" style="margin-bottom:1.5rem">
+  <div style="background:#fff;border:2px solid #6c63ff;border-radius:1.1rem;padding:1.2rem 1.5rem">
+    <h3 style="font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#6c63ff;margin-bottom:.75rem">🚀 New Chat Transition Prompt — Rev 2.5</h3>
+    <p style="font-size:.78rem;line-height:1.7;color:#334155;background:#f8faff;border-radius:.5rem;padding:1rem;font-family:monospace;white-space:pre-wrap">You are continuing development of PoultryFarm Pro, a multi-tenant poultry farm ERP SaaS.
+
+Stack: Next.js 16.1.6 (App Router), Prisma 5.22.0, PostgreSQL (local dev / Supabase prod), JWT auth (localStorage key: pfp_token), Tailwind + custom CSS vars (--purple: #6c63ff), Poppins/Nunito, Recharts, pdfmake v0.2.x, Nigerian Naira/en-NG locale.
+GitHub: github.com/giladeks/poultryfarm-pro
+Production: https://poultryfarm-pro.vercel.app
+Test tenant: tenant-founding / subdomain greenacres
+
+CURRENT STATE — Rev 2.5
+Completed: Phases 1–7, 8A–8H, 8-Supplement, 8-Supp-Arch, 8-Role-Corrections, 8F (PWA), 8F-Mobile (full mobile responsive polish)
+Partial: 8G (code templates done; DB-backed admin UI pending)
+
+PHASE 8F-MOBILE SUMMARY (completed this session):
+- AppShell: sidebar hidden on mobile, useIsMobile() hook, role-aware bottom nav
+- Pen Worker: section grid 1-col, DashModalShell bottom-sheet, numeric keyboards on all inputs
+- Modal.js: fixed header + scrollable body + sticky footer (Cancel/Save always visible)
+- PM flows: Verify/Reject buttons 36px, verification tab scroll, feed-changes grids collapse
+- KPI strips: 160px fixed cards + horizontal scroll on dashboard + performance pages
+- Charts: grid collapses to 1-col on mobile, Recharts min-width:0 fix
+- Design decision: desk roles (IC, Accountant, Store Clerk) are desktop-only by intent
+- Key learning: never use CSS !important vs React inline styles; use isMobile in JS
+
+NEXT SPRINT: Phase 8G (DB-backed task template admin UI) or Phase 8I (Supplier Management)
+
+KEY RULES:
+- Date boundaries: Date.UTC(y,m,d) always
+- Schema changes: SQL → prisma db pull → prisma generate
+- All API calls use apiFetch from useAuth()
+- Never wrap JSX IIFE patterns in custom components (SWC parser issue) — use inline style ternary
+- File delivery: REPLACE__path__file.js naming convention, direct file edits preferred
+- Mobile changes: use useIsMobile() hook in JS, not CSS !important</p>
+  </div>
+</div>
+
+
 
 <!-- ── Controls ── -->
 <div class="main">
@@ -199,6 +240,19 @@
 
 <script>
 // ─────────────────────────────────────────────────────────────────────────────
+// WORKPLAN DATA — Rev 2.5 (May 2026)
+// Rev 2.5 changes (Phase 8F-Mobile Sprint):
+//   • Phase 8F-Mobile COMPLETED — full mobile responsive polish
+//   • AppShell: sidebar auto-hides on mobile, bottom nav per role
+//   • Role-aware mobile nav: Worker(Home/Tasks/Stats), PM(Home/Verify/Summaries/Stats),
+//     FM(Home/Farm/Verify/Stats), Admin(Home/Farm/Verify/Finance), Store(Home/Store/Feed)
+//   • Desk roles (IC, Accountant, Store Clerk) intentionally desktop-only
+//   • Modal.js restructured: fixed header + scrollable body + sticky footer
+//   • All worker data-entry inputs: inputMode=numeric/decimal
+//   • KPI scroll strips on all dashboard/stats pages (160px fixed cards, 2 visible)
+//   • Chart grids collapse to 1-col on mobile; Recharts overflow fixed via min-width:0
+//   • Priority 1/2/3 all completed; desk roles excluded by design decision
+//
 // WORKPLAN DATA — Rev 2.2 (April 2026)
 // Rev 2.2 changes (Worker Feed & Egg Session Fixes):
 //   • WorkerFeedModal: renamed bagsUsed→emptyBags (primary tracking unit for store returns)
@@ -672,26 +726,53 @@ const phases = [
       { t:"PWA confirmed working on https://poultryfarm-pro.vercel.app — SW registered, manifest detected on HTTPS", s:"done"}
     ]},
     { name:"Outstanding", tasks:[
-      { t:"Mobile responsive polish — rendering not fluid on mobile; dedicated sprint needed", s:"planned"},
-      { t:"VAPID keys — generate + add to Vercel env vars before push notifications go live", s:"planned"},
-      { t:"push_subscriptions SQL migration — run in Supabase SQL editor", s:"planned"},
+      { t:"Mobile responsive polish — rendering not fluid on mobile; dedicated sprint needed", s:"done"},
+      { t:"VAPID keys — generate + add to Vercel env vars before push notifications go live", s:"done"},
+      { t:"push_subscriptions SQL migration — run in Supabase SQL editor", s:"done"},
       { t:"PWA icons — PFP branding icons updated and deployed", s:"done"}
     ]}
   ]},
 
   // ── Rev 1.9: Phase 8G — Worker Operations Sprint completed (UI + modal layer). DB templates still pending. ──
-  { id:"p8f-mobile", name:"Mobile Responsive Polish — PWA UI Refinement", phaseStatus:"next", groups:[
-    { name:"Mobile UI fixes needed", tasks:[
-      { t:"Global — touch targets minimum 44px, no horizontal scroll, font sizes readable on 375px viewport", s:"planned"},
-      { t:"Worker page — task cards stacked cleanly, modal bottom-sheet style on mobile, no overflow", s:"planned"},
-      { t:"Feed modal — bag count input and form fields full-width, numeric keyboard on mobile inputs", s:"planned"},
-      { t:"Egg modal — crate/loose/cracked inputs properly sized for thumb input", s:"planned"},
-      { t:"AppShell sidebar — collapses correctly on mobile, hamburger menu works", s:"planned"},
-      { t:"Performance page charts — ResponsiveContainer respects mobile viewport, legends readable", s:"planned"},
-      { t:"Feed Requisitions page — cards readable on 375px, action buttons thumb-friendly", s:"planned"},
-      { t:"Modals — max-height: 90vh with overflowY:auto on all modals, sticky headers/footers", s:"planned"},
-      { t:"ConnectivityBanner — does not overlap content on mobile", s:"planned"},
-      { t:"PWA install prompt — tested on Android Chrome and iOS Safari", s:"planned"}
+  { id:"p8f-mobile", name:"Phase 8F-Mobile · Mobile Responsive Polish", phaseStatus:"done", groups:[
+    { name:"Priority 1 — Pen Worker Flows (Rev 2.5)", tasks:[
+      { t:"AppShell — sidebar hidden on mobile via useIsMobile(); bottom nav rendered per role (Worker/PM/FM/Admin/Store)", s:"done"},
+      { t:"AppShell — Farm Manager mobile nav shows Stats not Finance; desk roles (IC/Accountant/Store) use desktop only", s:"done"},
+      { t:"globals.css — mobile utility classes: worker-section-grid, modal-input-grid-2/3, feed-bag-grid, dash-modal-overlay/inner, yesterday-toggle, weight-add-btn, checklist-row, summary-submit-btn", s:"done"},
+      { t:"Worker dashboard section grid — 3-col desktop → 1-col mobile via className=worker-section-grid", s:"done"},
+      { t:"DashModalShell — bottom-sheet on mobile (slides up from bottom); close button 44px tap target", s:"done"},
+      { t:"Modal.js — restructured to fixed header + scrollable body + sticky footer; Cancel/Save always visible", s:"done"},
+      { t:"Egg collection modal — date+session 2-col and crates/loose/cracked 3-col collapse to 1-col; inputMode=numeric on all three", s:"done"},
+      { t:"Mortality modal — date+count 2-col collapses; count input inputMode=numeric", s:"done"},
+      { t:"WorkerFeedModal — session/date and bag-inputs grids collapse; emptyBags inputMode=numeric, remainingKg inputMode=decimal", s:"done"},
+      { t:"BucketWeightModal — bottom-sheet on mobile; weight input inputMode=decimal; Add button 48px tap zone", s:"done"},
+      { t:"DailySummaryCard — checklist rows 48px touch targets; checkbox 18px; submit button full-width 48px", s:"done"},
+      { t:"Yesterday toggle — 44px tap zone via className=yesterday-toggle", s:"done"}
+    ]},
+    { name:"Priority 2 — PM / FM Flows (Rev 2.5)", tasks:[
+      { t:"PM dashboard Verify/Reject buttons — minHeight 36px, font 11px; PM Override minHeight 32px", s:"done"},
+      { t:"Verification page — tab bar overflowX:auto (horizontal scroll); action buttons flexWrap+minHeight 34px", s:"done"},
+      { t:"Feed Changes page — tab buttons minHeight 38px; 4 modal grids collapse via modal-input-grid-2; number inputs get inputMode", s:"done"},
+      { t:"SpotCheckPanel — Complete button minHeight 36px; task row flexWrap; generate form grid collapses", s:"done"},
+      { t:"KPI cards — horizontal scroll strip on dashboard (worker + PM + manager) using useIsMobile() + 160px fixed columns", s:"done"},
+      { t:"KPI cards — same scroll strip on performance page (layer) and broiler-performance page", s:"done"},
+      { t:"KPI scroll uses isMobile inline style ternary (not KpiScrollGrid component) to avoid SWC JSX/IIFE parser conflicts", s:"done"}
+    ]},
+    { name:"Priority 3 — Management & Finance Flows (Rev 2.5)", tasks:[
+      { t:"Performance page — 3fr 2fr chart grid collapses to 1-col on mobile; chart heights 240→180px", s:"done"},
+      { t:"Dashboard chart modal — 2×2 grid uses repeat(auto-fit,minmax(260px,1fr)) to stack on mobile", s:"done"},
+      { t:"Manager dashboard chart pairs — same auto-fit treatment", s:"done"},
+      { t:"globals.css — .card gets min-width:0 + overflow:hidden on mobile to prevent Recharts blowout", s:"done"},
+      { t:"Finance page — 3-col/4-col stat grids use repeat(auto-fit,minmax(140px,1fr)); 2-col modal grids collapse", s:"done"},
+      { t:"Farm Structure page — 7-col/5-col pen stat grids use auto-fit; G2 form grid collapses; modal buttons flex-wrap", s:"done"}
+    ]},
+    { name:"Key Learnings & Decisions (Rev 2.5)", tasks:[
+      { t:"Desk roles (IC, Accountant, Store Manager, Clerk) intentionally desktop-only — data analysis requires full screen", s:"done"},
+      { t:"useIsMobile() hook added to AppShell, dashboard page, and performance pages — listens to matchMedia, SSR-safe", s:"done"},
+      { t:"CSS !important cannot override React inline styles — all layout switches done in JS via isMobile", s:"done"},
+      { t:"KpiScrollGrid custom component failed SWC parser when wrapping IIFE patterns — solved with inline style ternary", s:"done"},
+      { t:"suppressHydrationWarning not needed when isMobile starts false (SSR) and updates client-side — React treats as normal state", s:"done"},
+      { t:"Service worker cache intercepts file changes — always unregister SW on localhost before testing mobile changes", s:"done"}
     ]}
   ]},
   { id:"p8g", name:"Phase 8G · Worker Task Templates System", phaseStatus:"active", groups:[
@@ -975,7 +1056,7 @@ const phases = [
 // ─────────────────────────────────────────────────────────────────────────────
 // STATE
 // ─────────────────────────────────────────────────────────────────────────────
-const STORAGE_KEY = "pfp_tracker_v18"; // bumped to v18 — Rev 1.8 Phase 8E done + bug-fix sprint
+const STORAGE_KEY = "pfp_tracker_v25"; // bumped to v25 — Rev 2.5 Phase 8F-Mobile complete
 let checkState = null; // [phaseIdx][groupIdx][taskIdx] = bool
 let activeFilter = "all";
 let allExpanded = false;
@@ -994,7 +1075,16 @@ function initState() {
   if (stored) {
     try {
       const p = JSON.parse(stored);
-      if (Array.isArray(p) && p.length === phases.length) { checkState = p; return; }
+      // Validate shape matches current phases exactly — phase count, group count per phase,
+      // and task count per group must all match. Any mismatch means the data changed.
+      const valid = Array.isArray(p) && p.length === phases.length &&
+        phases.every((ph, pi) =>
+          Array.isArray(p[pi]) && p[pi].length === ph.groups.length &&
+          ph.groups.every((g, gi) =>
+            Array.isArray(p[pi][gi]) && p[pi][gi].length === g.tasks.length
+          )
+        );
+      if (valid) { checkState = p; return; }
     } catch(e) {}
   }
   checkState = phases.map(ph =>

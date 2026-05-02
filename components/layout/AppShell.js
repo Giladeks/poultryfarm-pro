@@ -844,6 +844,61 @@ function CollapsibleGroup({ section, items, isOpen, onToggle, collapsed, pathnam
   );
 }
 
+// ── Mobile detection hook ─────────────────────────────────────────────────────
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 768px)');
+    setIsMobile(mq.matches);
+    const handler = (e) => setIsMobile(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
+  return isMobile;
+}
+
+// ── Mobile bottom nav items — role-aware subset of NAV_ITEMS ─────────────────
+// Only the most essential links for each role group — 4 items max fits 375px
+function getMobileNavItems(user, flockStages) {
+  if (!user) return [];
+  const role = user.role;
+
+  if (role === 'PEN_WORKER') {
+    const items = [
+      { href: '/dashboard',  icon: '🏠', label: 'Home'  },
+      { href: '/worker',     icon: '✅', label: 'Tasks' },
+      { href: '/performance',icon: '📊', label: 'Stats' },
+    ];
+    if (flockStages.includes('BROODING')) items.splice(2, 0, { href: '/brooding', icon: '🐣', label: 'Brooding' });
+    return items.slice(0, 4);
+  }
+  if (role === 'PEN_MANAGER') return [
+    { href: '/dashboard',              icon: '🏠', label: 'Home'    },
+    { href: '/verification',           icon: '✅', label: 'Verify'  },
+    { href: '/pen-manager/daily-summaries', icon: '📋', label: 'Summaries' },
+    { href: '/performance',            icon: '📊', label: 'Stats'   },
+  ];
+  if (role === 'FARM_MANAGER') return [
+    { href: '/dashboard',    icon: '🏠', label: 'Home'   },
+    { href: '/farm-structure', icon: '🏗️', label: 'Farm' },
+    { href: '/verification', icon: '✅', label: 'Verify' },
+    { href: '/performance',  icon: '📊', label: 'Stats'  },
+  ];
+  if (['FARM_ADMIN','CHAIRPERSON','SUPER_ADMIN'].includes(role)) return [
+    { href: '/dashboard',    icon: '🏠', label: 'Home'    },
+    { href: '/farm-structure', icon: '🏗️', label: 'Farm'  },
+    { href: '/verification', icon: '✅', label: 'Verify'  },
+    { href: '/finance',      icon: '💰', label: 'Finance' },
+  ];
+  if (['STORE_MANAGER','STORE_CLERK'].includes(role)) return [
+    { href: '/dashboard', icon: '🏠', label: 'Home'  },
+    { href: '/store',     icon: '📦', label: 'Store' },
+    { href: '/feed',      icon: '🌾', label: 'Feed'  },
+  ];
+  // Fallback
+  return [{ href: '/dashboard', icon: '🏠', label: 'Home' }];
+}
+
 // ── AppShell ──────────────────────────────────────────────────────────────────
 // Inner component that safely uses useSearchParams (must be wrapped in Suspense)
 function AppShellInner({ children, search }) {
@@ -871,6 +926,7 @@ function AppShellContent({ children, search }) {
   usePWA(apiFetch);
 
   const pathname         = usePathname();
+  const isMobile         = useIsMobile();
 
   const [collapsed,     setCollapsed]     = useState(false);
   const [notifOpen,     setNotifOpen]     = useState(false);
@@ -1186,6 +1242,8 @@ function AppShellContent({ children, search }) {
     overflow: 'hidden',
   });
 
+  const mobileNavItems = getMobileNavItems(user, flockStages);
+
   return (
     <>
     <ConnectivityBanner />
@@ -1195,7 +1253,8 @@ function AppShellContent({ children, search }) {
         @keyframes fadeInLeft { from { opacity:0; transform:translateX(-6px) } to { opacity:1; transform:none } }
       `}</style>
 
-      {/* ── Sidebar ──────────────────────────────────────────────────────────── */}
+      {/* ── Sidebar — hidden on mobile ───────────────────────────────────────── */}
+      {!isMobile && (
       <aside style={{
         width: sideW, flexShrink: 0, background: '#fff',
         borderRight: '1px solid var(--border-card)',
@@ -1413,6 +1472,7 @@ function AppShellContent({ children, search }) {
           </button>
         </div>
       </aside>
+      )} {/* end !isMobile sidebar */}
 
       {/* Profile popover — rendered via portal */}
       {profileOpen && (
@@ -1429,18 +1489,27 @@ function AppShellContent({ children, search }) {
 
         {/* Topbar */}
         <header style={{
-          height: 60, background: '#fff', borderBottom: '1px solid var(--border-card)',
+          height: isMobile ? 56 : 60,
+          background: '#fff', borderBottom: '1px solid var(--border-card)',
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: '0 24px', position: 'sticky', top: 0, zIndex: 100,
+          padding: isMobile ? '0 14px' : '0 24px',
+          position: 'sticky', top: 0, zIndex: 100,
           boxShadow: '0 1px 4px rgba(0,0,0,0.05)',
         }}>
           <div>
-            <div style={{ fontFamily: "'Poppins',sans-serif", fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>
+            <div style={{ fontFamily: "'Poppins',sans-serif", fontSize: isMobile ? 13 : 15, fontWeight: 700, color: 'var(--text-primary)' }}>
               {user?.farmName || 'PoultryFarm Pro'}
             </div>
-            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-              {new Date().toLocaleDateString('en-NG', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
-            </div>
+            {!isMobile && (
+              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                {new Date().toLocaleDateString('en-NG', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+              </div>
+            )}
+            {isMobile && (
+              <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                {new Date().toLocaleDateString('en-NG', { day: 'numeric', month: 'short', year: 'numeric' })}
+              </div>
+            )}
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -1561,10 +1630,46 @@ function AppShellContent({ children, search }) {
         </header>
 
         {/* Page content */}
-        <main style={{ flex: 1, padding: '24px', overflowY: 'auto' }}>
+        <main style={{
+          flex: 1,
+          padding: isMobile ? '16px 14px' : '24px',
+          paddingBottom: isMobile ? '80px' : '24px',
+          overflowY: 'auto',
+        }}>
           {children}
         </main>
       </div>
+
+      {/* ── Mobile bottom nav ─────────────────────────────────────────────────── */}
+      {isMobile && (
+        <nav style={{
+          position: 'fixed', bottom: 0, left: 0, right: 0,
+          height: 60, background: '#fff',
+          borderTop: '1px solid var(--border-card)',
+          zIndex: 200, boxShadow: '0 -2px 12px rgba(0,0,0,0.08)',
+          display: 'flex', alignItems: 'stretch',
+        }}>
+          {mobileNavItems.map(item => {
+            const active = pathname === item.href || pathname.startsWith(item.href + '/');
+            return (
+              <Link key={item.href} href={item.href} style={{
+                flex: 1, display: 'flex', flexDirection: 'column',
+                alignItems: 'center', justifyContent: 'center',
+                gap: 3, textDecoration: 'none',
+                fontSize: 9, fontWeight: 700,
+                color: active ? 'var(--purple)' : 'var(--text-muted)',
+                fontFamily: "'Nunito', sans-serif",
+                padding: '6px 0',
+                borderTop: active ? '2px solid var(--purple)' : '2px solid transparent',
+                transition: 'color 0.15s',
+              }}>
+                <span style={{ fontSize: 20, lineHeight: 1 }}>{item.icon}</span>
+                <span>{item.label}</span>
+              </Link>
+            );
+          })}
+        </nav>
+      )}
     </div>
     </>
   );

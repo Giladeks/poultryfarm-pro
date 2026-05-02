@@ -493,18 +493,18 @@ function DiscrepancyRow({ v, canVerify, canManage, onAction, apiFetch }) {
           )}
         </td>
         <td style={{ padding: '14px 16px' }}>
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
             {/* Context expand toggle */}
-            <button onClick={load} style={{ padding: '5px 10px', borderRadius: 7, fontSize: 11, fontWeight: 700, background: expanded ? 'var(--purple-light)' : 'var(--bg-elevated)', color: expanded ? 'var(--purple)' : 'var(--text-secondary)', border: `1px solid ${expanded ? '#d4d8ff' : 'var(--border-card)'}`, cursor: 'pointer' }}>
+            <button onClick={load} style={{ padding: '7px 12px', minHeight: 34, borderRadius: 7, fontSize: 11, fontWeight: 700, background: expanded ? 'var(--purple-light)' : 'var(--bg-elevated)', color: expanded ? 'var(--purple)' : 'var(--text-secondary)', border: `1px solid ${expanded ? '#d4d8ff' : 'var(--border-card)'}`, cursor: 'pointer' }}>
               {expanded ? '▲ Hide' : '▼ Details'}
             </button>
             {v.status === 'DISCREPANCY_FOUND' && canVerify && (
-              <button onClick={() => onAction(v, 'escalate')} style={{ padding: '5px 10px', borderRadius: 7, fontSize: 11, fontWeight: 700, background: '#fdf4ff', color: '#9333ea', border: '1px solid #e9d5ff', cursor: 'pointer' }}>
+              <button onClick={() => onAction(v, 'escalate')} style={{ padding: '7px 12px', minHeight: 34, borderRadius: 7, fontSize: 11, fontWeight: 700, background: '#fdf4ff', color: '#9333ea', border: '1px solid #e9d5ff', cursor: 'pointer' }}>
                 🔺 Escalate
               </button>
             )}
             {(v.status === 'DISCREPANCY_FOUND' || v.status === 'ESCALATED') && canManage && (
-              <button onClick={() => onAction(v, 'resolve')} style={{ padding: '5px 10px', borderRadius: 7, fontSize: 11, fontWeight: 700, background: '#f0fdf4', color: '#16a34a', border: '1px solid #bbf7d0', cursor: 'pointer' }}>
+              <button onClick={() => onAction(v, 'resolve')} style={{ padding: '7px 12px', minHeight: 34, borderRadius: 7, fontSize: 11, fontWeight: 700, background: '#f0fdf4', color: '#16a34a', border: '1px solid #bbf7d0', cursor: 'pointer' }}>
                 ✓ Resolve
               </button>
             )}
@@ -887,7 +887,7 @@ export default function VerificationPage() {
       <div style={{ background: '#fff', borderRadius: 14, border: '1px solid var(--border-card)', boxShadow: '0 1px 4px rgba(0,0,0,0.04)', overflow: 'hidden' }}>
 
         {/* Tab bar */}
-        <div style={{ display: 'flex', borderBottom: '1px solid var(--border-card)', padding: '0 6px', gap: 2 }}>
+        <div style={{ display: 'flex', borderBottom: '1px solid var(--border-card)', padding: '0 6px', gap: 2, overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
           {TABS.map(tab => {
             const labels = {
               pending:  `⏳ Pending${summary?.totalPending ? ` (${summary.totalPending})` : ''}`,

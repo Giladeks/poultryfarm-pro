@@ -112,7 +112,7 @@ function LineItemsEditor({ items, onChange, readOnly }) {
 // ─── Shared: Totals row ───────────────────────────────────────────────────────
 function TotalsRow({ subtotal, taxAmount, totalAmount, currency, onTaxChange, readOnly }) {
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, background: 'var(--bg-elevated)', borderRadius: 10, padding: '14px 16px', border: '1px solid var(--border)' }}>
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: 12, background: 'var(--bg-elevated)', borderRadius: 10, padding: '14px 16px', border: '1px solid var(--border)' }}>
       <div>
         <label className="label">Subtotal</label>
         <p style={{ fontFamily: 'Poppins, sans-serif', fontSize: 16, fontWeight: 700, marginTop: 4 }}>{fmt(subtotal, currency)}</p>
@@ -240,7 +240,7 @@ function ApCreateModal({ suppliers, receipts, onClose, onSave, saving, apiFetch 
           <h2 style={{ fontFamily: 'Poppins, sans-serif', fontSize: 18 }}>New Supplier Invoice</h2>
           <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 24, cursor: 'pointer', color: 'var(--text-muted)' }}>×</button>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))', gap: 16, marginBottom: 16 }}>
           <div><label className="label">Invoice Number</label><div style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 8, padding: '9px 12px', fontSize: 13, fontWeight: 700, color: 'var(--purple)', letterSpacing: '0.03em' }}>{form.invoiceNumber || 'Generating…'}</div></div>
           <div><label className="label">Supplier *</label>
             <select className="input" value={form.supplierId} onChange={e => set('supplierId', e.target.value)}>
@@ -297,14 +297,14 @@ function ApDetailModal({ invoice, onClose, onApprove, onPay, onDispute, onVoid, 
           </div>
           <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 24, cursor: 'pointer', color: 'var(--text-muted)' }}>×</button>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12, background: 'var(--bg-elevated)', borderRadius: 10, padding: '14px 16px', border: '1px solid var(--border)', marginBottom: 18 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: 12, background: 'var(--bg-elevated)', borderRadius: 10, padding: '14px 16px', border: '1px solid var(--border)', marginBottom: 18 }}>
           {[['Supplier', invoice.supplier?.name], ['Invoice Date', fmtDate(invoice.invoiceDate)], ['Due Date', fmtDate(invoice.dueDate)], ['Currency', invoice.currency], ['Linked GRN', invoice.linkedReceipt?.batchNumber || '—'], ['Created By', invoice.createdBy ? `${invoice.createdBy.firstName} ${invoice.createdBy.lastName}` : '—'], ['Approved By', invoice.approvedBy ? `${invoice.approvedBy.firstName} ${invoice.approvedBy.lastName}` : '—'], ['Approved At', fmtDate(invoice.approvedAt)], ['Payment Ref', invoice.paymentRef || '—']].map(([k, v]) => (
             <div key={k}><p style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', letterSpacing: '0.06em' }}>{k}</p><p style={{ fontSize: 13, fontWeight: 600, marginTop: 2 }}>{v}</p></div>
           ))}
         </div>
         {invoice.notes && <div style={{ background: 'var(--amber-bg)', border: '1px solid var(--amber-border)', borderRadius: 8, padding: '10px 14px', marginBottom: 16, fontSize: 13 }}>{invoice.notes}</div>}
         <div style={{ marginBottom: 18 }}><p className="section-header">Line Items</p><LineItemsEditor items={Array.isArray(invoice.lineItems) ? invoice.lineItems : []} onChange={() => {}} readOnly /></div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 10, marginBottom: 16 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: 10, marginBottom: 16 }}>
           {[['Subtotal', fmt(invoice.subtotal, invoice.currency), 'var(--text-primary)'], ['Tax', fmt(invoice.taxAmount, invoice.currency), 'var(--text-secondary)'], ['Total', fmt(invoice.totalAmount, invoice.currency), 'var(--purple)'], ['Balance', fmt(balance, invoice.currency), invoice.status === 'PAID' ? 'var(--green)' : 'var(--red)']].map(([k, v, c]) => (
             <div key={k} style={{ textAlign: 'center', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 8px' }}>
               <p style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', letterSpacing: '0.06em', marginBottom: 4 }}>{k}</p>
@@ -661,7 +661,7 @@ function ArCreateModal({ customers, flocks, onClose, onSave, saving, apiFetch })
           <h2 style={{ fontFamily: 'Poppins, sans-serif', fontSize: 18 }}>New Sales Invoice</h2>
           <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 24, cursor: 'pointer', color: 'var(--text-muted)' }}>×</button>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))', gap: 16, marginBottom: 16 }}>
           <div><label className="label">Invoice Number</label><div style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 8, padding: '9px 12px', fontSize: 13, fontWeight: 700, color: 'var(--purple)', letterSpacing: '0.03em' }}>{form.invoiceNumber || 'Generating…'}</div></div>
           <div><label className="label">Customer *</label>
             <select className="input" value={form.customerId} onChange={e => set('customerId', e.target.value)}>
@@ -718,14 +718,14 @@ function ArDetailModal({ invoice, onClose, onSend, onPay, onVoid, onReminder, on
           </div>
           <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 24, cursor: 'pointer', color: 'var(--text-muted)' }}>×</button>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12, background: 'var(--bg-elevated)', borderRadius: 10, padding: '14px 16px', border: '1px solid var(--border)', marginBottom: 18 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: 12, background: 'var(--bg-elevated)', borderRadius: 10, padding: '14px 16px', border: '1px solid var(--border)', marginBottom: 18 }}>
           {[['Customer', invoice.customer?.name], ['Contact', invoice.customer?.contactName || '—'], ['Email', invoice.customer?.email || '—'], ['Invoice Date', fmtDate(invoice.invoiceDate)], ['Due Date', fmtDate(invoice.dueDate)], ['Payment Terms', invoice.customer?.paymentTerms || '—'], ['Currency', invoice.currency], ['Created By', invoice.createdBy ? `${invoice.createdBy.firstName} ${invoice.createdBy.lastName}` : '—'], ['Payment Ref', invoice.paymentRef || '—']].map(([k, v]) => (
             <div key={k}><p style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', letterSpacing: '0.06em' }}>{k}</p><p style={{ fontSize: 13, fontWeight: 600, marginTop: 2 }}>{v}</p></div>
           ))}
         </div>
         {invoice.notes && <div style={{ background: 'var(--amber-bg)', border: '1px solid var(--amber-border)', borderRadius: 8, padding: '10px 14px', marginBottom: 16, fontSize: 13 }}>{invoice.notes}</div>}
         <div style={{ marginBottom: 18 }}><p className="section-header">Line Items</p><LineItemsEditor items={Array.isArray(invoice.lineItems) ? invoice.lineItems : []} onChange={() => {}} readOnly /></div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 10, marginBottom: 16 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: 10, marginBottom: 16 }}>
           {[['Subtotal', fmt(invoice.subtotal, invoice.currency), 'var(--text-primary)'], ['Tax', fmt(invoice.taxAmount, invoice.currency), 'var(--text-secondary)'], ['Total', fmt(invoice.totalAmount, invoice.currency), 'var(--purple)'], ['Balance', fmt(balance, invoice.currency), invoice.status === 'PAID' ? 'var(--green)' : 'var(--red)']].map(([k, v, c]) => (
             <div key={k} style={{ textAlign: 'center', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 8px' }}>
               <p style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', letterSpacing: '0.06em', marginBottom: 4 }}>{k}</p>
@@ -1100,7 +1100,7 @@ function AddTxModal({ onClose, onSave, saving }) {
         </div>
 
         <div style={{ display: 'grid', gap: 14 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 12 }}>
             <div>
               <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>Date *</label>
               <input className="input" type="date" value={form.txDate} onChange={e => set('txDate', e.target.value)} />
@@ -1117,7 +1117,7 @@ function AddTxModal({ onClose, onSave, saving }) {
             <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>Description *</label>
             <input className="input" value={form.description} onChange={e => set('description', e.target.value)} placeholder="e.g. Customer payment - Invoice #1042" />
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 12 }}>
             <div>
               <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>Amount *</label>
               <input className="input" type="number" min="0" step="any" value={form.amount} onChange={e => set('amount', e.target.value)} placeholder="0.00" />
@@ -1129,7 +1129,7 @@ function AddTxModal({ onClose, onSave, saving }) {
               </select>
             </div>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 12 }}>
             <div>
               <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>Reference / Ref No.</label>
               <input className="input" value={form.reference} onChange={e => set('reference', e.target.value)} placeholder="CHQ-001, TRF-2024..." />
@@ -1782,7 +1782,7 @@ function PlTab({ apiFetch, role }) {
           </div>
 
           {/* P&L Statement + Chart */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(260px,1fr))', gap: 16, marginBottom: 20 }}>
             {/* Income statement */}
             <div className="card" style={{ padding: '18px 20px' }}>
               <p style={{ fontFamily: 'Poppins, sans-serif', fontSize: 14, fontWeight: 700, marginBottom: 16, color: 'var(--text-primary)' }}>Income Statement</p>

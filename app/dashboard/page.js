@@ -20,6 +20,20 @@ const OP_ICON    = { LAYER:'🥚', BROILER:'🍗' };
 const PRIORITY_COLOR = { URGENT:'#ef4444', HIGH:'#f59e0b', NORMAL:'#6c63ff', LOW:'#9ca3af' };
 const STATUS_CLASS   = { PENDING:'status-amber', IN_PROGRESS:'status-blue', COMPLETED:'status-green', OVERDUE:'status-red' };
 
+
+// ── Mobile detection (mirrors AppShell) ──────────────────────────────────────
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 768px)');
+    setIsMobile(mq.matches);
+    const handler = (e) => setIsMobile(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
+  return isMobile;
+}
+
 function occColor(p)  { return p>=90?'#ef4444':p>=70?'#f59e0b':'#22c55e'; }
 function fcrColor(f)  { return f>2.5?'#ef4444':f>2.0?'#f59e0b':'#22c55e'; }
 function rateColor(r) { return r>=85?'#16a34a':r>=70?'#f59e0b':'#ef4444'; }
@@ -147,7 +161,7 @@ function ChartModal({ sectionId, sectionName, penName, opType, stage = 'PRODUCTI
   );
 
   const layerCharts = (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gridTemplateRows: '1fr 1fr', gap: 14, flex: 1, minHeight: 0 }}>
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(260px,1fr))', gap: 14, flex: 1, minHeight: 0 }}>
       <Tile title="🥚 Eggs Collected & Laying Rate">
         {loading ? <Spinner /> : (
           <ResponsiveContainer width="100%" height={220}>
@@ -234,7 +248,7 @@ function ChartModal({ sectionId, sectionName, penName, opType, stage = 'PRODUCTI
   );
 
   const broilerCharts = (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gridTemplateRows: '1fr 1fr', gap: 14, flex: 1, minHeight: 0 }}>
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(260px,1fr))', gap: 14, flex: 1, minHeight: 0 }}>
       <Tile title={isRearing ? "⚖ Pullet Weight vs ISA Brown Target" : "⚖ Live Weight vs Ross 308 Target"}>
         {loading ? <Spinner /> : (
           <ResponsiveContainer width="100%" height={220}>
@@ -852,6 +866,7 @@ function EditRecordModal({ item, apiFetch, onClose, onSave }) {
 }
 
 function WorkerDashboard({ sections, tasks, user, apiFetch, showYesterday }) {
+  const isMobile = useIsMobile();
   const isL      = sections.some(s=>s.penOperationType==='LAYER');
   const totDead  = sections.reduce((s,sec)=>s+sec.metrics.todayMortality,0);
   const totBirds = sections.reduce((s,sec)=>s+sec.currentBirds,0);
@@ -1071,10 +1086,18 @@ function WorkerDashboard({ sections, tasks, user, apiFetch, showYesterday }) {
         />
       </div>
 
-      {/* ── KPI row (4 cards) ── */}
-      <div style={{display:'grid',gridTemplateColumns:`repeat(${workerKpis.length},1fr)`,gap:14,marginBottom:24}}>
-        {workerKpis.map(k=><KpiCard key={k.label} label={k.label} value={k.value} sub={k.sub} delta={k.delta} trend={k.trend} status={k.status} icon={k.icon} context={k.context} />)}
-      </div>
+      {/* ── KPI row (4 cards) — scrolls horizontally on mobile ── */}
+      {isMobile ? (
+        <div style={{overflowX:'auto',WebkitOverflowScrolling:'touch',marginBottom:24,paddingBottom:4}}>
+          <div style={{display:'grid',gridTemplateColumns:`repeat(${workerKpis.length},160px)`,gap:10,width:'max-content'}}>
+            {workerKpis.map(k=><KpiCard key={k.label} label={k.label} value={k.value} sub={k.sub} delta={k.delta} trend={k.trend} status={k.status} icon={k.icon} context={k.context} />)}
+          </div>
+        </div>
+      ) : (
+        <div style={{display:'grid',gridTemplateColumns:`repeat(${workerKpis.length},1fr)`,gap:10,marginBottom:24}}>
+          {workerKpis.map(k=><KpiCard key={k.label} label={k.label} value={k.value} sub={k.sub} delta={k.delta} trend={k.trend} status={k.status} icon={k.icon} context={k.context} />)}
+        </div>
+      )}
 
       {/* ── Needs Correction banner ── */}
       {rejected.length > 0 && (
@@ -1774,6 +1797,7 @@ function StripStat({ label, value, note, status }) {
 }
 
 function OpKpiBlock({ title, opIcon, isLayer, cards }) {
+  const isMobile = useIsMobile();
   const crit = cards.filter(c=>c.status==='critical').length;
   const warn = cards.filter(c=>c.status==='warn').length;
   const accentColor = isLayer ? '#6c63ff' : '#ea580c';
@@ -1795,10 +1819,18 @@ function OpKpiBlock({ title, opIcon, isLayer, cards }) {
         {/* Divider line fills remaining space */}
         <div style={{flex:1,height:1,background:'#e2e8f0',marginLeft:4}}/>
       </div>
-      {/* Cards — always visible */}
-      <div style={{display:'grid',gridTemplateColumns:`repeat(${cards.length},1fr)`,gap:10}}>
-        {cards.map(c=><KpiCard key={c.label} label={c.label} value={c.value} sub={c.sub} delta={c.delta} trend={c.trend} status={c.status} icon={c.icon} context={c.context} onClick={c.onClick||null} compact />)}
-      </div>
+      {/* Cards — always visible, scrolls horizontally on mobile */}
+      {isMobile ? (
+        <div style={{overflowX:'auto',WebkitOverflowScrolling:'touch',paddingBottom:4}}>
+          <div style={{display:'grid',gridTemplateColumns:`repeat(${cards.length},160px)`,gap:10,width:'max-content'}}>
+            {cards.map(c=><KpiCard key={c.label} label={c.label} value={c.value} sub={c.sub} delta={c.delta} trend={c.trend} status={c.status} icon={c.icon} context={c.context} onClick={c.onClick||null} compact />)}
+          </div>
+        </div>
+      ) : (
+        <div style={{display:'grid',gridTemplateColumns:`repeat(${cards.length},1fr)`,gap:10}}>
+          {cards.map(c=><KpiCard key={c.label} label={c.label} value={c.value} sub={c.sub} delta={c.delta} trend={c.trend} status={c.status} icon={c.icon} context={c.context} onClick={c.onClick||null} compact />)}
+        </div>
+      )}
     </div>
   );
 }
@@ -2379,7 +2411,7 @@ function StoreDashboard({ data, isClerk }) {
         </div>
       )}
 
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16, marginTop:20 }}>
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(260px,1fr))', gap:16, marginTop:20 }}>
         {/* Inventory table */}
         <div className="card" style={{ padding:0, overflow:'hidden' }}>
           <div style={{ padding:'14px 18px', borderBottom:'1px solid var(--border-card)', fontWeight:700, fontSize:13 }}>📦 Feed Inventory</div>
@@ -2503,7 +2535,7 @@ function FeedMillDashboard({ data }) {
         <RoleKpiTile icon="⚠️" label="Low Stock Lines"  value={inventory.lowStockCount}  sub="At reorder level"       color="#ef4444" warn={inventory.lowStockCount>0} />
       </div>
 
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16, marginTop:20 }}>
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(260px,1fr))', gap:16, marginTop:20 }}>
         <div className="card" style={{ padding:0, overflow:'hidden' }}>
           <div style={{ padding:'14px 18px', borderBottom:'1px solid var(--border-card)', fontWeight:700, fontSize:13 }}>🏭 Production Batches</div>
           {mill.batches.length===0 ? <RoleEmptyCard msg="No recent batches" /> : (
@@ -2627,7 +2659,7 @@ function QCDashboard({ data }) {
         </div>
       )}
 
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16, marginTop:20 }}>
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(260px,1fr))', gap:16, marginTop:20 }}>
         <div className="card" style={{ padding:0, overflow:'hidden' }}>
           <div style={{ padding:'14px 18px', borderBottom:'1px solid var(--border-card)', fontWeight:700, fontSize:13 }}>⏳ Tests Pending</div>
           {qc.pending.length===0 ? <RoleEmptyCard icon="✅" msg="All tests completed — great work!" /> : (

@@ -483,6 +483,14 @@ body {
     grid-template-columns: 1fr !important;
   }
 
+
+
+  /* ── Chart cards: prevent Recharts overflow ── */
+  .card {
+    min-width: 0 !important;
+    overflow: hidden !important;
+  }
+
   /* ── Worker section grid: collapse to 1 col ── */
   .worker-section-grid {
     grid-template-columns: 1fr !important;

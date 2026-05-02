@@ -45,6 +45,20 @@ const STATUS_BG    = { good:'#f0fdf4', warn:'#fffbeb', critical:'#fef2f2', neutr
 const STATUS_BORDER= { good:'#bbf7d0', warn:'#fde68a', critical:'#fecaca', neutral:'#e2e8f0' };
 
 // ── Performance KPI card ──────────────────────────────────────────────────────
+
+// ── Mobile detection ──────────────────────────────────────────────────────────
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 768px)');
+    setIsMobile(mq.matches);
+    const handler = (e) => setIsMobile(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
+  return isMobile;
+}
+
 function PerfKpiCard({ icon, label, value, sub, delta, status = 'neutral' }) {
   const col = STATUS_COLOR[status] || STATUS_COLOR.neutral;
   const bg  = STATUS_BG[status]    || STATUS_BG.neutral;
@@ -300,6 +314,7 @@ function EditEggModal({ record, flocks, onClose, onSave, apiFetch }) {
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 export default function EggsPage() {
+  const isMobile = useIsMobile();
   const { apiFetch, user } = useAuth();
 
   const [days,        setDays]        = useState(30);
@@ -781,10 +796,16 @@ export default function EggsPage() {
                   Live · Today
                 </span>
               </div>
-              <div style={{ display:'grid', gridTemplateColumns:`repeat(${kpis.length},1fr)`, gap:12 }}>
-                {loading ? Array(kpis.length).fill(0).map((_,i)=><Skeleton key={i} h={110}/>)
-                         : kpis.map(k=><PerfKpiCard key={k.label} {...k}/>)}
-              </div>
+              {loading
+                ? <div style={{display:'grid',gridTemplateColumns:`repeat(${kpis.length},1fr)`,gap:12}}>
+                    {Array(kpis.length).fill(0).map((_,i)=><Skeleton key={i} h={110}/>)}
+                  </div>
+                : <div style={{overflowX:isMobile?'auto':'visible',WebkitOverflowScrolling:'touch',paddingBottom:isMobile?4:0}}>
+                    <div style={{display:'grid',gridTemplateColumns:isMobile?`repeat(${kpis.length},160px)`:`repeat(${kpis.length},1fr)`,gap:12,width:isMobile?'max-content':'100%'}}>
+                      {kpis.map(k=><PerfKpiCard key={k.label} {...k}/>)}
+                    </div>
+                  </div>
+              }
             </div>
           );
         })()}
@@ -815,7 +836,8 @@ export default function EggsPage() {
                   </div>
                 )}
               </div>
-              <div style={{ display:'grid', gridTemplateColumns:'repeat(5,1fr)', gap:12, marginBottom:20 }}>
+              <div style={{overflowX:isMobile?'auto':'visible',WebkitOverflowScrolling:'touch',paddingBottom:isMobile?4:0,marginBottom:20}}>
+              <div style={{ display:'grid', gridTemplateColumns:isMobile?'repeat(5,160px)':'repeat(5,1fr)', gap:12, width:isMobile?'max-content':'100%' }}>
                 {loading ? Array(5).fill(0).map((_,i)=><Skeleton key={i} h={88}/>) : showRearing ? (() => {
                   const wSummary  = weightData?.summary || {};
                   const latestWt  = wSummary.latestMeanWeightG;
@@ -867,6 +889,7 @@ export default function EggsPage() {
                     color="var(--purple)"/>
                 </>)}
               </div>
+              </div>
             </div>
           );
         })()}
@@ -895,13 +918,13 @@ export default function EggsPage() {
         {tab === 'overview' && (() => {
           const showRearing = hasMixed ? (stageTab==='rearing'||stageTab==='brooding') : (hasRearing||isLayerBrooding);
           return showRearing ? (
-            <div style={{ display:'grid', gridTemplateColumns:'3fr 2fr', gap:16 }}>
+            <div style={{ display:'grid', gridTemplateColumns:isMobile?'1fr':'3fr 2fr', gap:16 }}>
               <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
                 <div className="card">
                   <div style={{ fontWeight:700, fontSize:14, marginBottom:4 }}>Pullet Weight Growth</div>
                   <div style={{ fontSize:11, color:'var(--text-muted)', marginBottom:16 }}>Mean body weight vs ISA Brown target — {days} days</div>
                   {loading ? <Skeleton h={240}/> : (
-                    <ResponsiveContainer width="100%" height={240}>
+                    <ResponsiveContainer width="100%" height={isMobile?180:240}>
                       <ComposedChart data={rearingChartData} margin={{top:4,right:8,bottom:4,left:0}}>
                         <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false}/>
                         <XAxis dataKey="date" tickFormatter={fmtDate} tick={{fontSize:10,fill:'var(--text-muted)'}}/>
@@ -967,13 +990,13 @@ export default function EggsPage() {
               </div>
             </div>
           ) : (
-            <div style={{ display:'grid', gridTemplateColumns:'3fr 2fr', gap:16 }}>
+            <div style={{ display:'grid', gridTemplateColumns:isMobile?'1fr':'3fr 2fr', gap:16 }}>
               <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
                 <div className="card">
                   <div style={{ fontWeight:700, fontSize:14, marginBottom:4 }}>Daily Eggs Collected &amp; Feed Consumed</div>
                   <div style={{ fontSize:11, color:'var(--text-muted)', marginBottom:16 }}>Eggs (bars, left axis) · Feed kg (line, right axis) — {days} days</div>
                   {loading ? <Skeleton h={240}/> : chartData.length===0 ? <EmptyState/> : (
-                    <ResponsiveContainer width="100%" height={240}>
+                    <ResponsiveContainer width="100%" height={isMobile?180:240}>
                       <ComposedChart data={chartData} margin={{top:4,right:44,bottom:4,left:0}}>
                         <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false}/>
                         <XAxis dataKey="date" tickFormatter={fmtDate} tick={{fontSize:10,fill:'var(--text-muted)'}}/>

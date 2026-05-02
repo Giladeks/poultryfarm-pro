@@ -273,7 +273,7 @@ function PenArchiveModal({ pen, action, onClose, onSuccess, apiFetch }) {
             </div>
           )}
 
-          <div style={{ display:'flex', gap:10 }}>
+          <div style={{ display:'flex', gap:10, flexWrap:'wrap' }}>
             <button onClick={onClose}
               style={{ flex:1, padding:'9px', borderRadius:8, border:'1.5px solid var(--border)',
                 background:'#fff', fontWeight:600, fontSize:13, cursor:'pointer', color:'var(--text-secondary)' }}>
@@ -464,7 +464,7 @@ function ManagerKPIBar({ farms }) {
     { icon:'💀', val:t.todayDead,                     lbl:'Dead Today',     color:t.todayDead>20?'var(--red)':'var(--text-primary)' },
   ];
   return (
-    <div style={{ display:'grid', gridTemplateColumns:'repeat(7,1fr)', gap:10, marginBottom:22 }}>
+    <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(90px,1fr))', gap:10, marginBottom:22 }}>
       {kpis.map(k => (
         <div key={k.lbl} className="card" style={{ padding:'12px 14px', textAlign:'center' }}>
           <div style={{ fontSize:18, marginBottom:4 }}>{k.icon}</div>
@@ -490,7 +490,7 @@ function WorkerKPIBar({ farms, allowedOpTypes }) {
     const gradeAs    = allSections.filter(sec => sec.metrics?.todayGradeAPct > 0);
     const avgGradeA  = gradeAs.length > 0 ? parseFloat((gradeAs.reduce((s, sec) => s + (sec.metrics?.todayGradeAPct || 0), 0) / gradeAs.length).toFixed(1)) : 0;
     return (
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(5,1fr)', gap:10, marginBottom:22 }}>
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(100px,1fr))', gap:10, marginBottom:22 }}>
         {[
           { icon:'🥚', val:todayEggs.toLocaleString(),  lbl:'Eggs Today',     color:'#f59e0b' },
           { icon:'📊', val:`${avgRate}%`,               lbl:'Avg Laying Rate', color:'#16a34a' },
@@ -519,7 +519,7 @@ function WorkerKPIBar({ farms, allowedOpTypes }) {
     const minHarvest = harvests.length > 0 ? Math.min(...harvests.map(sec => sec.metrics.daysToHarvest)) : null;
     const fcrColor   = avgFCR ? (avgFCR > 2.5 ? '#ef4444' : avgFCR > 2.0 ? '#f59e0b' : '#22c55e') : 'var(--text-muted)';
     return (
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(5,1fr)', gap:10, marginBottom:22 }}>
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(100px,1fr))', gap:10, marginBottom:22 }}>
         {[
           { icon:'🐦', val:totalBirds.toLocaleString(),        lbl:'Live Birds',       color:'var(--purple)' },
           { icon:'⚖',  val:avgWeight ? `${avgWeight}g` : '—', lbl:'Avg Weight',       color:'#3b82f6' },
@@ -542,7 +542,7 @@ function WorkerKPIBar({ farms, allowedOpTypes }) {
 
 // ── Shared form helpers ───────────────────────────────────────────────────────
 const F  = ({ label, children }) => <div><label className="label">{label}</label>{children}</div>;
-const G2 = ({ children })        => <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>{children}</div>;
+const G2 = ({ children })        => <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(180px,1fr))', gap:12 }}>{children}</div>;
 
 // ── Farm modal ────────────────────────────────────────────────────────────────
 function FarmModal({ mode, farm, managers, onClose, onSave }) {

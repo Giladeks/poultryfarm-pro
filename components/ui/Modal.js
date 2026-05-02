@@ -49,21 +49,26 @@ export default function Modal({
       <div
         className="modal"
         style={{
-          width:     '100%',
-          maxWidth:  width,
-          maxHeight: '90vh',
-          overflowY: 'auto',
-          padding:   noPadding ? 0 : 28,
-          animation: 'fadeInUp 0.2s ease',
+          width:         '100%',
+          maxWidth:      width,
+          maxHeight:     '92vh',
+          display:       'flex',
+          flexDirection: 'column',
+          padding:       0,
+          animation:     'fadeInUp 0.2s ease',
+          overflow:      'hidden',
         }}
         onClick={e => e.stopPropagation()}
       >
+        {/* Fixed header */}
         {title && (
           <div style={{
             display:        'flex',
             justifyContent: 'space-between',
             alignItems:     'center',
-            marginBottom:   20,
+            padding:        '18px 20px 16px',
+            borderBottom:   '1px solid var(--border)',
+            flexShrink:     0,
           }}>
             <div>
               <h2 style={{
@@ -76,7 +81,7 @@ export default function Modal({
                 {title}
               </h2>
               {subtitle && (
-                <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3 }}>
+                <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3, margin: 0 }}>
                   {subtitle}
                 </p>
               )}
@@ -84,15 +89,20 @@ export default function Modal({
             <button
               onClick={onClose}
               style={{
-                background:   'none',
-                border:       'none',
-                fontSize:     20,
-                cursor:       'pointer',
-                color:        'var(--text-muted)',
-                lineHeight:   1,
-                padding:      '4px 6px',
-                borderRadius: 6,
-                flexShrink:   0,
+                background:     'none',
+                border:         'none',
+                fontSize:       20,
+                cursor:         'pointer',
+                color:          'var(--text-muted)',
+                lineHeight:     1,
+                padding:        '4px 6px',
+                borderRadius:   6,
+                flexShrink:     0,
+                minWidth:       44,
+                minHeight:      44,
+                display:        'flex',
+                alignItems:     'center',
+                justifyContent: 'center',
               }}
             >
               ✕
@@ -100,16 +110,28 @@ export default function Modal({
           </div>
         )}
 
-        {children}
+        {/* Scrollable body */}
+        <div style={{
+          flex:                    1,
+          overflowY:               'auto',
+          padding:                 noPadding ? 0 : '20px 20px',
+          WebkitOverflowScrolling: 'touch',
+        }}>
+          {children}
+        </div>
 
+        {/* Sticky footer — always visible */}
         {footer && (
           <div style={{
             display:        'flex',
             justifyContent: 'flex-end',
+            alignItems:     'center',
             gap:            10,
-            marginTop:      24,
-            paddingTop:     20,
+            padding:        '14px 20px',
             borderTop:      '1px solid var(--border)',
+            flexShrink:     0,
+            background:     'var(--bg-surface)',
+            flexWrap:       'wrap',
           }}>
             {footer}
           </div>

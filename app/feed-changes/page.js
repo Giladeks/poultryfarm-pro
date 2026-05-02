@@ -53,7 +53,7 @@ function Modal({ title, onClose, children, footer }) {
         boxShadow:'0 20px 60px rgba(0,0,0,0.25)',animation:'fadeInUp 0.2s ease' }}>
         <div style={{ padding:'18px 22px',borderBottom:'1px solid #f1f5f9',display:'flex',alignItems:'center',justifyContent:'space-between',position:'sticky',top:0,background:'#fff',zIndex:1 }}>
           <div style={{ fontWeight:800,fontSize:15,color:'#1e293b',fontFamily:"'Poppins',sans-serif" }}>{title}</div>
-          <button onClick={onClose} style={{ background:'none',border:'none',fontSize:22,cursor:'pointer',color:'#94a3b8' }}>×</button>
+          <button onClick={onClose} style={{ background:'none',border:'none',fontSize:22,cursor:'pointer',color:'#94a3b8',minWidth:44,minHeight:44,display:'flex',alignItems:'center',justifyContent:'center' }}>×</button>
         </div>
         <div style={{ padding:'20px 22px' }}>{children}</div>
         {footer && <div style={{ padding:'14px 22px',borderTop:'1px solid #f1f5f9',display:'flex',gap:10,justifyContent:'flex-end',position:'sticky',bottom:0,background:'#fff' }}>{footer}</div>}
@@ -410,14 +410,14 @@ export default function FeedChangesPage() {
         </div>
 
         {/* Tabs */}
-        <div style={{ display:'flex',gap:4,marginBottom:20,background:'#f8fafc',borderRadius:10,padding:4,width:'fit-content' }}>
+        <div style={{ display:'flex',gap:4,marginBottom:20,background:'#f8fafc',borderRadius:10,padding:4,width:'fit-content',maxWidth:'100%',overflowX:'auto',WebkitOverflowScrolling:'touch' }}>
           {[
             { key:'active',   label:`Active${activeCnt>0?` (${activeCnt})`:''}` },
             { key:'history',  label:'History' },
           ].map(t => (
             <button key={t.key} onClick={() => setActiveTab(t.key)}
               className="tab-btn"
-              style={{ padding:'7px 16px',borderRadius:8,fontSize:12,fontWeight:700,cursor:'pointer',border:'none',
+              style={{ padding:'10px 18px',minHeight:38,borderRadius:8,fontSize:12,fontWeight:700,cursor:'pointer',border:'none',
                 background:activeTab===t.key?'#fff':'transparent',
                 color:activeTab===t.key?'var(--purple,#6c63ff)':'#64748b',
                 boxShadow:activeTab===t.key?'0 1px 4px rgba(0,0,0,0.08)':'none',
@@ -491,7 +491,7 @@ export default function FeedChangesPage() {
             </div>
           )}
 
-          <div style={{ display:'grid',gridTemplateColumns:'1fr 1fr',gap:12 }}>
+          <div className='modal-input-grid-2' style={{ display:'grid',gridTemplateColumns:'1fr 1fr',gap:12 }}>
             <Field label="Current Feed (returning)" required>
               <select value={createForm.fromFeedInventoryId} style={inp}
                 onChange={e => setCreate('fromFeedInventoryId',e.target.value)}>
@@ -512,18 +512,18 @@ export default function FeedChangesPage() {
             </Field>
           </div>
 
-          <div style={{ display:'grid',gridTemplateColumns:'1fr 1fr',gap:12 }}>
+          <div className='modal-input-grid-2' style={{ display:'grid',gridTemplateColumns:'1fr 1fr',gap:12 }}>
             <Field label="Bags to Return" required hint={returnKg > 0 ? `= ${returnKg} kg at ${bagWtFrom} kg/bag` : ''}>
-              <input type="number" min="0" step="1" style={inp} value={createForm.returnBags}
+              <input type="number" inputMode="numeric" min="0" step="1" style={inp} value={createForm.returnBags}
                 onChange={e => setCreate('returnBags',e.target.value)} placeholder="0" />
             </Field>
             <Field label="New Feed Bags Needed" required hint={requestKg > 0 ? `= ${requestKg} kg at ${bagWtTo} kg/bag` : ''}>
-              <input type="number" min="1" step="1" style={inp} value={createForm.requestedBags}
+              <input type="number" inputMode="numeric" min="1" step="1" style={inp} value={createForm.requestedBags}
                 onChange={e => setCreate('requestedBags',e.target.value)} placeholder="0" />
             </Field>
           </div>
 
-          <div style={{ display:'grid',gridTemplateColumns:'1fr 1fr',gap:12 }}>
+          <div className='modal-input-grid-2' style={{ display:'grid',gridTemplateColumns:'1fr 1fr',gap:12 }}>
             <Field label="Effective Date" required>
               <input type="date" style={inp} value={createForm.effectiveDate}
                 min={new Date().toISOString().slice(0,10)}
@@ -600,7 +600,7 @@ export default function FeedChangesPage() {
             <div style={{ padding:'10px 14px',background:'#f0fdf4',border:'1px solid #bbf7d0',borderRadius:8,fontSize:12,color:'#166534',marginBottom:14 }}>
               Enter the actual quantities. Returning old feed credits the store inventory. Issuing new feed debits it.
             </div>
-            <div style={{ display:'grid',gridTemplateColumns:'1fr 1fr',gap:12 }}>
+            <div className='modal-input-grid-2' style={{ display:'grid',gridTemplateColumns:'1fr 1fr',gap:12 }}>
               <Field label="Old Feed Returned (kg) *" hint="Actual kg received back from section">
                 <input type="number" min="0" step="0.1" style={inp} value={actionForm.returnedActualKg}
                   onChange={e => setAction('returnedActualKg',e.target.value)} placeholder="0" />

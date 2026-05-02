@@ -49,6 +49,39 @@ const STATUS_BG     = { good:'#f0fdf4', warn:'#fffbeb', critical:'#fef2f2', neut
 const STATUS_BORDER = { good:'#bbf7d0', warn:'#fde68a', critical:'#fecaca', neutral:'#e2e8f0' };
 
 // ── KPI Cards ─────────────────────────────────────────────────────────────────
+// ── Mobile detection ─────────────────────────────────────────────────────────
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 768px)');
+    setIsMobile(mq.matches);
+    const handler = (e) => setIsMobile(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
+  return isMobile;
+}
+
+// ── KPI scroll grid ───────────────────────────────────────────────────────────
+function KpiScrollGrid({ count, gap = 12, mb = 0, children }) {
+  const isMobile = useIsMobile();
+  const mbStyle = mb ? { marginBottom: mb } : {};
+  if (isMobile) {
+    return (
+      <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch', paddingBottom: 4, ...mbStyle }}>
+        <div style={{ display: 'grid', gridTemplateColumns: `repeat(${count}, 160px)`, gap, width: 'max-content' }}>
+          {children}
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: `repeat(${count}, 1fr)`, gap, ...mbStyle }}>
+      {children}
+    </div>
+  );
+}
+
 function PerfKpiCard({ icon, label, value, sub, delta, status = 'neutral' }) {
   const col = STATUS_COLOR[status];
   const bg  = STATUS_BG[status];
@@ -445,12 +478,12 @@ export default function BroilerPerformancePage() {
             <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 12 }}>
               My Section Performance
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 12 }}>
-              {loading
-                ? Array(6).fill(0).map((_, i) => <Skeleton key={i} h={110} />)
-                : sectionKpis.map(k => <PerfKpiCard key={k.label} {...k} />)
-              }
-            </div>
+            {loading
+              ? <div style={{display:'grid',gridTemplateColumns:'repeat(6,1fr)',gap:12}}>{Array(6).fill(0).map((_,i)=><Skeleton key={i} h={110}/>)}</div>
+              : <KpiScrollGrid count={6} gap={12}>
+                  {sectionKpis.map(k => <PerfKpiCard key={k.label} {...k} />)}
+                </KpiScrollGrid>
+            }
           </div>
         )}
 
@@ -461,14 +494,15 @@ export default function BroilerPerformancePage() {
           </div>
 
           {/* Period aggregate cards */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 20 }}>
-            {loading ? Array(4).fill(0).map((_, i) => <Skeleton key={i} h={88} />) : <>
-              <SimpleKpiCard icon="⚖️" label="Latest Avg Weight" value={fmtWt(summary.latestMeanWeightG)}  sub={`from ${fmt(summary.latestSampleCount || 0)} birds sampled`} color="var(--purple)" />
-              <SimpleKpiCard icon="📈" label="Weight Gain (7d)"  value={summary.weightGain7d ? `+${fmt(summary.weightGain7d)}g` : '—'} sub="grams gained last 7 days" color="var(--green)" />
-              <SimpleKpiCard icon="🌾" label="Est. FCR"          value={summary.estimatedFCR || '—'}       sub="feed consumed / weight gained" color={Number(summary.estimatedFCR) <= 1.9 ? 'var(--green)' : 'var(--amber)'} />
-              <SimpleKpiCard icon="📊" label="Uniformity"        value={summary.latestUniformityPct ? `${summary.latestUniformityPct}%` : '—'} sub="birds within ±10% of mean" color="var(--blue)" />
-            </>}
-          </div>
+          {loading
+            ? <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12,marginBottom:20}}>{Array(4).fill(0).map((_,i)=><Skeleton key={i} h={88}/>)}</div>
+            : <KpiScrollGrid count={4} gap={12} mb={20}>
+                <SimpleKpiCard icon="⚖️" label="Latest Avg Weight" value={fmtWt(summary.latestMeanWeightG)}  sub={`from ${fmt(summary.latestSampleCount || 0)} birds sampled`} color="var(--purple)" />
+                <SimpleKpiCard icon="📈" label="Weight Gain (7d)"  value={summary.weightGain7d ? `+${fmt(summary.weightGain7d)}g` : '—'} sub="grams gained last 7 days" color="var(--green)" />
+                <SimpleKpiCard icon="🌾" label="Est. FCR"          value={summary.estimatedFCR || '—'}       sub="feed consumed / weight gained" color={Number(summary.estimatedFCR) <= 1.9 ? 'var(--green)' : 'var(--amber)'} />
+                <SimpleKpiCard icon="📊" label="Uniformity"        value={summary.latestUniformityPct ? `${summary.latestUniformityPct}%` : '—'} sub="birds within ±10% of mean" color="var(--blue)" />
+              </KpiScrollGrid>
+          }
         </div>
 
         {/* Flock filter */}
